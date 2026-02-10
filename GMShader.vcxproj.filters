@@ -1,0 +1,519 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="源文件">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="头文件">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="资源文件">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="framework.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="pch.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="main.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\activecf.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\amaudio.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\amparse.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\amstream.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\amva.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\Amvideo.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\atsmedia.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\audevcod.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\austream.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\aviriff.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\basetsd.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\bdaiface.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\bdamedia.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\Bdatif.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\bdatypes.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\comlite.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\control.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\d3d.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\d3d8.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\d3d8caps.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\d3d8types.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\d3dcaps.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\d3drm.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\d3drmdef.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\d3drmobj.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\d3drmwin.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\d3dtypes.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\d3dx.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\d3dx8.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\d3dx8core.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\d3dx8effect.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\d3dx8math.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\d3dx8mesh.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\d3dx8shape.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\d3dx8tex.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\d3dxcore.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\d3dxerr.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\d3dxmath.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\d3dxshapes.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\d3dxsprite.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\ddraw.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\ddrawex.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\ddstream.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dinput.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dinputd.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dls1.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dls2.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dmdls.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dmerror.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dmksctrl.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dmo.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dmodshow.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dmoimpl.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dmoreg.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dmort.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dmplugin.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dmusbuff.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dmusicc.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dmusicf.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dmusici.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dmusics.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dpaddr.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dplay.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dplay8.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dplobby.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dplobby8.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dsetup.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\DShow.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dshowasf.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dsound.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dv.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dvdevcod.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dvdmedia.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dvoice.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dvp.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dx7todx8.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dxerr8.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dxfile.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dxtrans.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\dxva.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\edevdefs.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\errors.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\evcode.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\il21dec.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\Iwstdec.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\ks.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\ksguid.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\ksmedia.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\ksproxy.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\ksuuids.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\mediaerr.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\mediaobj.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\medparam.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\mmstream.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\mpconfig.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\mpegtype.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\Mstvca.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\Mstve.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\Msvidctl.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\multimon.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\playlist.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\qedit.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\qnetwork.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\regbag.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\rmxfguid.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\rmxftmpl.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\Segment.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\strmif.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\tune.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\tuner.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\uuids.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\vfwmsgs.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\videoacc.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\vpconfig.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\vpnotify.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\vptype.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_8\xprtdefs.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="GMAPI\Gmapi.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="GMAPI\Gmapi3DGraphics.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="GMAPI\GmapiConsts.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="GMAPI\GmapiCore.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="GMAPI\GmapiDataStructures.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="GMAPI\GmapiDefs.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="GMAPI\GmapiFiles.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="GMAPI\GmapiGameGraphics.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="GMAPI\GmapiGameplay.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="GMAPI\GmapiInteraction.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="GMAPI\GmapiInternal.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="GMAPI\GmapiMacros.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="GMAPI\GmapiMultiplayer.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="GMAPI\GmapiParticles.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="GMAPI\GmapiPopups.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="GMAPI\GmapiResources.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="GMAPI\GmapiSounds.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="pch.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="main.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="GMAPI\Gmapi3DGraphics.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="GMAPI\GmapiConsts.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="GMAPI\GmapiDataStructures.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="GMAPI\GmapiFiles.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="GMAPI\GmapiGameGraphics.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="GMAPI\GmapiGameplay.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="GMAPI\GmapiInteraction.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="GMAPI\GmapiInternal.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="GMAPI\GmapiMultiplayer.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="GMAPI\GmapiParticles.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="GMAPI\GmapiPopups.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="GMAPI\GmapiResources.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="GMAPI\GmapiSounds.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Library Include="Direct3D_8\amstrmid.lib" />
+    <Library Include="Direct3D_8\d3d8.lib" />
+    <Library Include="Direct3D_8\d3dx.lib" />
+    <Library Include="Direct3D_8\d3dx8.lib" />
+    <Library Include="Direct3D_8\d3dx8d.lib" />
+    <Library Include="Direct3D_8\d3dx8dt.lib" />
+    <Library Include="Direct3D_8\d3dxd.lib" />
+    <Library Include="Direct3D_8\d3dxof.lib" />
+    <Library Include="Direct3D_8\ddraw.lib" />
+    <Library Include="Direct3D_8\dinput.lib" />
+    <Library Include="Direct3D_8\dinput8.lib" />
+    <Library Include="Direct3D_8\dmoguids.lib" />
+    <Library Include="Direct3D_8\dplayx.lib" />
+    <Library Include="Direct3D_8\dsetup.lib" />
+    <Library Include="Direct3D_8\dsound.lib" />
+    <Library Include="Direct3D_8\DxErr8.lib" />
+    <Library Include="Direct3D_8\dxguid.lib" />
+    <Library Include="Direct3D_8\dxtrans.lib" />
+    <Library Include="Direct3D_8\ksproxy.lib" />
+    <Library Include="Direct3D_8\ksuser.lib" />
+    <Library Include="Direct3D_8\msdmo.lib" />
+    <Library Include="Direct3D_8\quartz.lib" />
+    <Library Include="Direct3D_8\strmiids.lib" />
+    <Library Include="GMAPI\GMAPICore.lib" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Direct3D_8\d3dvec.inl">
+      <Filter>头文件</Filter>
+    </None>
+    <None Include="Direct3D_8\d3dx8math.inl">
+      <Filter>头文件</Filter>
+    </None>
+    <None Include="Direct3D_8\d3dxmath.inl">
+      <Filter>头文件</Filter>
+    </None>
+    <None Include="Direct3D_8\dxsdk.inc">
+      <Filter>头文件</Filter>
+    </None>
+    <None Include="Direct3D_8\Msvidctl.tlb" />
+    <None Include="Direct3D_8\Tuner.tlb" />
+  </ItemGroup>
+</Project>

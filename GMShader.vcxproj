@@ -1,0 +1,371 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{4866704d-5d09-4afc-9aa5-0f69a07a3bbb}</ProjectGuid>
+    <RootNamespace>GMShader</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <IncludePath>GMAPI;$(IncludePath);Direct3D_8</IncludePath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <IncludePath>GMAPI;$(IncludePath);Direct3D_8</IncludePath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <IncludePath>GMAPI;$(IncludePath);Direct3D_8</IncludePath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <IncludePath>GMAPI;$(IncludePath);Direct3D_8</IncludePath>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;_DEBUG;GMSHADER_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions);GMAPI_USE_D3D;_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <LanguageStandard_C>stdc17</LanguageStandard_C>
+      <AdditionalOptions>/Zc:__cplusplus /utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableUAC>false</EnableUAC>
+      <AdditionalLibraryDirectories>Direct3D_8;GMAPI;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>GMAPICore.lib;d3d8.lib;d3dx8.lib;DxErr8.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/nodefaultlib:libci /SAFESEH:NO %(AdditionalOptions)</AdditionalOptions>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;NDEBUG;GMSHADER_EXPORTS;_WINDOWS;_USRDLL;GMAPI_USE_D3D;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions);GMAPI_USE_D3D;_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <LanguageStandard_C>stdc17</LanguageStandard_C>
+      <AdditionalOptions>/Zc:__cplusplus /utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableUAC>false</EnableUAC>
+      <AdditionalLibraryDirectories>Direct3D_8;GMAPI;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>legacy_stdio_definitions.lib;GMAPICore.lib;d3d8.lib;d3dx8.lib;DxErr8.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/nodefaultlib:libci /SAFESEH:NO %(AdditionalOptions)</AdditionalOptions>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_DEBUG;GMSHADER_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions);GMAPI_USE_D3D;_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <LanguageStandard_C>stdc17</LanguageStandard_C>
+      <AdditionalOptions>/Zc:__cplusplus /utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableUAC>false</EnableUAC>
+      <AdditionalLibraryDirectories>Direct3D_8;GMAPI;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>GMAPICore.lib;d3d8.lib;d3dx8.lib;DxErr8.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/nodefaultlib:libci /SAFESEH:NO %(AdditionalOptions)</AdditionalOptions>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>NDEBUG;GMSHADER_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions);GMAPI_USE_D3D;_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <LanguageStandard_C>stdc17</LanguageStandard_C>
+      <AdditionalOptions>/Zc:__cplusplus /utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableUAC>false</EnableUAC>
+      <AdditionalLibraryDirectories>Direct3D_8;GMAPI;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>GMAPICore.lib;d3d8.lib;d3dx8.lib;DxErr8.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/nodefaultlib:libci /SAFESEH:NO %(AdditionalOptions)</AdditionalOptions>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClInclude Include="Direct3D_8\activecf.h" />
+    <ClInclude Include="Direct3D_8\amaudio.h" />
+    <ClInclude Include="Direct3D_8\amparse.h" />
+    <ClInclude Include="Direct3D_8\amstream.h" />
+    <ClInclude Include="Direct3D_8\amva.h" />
+    <ClInclude Include="Direct3D_8\Amvideo.h" />
+    <ClInclude Include="Direct3D_8\atsmedia.h" />
+    <ClInclude Include="Direct3D_8\audevcod.h" />
+    <ClInclude Include="Direct3D_8\austream.h" />
+    <ClInclude Include="Direct3D_8\aviriff.h" />
+    <ClInclude Include="Direct3D_8\basetsd.h" />
+    <ClInclude Include="Direct3D_8\bdaiface.h" />
+    <ClInclude Include="Direct3D_8\bdamedia.h" />
+    <ClInclude Include="Direct3D_8\Bdatif.h" />
+    <ClInclude Include="Direct3D_8\bdatypes.h" />
+    <ClInclude Include="Direct3D_8\comlite.h" />
+    <ClInclude Include="Direct3D_8\control.h" />
+    <ClInclude Include="Direct3D_8\d3d.h" />
+    <ClInclude Include="Direct3D_8\d3d8.h" />
+    <ClInclude Include="Direct3D_8\d3d8caps.h" />
+    <ClInclude Include="Direct3D_8\d3d8types.h" />
+    <ClInclude Include="Direct3D_8\d3dcaps.h" />
+    <ClInclude Include="Direct3D_8\d3drm.h" />
+    <ClInclude Include="Direct3D_8\d3drmdef.h" />
+    <ClInclude Include="Direct3D_8\d3drmobj.h" />
+    <ClInclude Include="Direct3D_8\d3drmwin.h" />
+    <ClInclude Include="Direct3D_8\d3dtypes.h" />
+    <ClInclude Include="Direct3D_8\d3dx.h" />
+    <ClInclude Include="Direct3D_8\d3dx8.h" />
+    <ClInclude Include="Direct3D_8\d3dx8core.h" />
+    <ClInclude Include="Direct3D_8\d3dx8effect.h" />
+    <ClInclude Include="Direct3D_8\d3dx8math.h" />
+    <ClInclude Include="Direct3D_8\d3dx8mesh.h" />
+    <ClInclude Include="Direct3D_8\d3dx8shape.h" />
+    <ClInclude Include="Direct3D_8\d3dx8tex.h" />
+    <ClInclude Include="Direct3D_8\d3dxcore.h" />
+    <ClInclude Include="Direct3D_8\d3dxerr.h" />
+    <ClInclude Include="Direct3D_8\d3dxmath.h" />
+    <ClInclude Include="Direct3D_8\d3dxshapes.h" />
+    <ClInclude Include="Direct3D_8\d3dxsprite.h" />
+    <ClInclude Include="Direct3D_8\ddraw.h" />
+    <ClInclude Include="Direct3D_8\ddrawex.h" />
+    <ClInclude Include="Direct3D_8\ddstream.h" />
+    <ClInclude Include="Direct3D_8\dinput.h" />
+    <ClInclude Include="Direct3D_8\dinputd.h" />
+    <ClInclude Include="Direct3D_8\dls1.h" />
+    <ClInclude Include="Direct3D_8\dls2.h" />
+    <ClInclude Include="Direct3D_8\dmdls.h" />
+    <ClInclude Include="Direct3D_8\dmerror.h" />
+    <ClInclude Include="Direct3D_8\dmksctrl.h" />
+    <ClInclude Include="Direct3D_8\dmo.h" />
+    <ClInclude Include="Direct3D_8\dmodshow.h" />
+    <ClInclude Include="Direct3D_8\dmoimpl.h" />
+    <ClInclude Include="Direct3D_8\dmoreg.h" />
+    <ClInclude Include="Direct3D_8\dmort.h" />
+    <ClInclude Include="Direct3D_8\dmplugin.h" />
+    <ClInclude Include="Direct3D_8\dmusbuff.h" />
+    <ClInclude Include="Direct3D_8\dmusicc.h" />
+    <ClInclude Include="Direct3D_8\dmusicf.h" />
+    <ClInclude Include="Direct3D_8\dmusici.h" />
+    <ClInclude Include="Direct3D_8\dmusics.h" />
+    <ClInclude Include="Direct3D_8\dpaddr.h" />
+    <ClInclude Include="Direct3D_8\dplay.h" />
+    <ClInclude Include="Direct3D_8\dplay8.h" />
+    <ClInclude Include="Direct3D_8\dplobby.h" />
+    <ClInclude Include="Direct3D_8\dplobby8.h" />
+    <ClInclude Include="Direct3D_8\dsetup.h" />
+    <ClInclude Include="Direct3D_8\DShow.h" />
+    <ClInclude Include="Direct3D_8\dshowasf.h" />
+    <ClInclude Include="Direct3D_8\dsound.h" />
+    <ClInclude Include="Direct3D_8\dv.h" />
+    <ClInclude Include="Direct3D_8\dvdevcod.h" />
+    <ClInclude Include="Direct3D_8\dvdmedia.h" />
+    <ClInclude Include="Direct3D_8\dvoice.h" />
+    <ClInclude Include="Direct3D_8\dvp.h" />
+    <ClInclude Include="Direct3D_8\dx7todx8.h" />
+    <ClInclude Include="Direct3D_8\dxerr8.h" />
+    <ClInclude Include="Direct3D_8\dxfile.h" />
+    <ClInclude Include="Direct3D_8\dxtrans.h" />
+    <ClInclude Include="Direct3D_8\dxva.h" />
+    <ClInclude Include="Direct3D_8\edevdefs.h" />
+    <ClInclude Include="Direct3D_8\errors.h" />
+    <ClInclude Include="Direct3D_8\evcode.h" />
+    <ClInclude Include="Direct3D_8\il21dec.h" />
+    <ClInclude Include="Direct3D_8\Iwstdec.h" />
+    <ClInclude Include="Direct3D_8\ks.h" />
+    <ClInclude Include="Direct3D_8\ksguid.h" />
+    <ClInclude Include="Direct3D_8\ksmedia.h" />
+    <ClInclude Include="Direct3D_8\ksproxy.h" />
+    <ClInclude Include="Direct3D_8\ksuuids.h" />
+    <ClInclude Include="Direct3D_8\mediaerr.h" />
+    <ClInclude Include="Direct3D_8\mediaobj.h" />
+    <ClInclude Include="Direct3D_8\medparam.h" />
+    <ClInclude Include="Direct3D_8\mmstream.h" />
+    <ClInclude Include="Direct3D_8\mpconfig.h" />
+    <ClInclude Include="Direct3D_8\mpegtype.h" />
+    <ClInclude Include="Direct3D_8\Mstvca.h" />
+    <ClInclude Include="Direct3D_8\Mstve.h" />
+    <ClInclude Include="Direct3D_8\Msvidctl.h" />
+    <ClInclude Include="Direct3D_8\multimon.h" />
+    <ClInclude Include="Direct3D_8\playlist.h" />
+    <ClInclude Include="Direct3D_8\qedit.h" />
+    <ClInclude Include="Direct3D_8\qnetwork.h" />
+    <ClInclude Include="Direct3D_8\regbag.h" />
+    <ClInclude Include="Direct3D_8\rmxfguid.h" />
+    <ClInclude Include="Direct3D_8\rmxftmpl.h" />
+    <ClInclude Include="Direct3D_8\Segment.h" />
+    <ClInclude Include="Direct3D_8\strmif.h" />
+    <ClInclude Include="Direct3D_8\tune.h" />
+    <ClInclude Include="Direct3D_8\tuner.h" />
+    <ClInclude Include="Direct3D_8\uuids.h" />
+    <ClInclude Include="Direct3D_8\vfwmsgs.h" />
+    <ClInclude Include="Direct3D_8\videoacc.h" />
+    <ClInclude Include="Direct3D_8\vpconfig.h" />
+    <ClInclude Include="Direct3D_8\vpnotify.h" />
+    <ClInclude Include="Direct3D_8\vptype.h" />
+    <ClInclude Include="Direct3D_8\xprtdefs.h" />
+    <ClInclude Include="main.h" />
+    <ClInclude Include="framework.h" />
+    <ClInclude Include="GMAPI\Gmapi.h" />
+    <ClInclude Include="GMAPI\Gmapi3DGraphics.h" />
+    <ClInclude Include="GMAPI\GmapiConsts.h" />
+    <ClInclude Include="GMAPI\GmapiCore.h" />
+    <ClInclude Include="GMAPI\GmapiDataStructures.h" />
+    <ClInclude Include="GMAPI\GmapiDefs.h" />
+    <ClInclude Include="GMAPI\GmapiFiles.h" />
+    <ClInclude Include="GMAPI\GmapiGameGraphics.h" />
+    <ClInclude Include="GMAPI\GmapiGameplay.h" />
+    <ClInclude Include="GMAPI\GmapiInteraction.h" />
+    <ClInclude Include="GMAPI\GmapiInternal.h" />
+    <ClInclude Include="GMAPI\GmapiMacros.h" />
+    <ClInclude Include="GMAPI\GmapiMultiplayer.h" />
+    <ClInclude Include="GMAPI\GmapiParticles.h" />
+    <ClInclude Include="GMAPI\GmapiPopups.h" />
+    <ClInclude Include="GMAPI\GmapiResources.h" />
+    <ClInclude Include="GMAPI\GmapiSounds.h" />
+    <ClInclude Include="pch.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="GMAPI\Gmapi3DGraphics.cpp" />
+    <ClCompile Include="GMAPI\GmapiConsts.cpp" />
+    <ClCompile Include="GMAPI\GmapiDataStructures.cpp" />
+    <ClCompile Include="GMAPI\GmapiFiles.cpp" />
+    <ClCompile Include="GMAPI\GmapiGameGraphics.cpp" />
+    <ClCompile Include="GMAPI\GmapiGameplay.cpp" />
+    <ClCompile Include="GMAPI\GmapiInteraction.cpp" />
+    <ClCompile Include="GMAPI\GmapiInternal.cpp" />
+    <ClCompile Include="GMAPI\GmapiMultiplayer.cpp" />
+    <ClCompile Include="GMAPI\GmapiParticles.cpp" />
+    <ClCompile Include="GMAPI\GmapiPopups.cpp" />
+    <ClCompile Include="GMAPI\GmapiResources.cpp" />
+    <ClCompile Include="GMAPI\GmapiSounds.cpp" />
+    <ClCompile Include="main.cpp" />
+    <ClCompile Include="pch.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Library Include="Direct3D_8\amstrmid.lib" />
+    <Library Include="Direct3D_8\d3d8.lib" />
+    <Library Include="Direct3D_8\d3dx.lib" />
+    <Library Include="Direct3D_8\d3dx8.lib" />
+    <Library Include="Direct3D_8\d3dx8d.lib" />
+    <Library Include="Direct3D_8\d3dx8dt.lib" />
+    <Library Include="Direct3D_8\d3dxd.lib" />
+    <Library Include="Direct3D_8\d3dxof.lib" />
+    <Library Include="Direct3D_8\ddraw.lib" />
+    <Library Include="Direct3D_8\dinput.lib" />
+    <Library Include="Direct3D_8\dinput8.lib" />
+    <Library Include="Direct3D_8\dmoguids.lib" />
+    <Library Include="Direct3D_8\dplayx.lib" />
+    <Library Include="Direct3D_8\dsetup.lib" />
+    <Library Include="Direct3D_8\dsound.lib" />
+    <Library Include="Direct3D_8\DxErr8.lib" />
+    <Library Include="Direct3D_8\dxguid.lib" />
+    <Library Include="Direct3D_8\dxtrans.lib" />
+    <Library Include="Direct3D_8\ksproxy.lib" />
+    <Library Include="Direct3D_8\ksuser.lib" />
+    <Library Include="Direct3D_8\msdmo.lib" />
+    <Library Include="Direct3D_8\quartz.lib" />
+    <Library Include="Direct3D_8\strmiids.lib" />
+    <Library Include="GMAPI\GMAPICore.lib" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Direct3D_8\d3dvec.inl" />
+    <None Include="Direct3D_8\d3dx8math.inl" />
+    <None Include="Direct3D_8\d3dxmath.inl" />
+    <None Include="Direct3D_8\dxsdk.inc" />
+    <None Include="Direct3D_8\Msvidctl.tlb" />
+    <None Include="Direct3D_8\Tuner.tlb" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>
