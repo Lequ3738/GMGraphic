@@ -308,6 +308,7 @@
     <ClInclude Include="GMAPI\GmapiResources.h" />
     <ClInclude Include="GMAPI\GmapiSounds.h" />
     <ClInclude Include="pch.h" />
+    <ClInclude Include="shader.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="GMAPI\Gmapi3DGraphics.cpp" />
@@ -330,6 +331,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="shader.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Library Include="Direct3D_8\amstrmid.lib" />
@@ -364,6 +366,7 @@
     <None Include="Direct3D_8\dxsdk.inc" />
     <None Include="Direct3D_8\Msvidctl.tlb" />
     <None Include="Direct3D_8\Tuner.tlb" />
+    <None Include="README.md" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
