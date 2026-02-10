@@ -1,3 +1,4 @@
+#pragma once
 // GMGraphic
 
 #include <string>

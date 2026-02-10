@@ -74,7 +74,7 @@
     <IncludePath>GMAPI;$(IncludePath);Direct3D_8</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <IncludePath>GMAPI;$(IncludePath);Direct3D_8</IncludePath>
+    <IncludePath>GMAPI;Librarys;$(IncludePath);Direct3D_8</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <IncludePath>GMAPI;$(IncludePath);Direct3D_8</IncludePath>
@@ -288,6 +288,7 @@
     <ClInclude Include="Direct3D_8\vpnotify.h" />
     <ClInclude Include="Direct3D_8\vptype.h" />
     <ClInclude Include="Direct3D_8\xprtdefs.h" />
+    <ClInclude Include="Librarys\math_s.h" />
     <ClInclude Include="main.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="GMAPI\Gmapi.h" />
@@ -324,6 +325,7 @@
     <ClCompile Include="GMAPI\GmapiPopups.cpp" />
     <ClCompile Include="GMAPI\GmapiResources.cpp" />
     <ClCompile Include="GMAPI\GmapiSounds.cpp" />
+    <ClCompile Include="Librarys\math_s.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>

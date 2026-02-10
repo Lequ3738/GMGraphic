@@ -1,245 +1,10 @@
 // Shader Extension
 // Version: 1.4
-// Updated: 22/Dec/2010
-// by LSnK
-
-/*
-  Changelog
-
-	1.4: Fixed d3d_vs_create(), it was ignoring constants set by the 'def' instruction.
-	1.4: Changed VS configs so they work like the others.  No overwriting without explicit definition.
-
-	1.3: Added z-bias control.  Prevents z-fighting between coplanar polygons; useful for shadows && decals.
-	1.3: Added extended primitive functions which can draw up to 8192 vertices at once with position, normal, colour, specular, eight textures && eight sets of texture coordinates.
-	1.3: Added vertex shader 1.1 support && related functions.  Due to GM's nefarious machinations, their use is limited to the the extended primitive functions.
-	1.3: Added helper functions which directly set shader constants to GM-format colours.
-	1.3: Changed configs: PS/VS/tex configs are now independent.
-	1.3: Changed d3d_set_tex_all: now sets stage 0 too.  The extended primitive functions use it.
-	1.3: Demo has been updated with a water post-processing effect.  Press P.
-
-	1.2: Added d3d_dev_get_ps_version, checks pixel shader support.
-	1.2: Added d3d_set_tex_border, sets colour && alpha for tex_wrap_border mode.
-	1.2: d3d_set_tex* functions now accept -1 as tex parameter. This unbinds the texture from the stage making it safe to delete the associated resource in GM.
-	1.2: Fixed the extension's fillmode_ constants. They were named incorrectly.
-	1.2: Fixed d3d_set_tex_all in the DLL version. It was defined with the wrong number of arguments.
-	1.2: Fixed d3d_set_fog_color setting the wrong colours. D3D's colour format is RGB, not BGR.
-
-	1.1: First release.
-*/
+// Updated: 22/Dec/2010  by LSnK
+//          2026/2/10    by Lequ
 
 #include "shader.h"
-
-
-// ============================================================================
-// Internal functions / structures
-// ============================================================================
-
-// Handy functions
-inline double roundd(double x)
-{
-	return ((x < 0.0) ? ceil(x - 0.5) : floor(x + 0.5));
-}
-inline double frac(double x)
-{
-	return fmod(x, 1.0);
-}
-inline bool   eps(double a, double b = 0.0)
-{
-	return (fabs(a - b) < epsilon);
-}
-inline bool   eps2(double a, double b, double eps)
-{
-	return (fabs(a - b) < eps);
-}
-inline double slope(double x1, double y1, double x2, double y2)
-{
-	// Slope of a line
-	double dx;
-	dx = x2 - x1;
-
-	if (eps(dx))
-	{
-		return 0.0;
-	}
-	else { return (y2 - y1) / dx; }
-}
-inline double lerp(double vala, double valb, double x)
-{
-	// Linear interpolation.
-	return vala + ((valb - vala) * x);
-}
-inline double cerp(double vala, double valb, double x)
-{
-	// Cosine interpolation.
-	double am2 = (1 - cos(x * pi)) * 0.5;
-	return vala + ((valb - vala) * am2);
-}
-inline double curp(double a, double b, double c, double d, double x)
-{
-	// Cubic interpolation.  0-1 == B-C.  A && D are the datapoints before && after those.
-	double p, q;
-	p = (d - c) - (a - b);
-	q = (a - b) - p;
-
-	return (p * x * x * x) + (q * x * x) + ((c - a) * x) + b;
-}
-inline double unlerp(double val, double minval, double maxval)
-{
-	// Returns the value normalised into the range 0-1.
-	return (val - minval) / (maxval - minval);
-}
-inline double clamp(double val, double minval, double maxval)
-{
-	if (val < minval)
-	{
-		return minval;
-	}
-	else
-		if (val > maxval)
-		{
-			return maxval;
-		}
-
-	return val;
-}
-inline double snap_low(double x, double cellw)
-{
-	return x - fmod(x, cellw);
-}
-inline uint   snap_low(uint   x, uint   cellw)
-{
-	return x - (x % cellw);
-}
-inline double snap_high(double x, double cellw)
-{
-	return (x - fmod(x, cellw)) + cellw;
-}
-inline double snap_near(double x, double cellw)
-{
-	return roundd(x / cellw) * cellw;
-}
-inline void   tr_rot(double& x, double& y, double dir)
-{
-	// Rotate points around 0,0.
-	double rad, s, c;
-	rad = dir * degtorad_mul;
-	s = -sin(rad);
-	c = cos(rad);
-	x = (x * c) - (y * s);
-	y = (x * s) + (y * c);
-}
-inline void   tr_move(double& x, double& y, double len, double dir)
-{
-	// Move point with polar coordinates.  Same as lengthdir.
-	double rad;
-	rad = dir * degtorad_mul;
-	x += cos(rad) * len;
-	y += -sin(rad) * len;
-}
-inline void   tr_scale(double& x, double& y, double scale)
-{
-	x *= scale;
-	y *= scale;
-}
-inline int    col_red(int col)
-{
-	return (col % 256);
-}
-inline int    col_green(int col)
-{
-	return ((col >> 8) % 256);
-}
-inline int    col_blue(int col)
-{
-	return (col >> 16);
-}
-inline int    col_make(int r, int g, int b)
-{
-	return (b << 16) + (g << 8) + r;
-}
-int           col_lerp(int cola, int colb, double a)
-{
-	// Lerp between colours.  Same as merge_color in GML.
-	int r, g, b;
-	r = (int)lerp(col_red(cola), col_red(colb), a);
-	g = (int)lerp(col_green(cola), col_green(colb), a);
-	b = (int)lerp(col_blue(cola), col_blue(colb), a);
-
-	return col_make(r, g, b);
-}
-uint          col_d3d(int gmcol, double gmalpha)
-{
-	// For some reason GM uses BGR instead of D3D's normal RGB format.
-	uint r, g, b, a;
-	r = col_red(gmcol);
-	g = col_green(gmcol);
-	b = col_blue(gmcol);
-	a = uint(clamp(gmalpha, 0.0, 1.0) * 255.0);
-
-	return (a << 24) + (r << 16) + (g << 8) + b;
-}
-
-bool file_read(char* file_in, char*& target, uint& size)
-{
-	// Load file into RAM.
-	// You need to declare the target pointer && size vars first.
-	// Returns whether it succeeded.  If it fails, there's nothing to clean up.
-	// If it works you need to delete[] the buffer when you're done.
-	using namespace std;
-	fstream f;
-
-	f.open(file_in, ios::in | ios::binary);
-	if (f.is_open())
-	{
-		f.seekg(0, ios::end);
-		size = (uint)f.tellg();
-
-		target = new (nothrow) char[size];
-		if (target != nullptr)
-		{
-			f.seekg(0, ios::beg);
-			f.read(target, size);
-			f.close();
-			return true;
-		}
-		else
-		{
-			f.close();
-			return false;
-		}
-
-	}
-	else
-	{
-		return false;
-	}
-}
-bool file_write(char* file_out, void* data, uint size, bool append = false)
-{
-	// Write from RAM to file.  Returns whether it succeeded.
-	using namespace std;
-	fstream f;
-
-	if (append) { f.open(file_out, ios::out | ios::binary | ios::app); }
-	else { f.open(file_out, ios::out | ios::binary); }
-
-	if (f.is_open())
-	{
-		f.write((char*)data, size);
-		f.close();
-	}
-	else { return false; }
-
-	return true;
-}
-bool file_write(char* file_out, std::string data, uint size, bool append = false)
-{
-	return file_write(file_out, data.data(), min(size, data.length()), append);
-}
-
-
-
-
+#include "math_s.h"
 
 // ============================================================================
 // External functions 
@@ -297,9 +62,9 @@ struct vert_ext
 	// Extended type, 96 bytes.
 	float x, y, z;     // Position
 	float nx, ny, nz;  // Normal
-	dword c;         // Diffuse col,  PS v0
-	dword s;         // Specular col, PS v1
-	float uv[16];    // Texcoords,    PS t0-t5.  6+7 are not accessible to pixel shaders.
+	dword c;           // Diffuse col,  PS v0
+	dword s;           // Specular col, PS v1
+	float uv[16];      // Texcoords,    PS t0-t5. 6+7 are not accessible to pixel shaders.
 };
 
 static IDirect3DDevice8* d3ddev;  // D3D device pointer
@@ -337,7 +102,8 @@ exp_real init()
 	d3dint->GetAdapterIdentifier(D3DADAPTER_DEFAULT, D3DENUM_NO_WHQL_LEVEL, &d3daid);
 	d3ddev->GetDeviceCaps(&d3dcaps);
 
-	d3ddev->CreateVertexBuffer(vb_bytes, D3DUSAGE_WRITEONLY, fvf_ext, D3DPOOL_MANAGED, &vbuff_d3d);
+	d3ddev->CreateVertexBuffer(vb_bytes, D3DUSAGE_WRITEONLY, fvf_ext, D3DPOOL_MANAGED, 
+		&vbuff_d3d);
 
 	return gtrue;
 }
@@ -355,7 +121,8 @@ exp_real d3d_dev_get_point_max_size()
 }
 exp_real d3d_dev_get_ps_version()
 {
-	// GPU pixel shader version.  10 to 14.  Most modern GPUs support higher versions but they're not reported here.
+	// GPU pixel shader version.  10 to 14.
+	// Most modern GPUs support higher versions but they're not reported here.
 	uint v = (uint)d3dcaps.PixelShaderVersion;
 	return (double)((((v >> 8) & 0xFF) * 10) + v & 0xFF);
 }
@@ -397,7 +164,8 @@ exp_real d3d_ps_create(char* src_asm)
 		return gfalse;
 	}
 
-	if (D3D_OK != D3DXAssembleShader((LPCVOID)str.c_str(), str.length(), 0, nullptr, &psc, &errors))
+	if (D3D_OK != D3DXAssembleShader((LPCVOID)str.c_str(), str.length(), 0, nullptr, 
+		&psc, &errors))
 	{
 		err.append(crlf);
 		err.append("Shader assembly error:");
@@ -449,7 +217,9 @@ exp_real d3d_set_ps_ext(double shader, double conf)
 }
 exp_real d3d_set_ps_const(double constant, double r, double g, double b, double a)
 {
-	// Set pixel shader constant register.  There are 8 registers indexed 0-7 each containing 4 floating point values between -1 && 1.  This is the same as using "def" in the shader.
+	// Set pixel shader constant register.
+	// There are 8 registers indexed 0-7 each containing 4 floating point values
+	// between -1 && 1. This is the same as using "def" in the shader.
 	ps_const cx;
 	cx.r = (float)clamp(r, -1.0, 1.0);
 	cx.g = (float)clamp(g, -1.0, 1.0);
@@ -472,7 +242,8 @@ exp_real d3d_set_ps_const_col(double constant, double col, double alpha)
 }
 exp_real d3d_set_ps_conf(double conf)
 {
-	// Set PS constant registers from a predefined configuration.  Constants not set in the config aren't overwritten.
+	// Set PS constant registers from a predefined configuration.
+	// Constants not set in the config aren't overwritten.
 	if (conf > conf_vec_ps.size() - 1)
 	{
 		return gerror;
@@ -504,7 +275,8 @@ exp_real d3d_vs_create(char* src_asm)
 	LPD3DXBUFFER constants;
 	LPD3DXBUFFER errors;
 
-	if (D3D_OK != D3DXAssembleShader((LPCVOID)str.c_str(), str.length(), 0, &constants, &vsc, &errors))
+	if (D3D_OK != D3DXAssembleShader((LPCVOID)str.c_str(), str.length(), 0, &constants, 
+		&vsc, &errors))
 	{
 		err.append(crlf);
 		err.append("Shader assembly error:");
@@ -540,7 +312,8 @@ exp_real d3d_vs_create(char* src_asm)
 	vsdec[o + 12] = D3DVSD_REG(D3DVSDE_TEXCOORD7, D3DVSDT_FLOAT2);  // v14 ->  oT7
 	vsdec[o + 13] = D3DVSD_END();
 
-	if (D3D_OK != d3ddev->CreateVertexShader(vsdec, (dword*)vsc->GetBufferPointer(), &shader, D3DUSAGE_SOFTWAREPROCESSING))
+	if (D3D_OK != d3ddev->CreateVertexShader(vsdec, (dword*)vsc->GetBufferPointer(), 
+		&shader, D3DUSAGE_SOFTWAREPROCESSING))
 	{
 		err.append(crlf);
 		err.append("Vertex shader creation failed.");
@@ -596,7 +369,10 @@ exp_real d3d_set_vs_const_col(double constant, double col, double alpha)
 }
 exp_real d3d_set_vs_const_matrix(double constant)
 {
-	// Sets four constants as the transposed world*view*projection matrix.  You can then use [m4x4 oPos,v0,cn] in the shader to transform the vertices in keeping with GM's normal behaviour.   Ex: 0 would set c0,c1,c2,c3; 4 would set c4,c5,c6,c7.
+	// Sets four constants as the transposed world*view*projection matrix.
+	// You can then use [m4x4 oPos,v0,cn] in the shader to transform the vertices in
+	// keeping with GM's normal behaviour.
+	// Ex: 0 would set c0,c1,c2,c3; 4 would set c4,c5,c6,c7.
 	D3DXMATRIX world, proj, view, out, in;
 	d3ddev->GetTransform(D3DTS_WORLD, &world);
 	d3ddev->GetTransform(D3DTS_VIEW, &view);
@@ -632,7 +408,9 @@ exp_real d3d_set_vs_conf(double conf)
 // Texture stages
 exp_real d3d_set_tex(double stage, double tex)
 {
-	// Set texture for this texture stage || -1 for none.  Read the texture in a shader by using (texld r<stage>,t0).  GM uses 0 for drawing so don't fiddle with it.
+	// Set texture for this texture stage || -1 for none.
+	// Read the texture in a shader by using (texld r<stage>,t0).
+	// GM uses 0 for drawing so don't fiddle with it.
 	uint s = (uint)stage;
 
 	if (s < d3dcaps.MaxSimultaneousTextures)
@@ -672,7 +450,9 @@ exp_real d3d_set_tex_all(double tex)
 }
 exp_real d3d_set_tex_int(double stage, double mode)
 {
-	// Set texture stage interpolation mode.  Use tex_int_ constant.  Defaults to nearest, which is usually undesirable.  Stage 0 is also controlled by texture_set_interpolation in GM.
+	// Set texture stage interpolation mode. Use tex_int_ constant.
+	// Defaults to nearest, which is usually undesirable.
+	// Stage 0 is also controlled by texture_set_interpolation in GM.
 	dword s = (dword)stage;
 
 	if (stage >= d3dcaps.MaxSimultaneousTextures)
@@ -720,7 +500,8 @@ exp_real d3d_set_tex_border(double stage, double col, double alpha)
 }
 exp_real d3d_set_tex_aniso(double stage, double anisotropy)
 {
-	// Set anisotropic filtering level for tex_int_anisotropic.  Values: 1,2,4,8,16.  1=none.  Defaults to 1.
+	// Set anisotropic filtering level for tex_int_anisotropic.
+	// Values: 1,2,4,8,16.  1=none.  Defaults to 1.
 	dword s = (dword)stage;
 
 	if (s >= d3dcaps.MaxSimultaneousTextures)
@@ -728,11 +509,14 @@ exp_real d3d_set_tex_aniso(double stage, double anisotropy)
 		return gerror;
 	}
 
-	d3dcheck(d3ddev->SetTextureStageState(s, D3DTSS_MAXANISOTROPY, (dword)min(anisotropy, d3dcaps.MaxAnisotropy)));
+	d3dcheck(d3ddev->SetTextureStageState(s, D3DTSS_MAXANISOTROPY, 
+		(dword)min(anisotropy, d3dcaps.MaxAnisotropy)));
 }
 exp_real d3d_set_tex_mip(double stage, double mode)
 {
-	// Set mipmap filtering mode.  tex_int_nearest || tex_int_bilinear.  The latter when combined with tex_int_bilinear on the texture itself results in trilinear filtering.
+	// Set mipmap filtering mode. tex_int_nearest || tex_int_bilinear.
+	// The latter when combined with tex_int_bilinear on the texture itself results
+	// in trilinear filtering.
 	dword s = (dword)stage;
 
 	if (s >= d3dcaps.MaxSimultaneousTextures)
@@ -776,7 +560,8 @@ exp_real d3d_conf_ps_create()
 	conf_vec_ps.push_back(conf);
 	return (double)conf_vec_ps.size() - 1;
 }
-exp_real d3d_conf_ps_set(double conf, double constant, double r, double g, double b, double a)
+exp_real d3d_conf_ps_set(double conf, double constant, double r, double g, 
+	double b, double a)
 {
 	// Defines PS constant configuration.
 	if (conf > conf_vec_ps.size() - 1)
@@ -805,7 +590,8 @@ exp_real d3d_conf_vs_create()
 	conf_vec_vs.push_back(conf);
 	return (double)conf_vec_vs.size() - 1;
 }
-exp_real d3d_conf_vs_set(double conf, double constant, double x, double y, double z, double w)
+exp_real d3d_conf_vs_set(double conf, double constant, double x, double y, 
+	double z, double w)
 {
 	// Defines VS constant configuration.
 	if (conf > conf_vec_vs.size() - 1)
@@ -834,7 +620,8 @@ exp_real d3d_conf_tex_create()
 	conf_vec_tex.push_back(conf);
 	return (double)conf_vec_tex.size() - 1;
 }
-exp_real d3d_conf_tex_set(double conf, double stage, double tex, double interp, double xmode, double ymode)
+exp_real d3d_conf_tex_set(double conf, double stage, double tex, double interp, 
+	double xmode, double ymode)
 {
 	if (conf > conf_vec_tex.size() - 1)
 	{
@@ -931,7 +718,9 @@ exp_real d3d_set_point_scale(double state)
 }
 exp_real d3d_set_point_scale_coef(double coef1, double coef2, double coef3)
 {
-	// Configure point scaling formula.  Defaults to (1,0,0).  The formula is: size * sqrt(1/( ceof1 + (coef2*distancetocamera) + (coef3*sqr(distancetocamera)) ))
+	// Configure point scaling formula.  Defaults to (1,0,0).
+	// The formula is:
+	// size * sqrt(1/( ceof1 + (coef2*distancetocamera) + (coef3*sqr(distancetocamera)) ))
 	dword a, b, c;
 	float ca, cb, cc;
 
@@ -953,7 +742,8 @@ exp_real d3d_set_point_sprite(double state)
 // Render control
 exp_real d3d_set_mask(double r, double g, double b, double a)
 {
-	// Set colour writemask.  You can enable/disable writing of each channel independently.  All enabled by default.
+	// Set colour writemask.
+	// You can enable/disable writing of each channel independently. All enabled by default.
 	if (!(d3dcaps.PrimitiveMiscCaps & D3DPMISCCAPS_COLORWRITEENABLE))
 	{
 		return gfalse;
@@ -969,12 +759,14 @@ exp_real d3d_set_mask(double r, double g, double b, double a)
 }
 exp_real d3d_set_zwrite(double state)
 {
-	// Set z-buffer writing.  Enabled by default.  Disabling it prevents overwriting of the z-buffer.
+	// Set z-buffer writing.
+	// Enabled by default. Disabling it prevents overwriting of the z-buffer.
 	d3dcrs(D3DRS_ZWRITEENABLE, (state > 0.0));
 }
 exp_real d3d_set_alphatest(double value, double mode)
 {
-	// Prevents drawing of pixels that don't meet the given alpha criteria.  Use the cmp_ constants.  Pass -1 as value to disable alpha testing.
+	// Prevents drawing of pixels that don't meet the given alpha criteria. 
+	// Use the cmp_ constants.  Pass -1 as value to disable alpha testing.
 	dword a, b, c;
 	if (value < 0.0)
 	{
@@ -991,7 +783,8 @@ exp_real d3d_set_alphatest(double value, double mode)
 }
 exp_real d3d_set_ztest(double mode)
 {
-	// Prevents drawing of pixels that don't meet the given depth criteria.  Use the cmp_ constants.  Defaults to <=.  The other value is the current z-buffer value.
+	// Prevents drawing of pixels that don't meet the given depth criteria. 
+	// Use the cmp_ constants.  Defaults to <=.  The other value is the current z-buffer value.
 	if (!(d3dcaps.RasterCaps & D3DPRASTERCAPS_ZTEST))
 	{
 		return gfalse;
@@ -1001,17 +794,21 @@ exp_real d3d_set_ztest(double mode)
 }
 exp_real d3d_set_zbias(double bias)
 {
-	// Offsets the drawing depth, allowing polygons with the same positions to be drawn without z-fighting artifacts.  Useful for shadows, decals, etc.   Integer 0-16, defaults to 0.  Higher values appear in front of lower ones.
+	// Offsets the drawing depth, allowing polygons with the same positions to be 
+	// drawn without z-fighting artifacts.  Useful for shadows, decals, etc.
+	// Integer 0-16, defaults to 0.  Higher values appear in front of lower ones.
 	d3dcrs(D3DRS_ZBIAS, (uint)floor(clamp(bias, 0, 16)));
 }
 exp_real d3d_set_fillmode(double mode)
 {
-	// Set how D3D renders polygons: point, wireframe || solid.  Use d3d_fillmode_ constants.  Defaults to solid.
+	// Set how D3D renders polygons: point, wireframe || solid.
+	// Use d3d_fillmode_ constants.  Defaults to solid.
 	d3dcrs(D3DRS_FILLMODE, (dword)mode);
 }
 exp_real d3d_set_normal_auto(double state)
 {
-	// Automatically normalises vectors when rendering.  Should solve problems with models changing brightness when scaled.
+	// Automatically normalises vectors when rendering.
+	// Should solve problems with models changing brightness when scaled.
 	d3dcrs(D3DRS_NORMALIZENORMALS, (state > 0.0));
 }
 
@@ -1038,7 +835,8 @@ exp_real d3d_primitive_begin_ext(double primitive, double textured)
 
 	return gtrue;
 }
-exp_real d3d_vertex_ext(double x, double y, double z, double nx, double ny, double nz, double col, double alpha, double speccol, double specalpha)
+exp_real d3d_vertex_ext(double x, double y, double z, double nx, double ny, double nz, 
+	double col, double alpha, double speccol, double specalpha)
 {
 	// Position, normal, diffuse/specular colour && alpha.
 	vbuff_int[vbuff_c].x = (float)x;
@@ -1059,7 +857,8 @@ exp_real d3d_vertex_ext(double x, double y, double z, double nx, double ny, doub
 }
 exp_real d3d_vertex_ext_tex(double stage, double xtex, double ytex)
 {
-	// Set vertex texture coordinates.  There are eight sets indexed 0-7, one for each texture stage.
+	// Set vertex texture coordinates.
+	// There are eight sets indexed 0-7, one for each texture stage.
 	uint ind = (uint)(clamp(stage, 0.0, 7.0) * 2.0);
 
 	vbuff_int[vbuff_c].uv[ind] = (float)xtex;
@@ -1069,10 +868,12 @@ exp_real d3d_vertex_ext_tex(double stage, double xtex, double ytex)
 }
 exp_real d3d_vertex_ext_next()
 {
-	// Call when finished with the current vertex to start defining the next one.  Only required for textured primitives.
+	// Call when finished with the current vertex to start defining the next one.
+	// Only required for textured primitives.
 	if (vbuff_autoinc)
 	{
-		complain("d3d_vertex_ext_next() is called automatically for untextured extended primitives.");
+		complain("d3d_vertex_ext_next() is called automatically for untextured"
+			"extended primitives.");
 	}
 
 	vbuff_c++;
@@ -1133,7 +934,8 @@ exp_real draw_primitive_begin_ext(double primitive, double textured)
 	// 2D equivalent.
 	return d3d_primitive_begin_ext(primitive, textured);
 }
-exp_real draw_vertex_ext(double x, double y, double col, double alpha, double speccol, double specalpha)
+exp_real draw_vertex_ext(double x, double y, double col, double alpha, 
+	double speccol, double specalpha)
 {
 	// 2D equivalent.
 	// The buffer is zeroed by begin_ext; no need to set the 3D stuff here.

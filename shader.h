@@ -2,34 +2,6 @@
 
 #include "main.h"
 
-
-// Internal
-
-inline double roundd(double x);
-inline double frac(double x);
-inline bool   eps(double a, double b);
-inline bool   eps2(double a, double b, double eps);
-inline double slope(double x1, double y1, double x2, double y2);
-inline double lerp(double vala, double valb, double x);
-inline double cerp(double vala, double valb, double x);
-inline double curp(double a, double b, double c, double d, double x);
-inline double unlerp(double val, double minval, double maxval);
-inline double clamp(double val, double minval, double maxval);
-inline double snap_low(double x, double cellw);
-inline double snap_high(double x, double cellw);
-inline double snap_near(double x, double cellw);
-inline void   tr_rot(double& x, double& y, double dir);
-inline void   tr_move(double& x, double& y, double len, double dir);
-inline void   tr_scale(double& x, double& y, double scale);
-inline int    col_red(int col);
-inline int    col_green(int col);
-inline int    col_blue(int col);
-inline int    col_make(int r, int g, int b);
-int           col_lerp(int cola, int colb, double a);
-
-
-// External
-
 exp_real init();
 
 exp_str d3d_dev_get_name();

@@ -429,6 +429,9 @@
     <ClInclude Include="shader.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="Librarys\math_s.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp">
@@ -477,6 +480,9 @@
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="shader.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Librarys\math_s.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>
