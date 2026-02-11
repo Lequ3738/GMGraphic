@@ -1,6 +1,6 @@
 #pragma once
 
-#include "main.h"
+#include "../main.h"
 
 exp_uint get_vbuff_d3d();
 exp_uint get_vbuff_int();

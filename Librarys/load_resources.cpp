@@ -3,6 +3,9 @@
 
 gm::sprite gm::decode_gmspr(std::string& file)
 {
+	if (BufferDLL == nullptr)
+		throw std::runtime_error("Buffer library is not loaded.");
+
 	gm_real buffer = gm::buffer_create();
 	bool result = (bool)gm::buffer_read_from_file(buffer, file.c_str());
 	if (!result)

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "main.h"
+#include "../main.h"
 
 struct atlas_image;
 struct texture_atlas;

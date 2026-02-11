@@ -12,9 +12,14 @@
 
 ## 如何编译
 
-使用 Visual Studio 2022 进行编译。
+使用 Visual Studio 2022 进行编译。<br>
+注意要使用 x86 平台进行编译，因为 GameMaker 8.0 是 32 位程序。
 
 ## 感谢
 
 感谢以下项目提供的灵感和代码参考：
-- **Shader Extension** by LSnK
+- [**Shader Extension**](https://web.archive.org/web/20191126155011/http://gmc.yoyogames.com/index.php?showtopic=492876) by LSnK
+
+感谢以下项目提供的技术支持：
+- [**GMAPI**](https://github.com/snakedeveloper/gmapi) by Snake
+- [**RectangleBinPack**](https://github.com/juj/RectangleBinPack) by Jukka Jylänki

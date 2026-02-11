@@ -426,7 +426,7 @@
     <ClInclude Include="GMAPI\GmapiSounds.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="shader.h">
+    <ClInclude Include="Functions\shader.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="Librarys\math_s.h">
@@ -435,7 +435,7 @@
     <ClInclude Include="Librarys\structs.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="texture_atlas.h">
+    <ClInclude Include="Functions\texture_atlas.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="Librarys\buffer.h">
@@ -497,13 +497,13 @@
     <ClCompile Include="GMAPI\GmapiSounds.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="shader.cpp">
+    <ClCompile Include="Functions\shader.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="Librarys\math_s.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="texture_atlas.cpp">
+    <ClCompile Include="Functions\texture_atlas.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="Librarys\buffer.cpp">

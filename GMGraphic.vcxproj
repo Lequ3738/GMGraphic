@@ -74,7 +74,7 @@
     <IncludePath>GMAPI;$(IncludePath);Direct3D_8</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <IncludePath>GMAPI;Librarys;$(IncludePath);Direct3D_8</IncludePath>
+    <IncludePath>GMAPI;Librarys;Functions;$(IncludePath);Direct3D_8</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <IncludePath>GMAPI;$(IncludePath);Direct3D_8</IncludePath>
@@ -294,7 +294,7 @@
     <ClInclude Include="Librarys\MaxRectsBinPack.h" />
     <ClInclude Include="Librarys\Rect.h" />
     <ClInclude Include="Librarys\structs.h" />
-    <ClInclude Include="texture_atlas.h" />
+    <ClInclude Include="Functions\texture_atlas.h" />
     <ClInclude Include="main.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="GMAPI\Gmapi.h" />
@@ -315,7 +315,7 @@
     <ClInclude Include="GMAPI\GmapiResources.h" />
     <ClInclude Include="GMAPI\GmapiSounds.h" />
     <ClInclude Include="pch.h" />
-    <ClInclude Include="shader.h" />
+    <ClInclude Include="Functions\shader.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="GMAPI\Gmapi3DGraphics.cpp" />
@@ -336,7 +336,7 @@
     <ClCompile Include="Librarys\math_s.cpp" />
     <ClCompile Include="Librarys\MaxRectsBinPack.cpp" />
     <ClCompile Include="Librarys\Rect.cpp" />
-    <ClCompile Include="texture_atlas.cpp" />
+    <ClCompile Include="Functions\texture_atlas.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
@@ -344,7 +344,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="shader.cpp" />
+    <ClCompile Include="Functions\shader.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Library Include="Direct3D_8\amstrmid.lib" />
