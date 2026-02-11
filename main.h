@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include <fstream>
 #include <math.h>
 #include "gmapi.h"
@@ -26,10 +27,18 @@ constexpr double gerror = -1.0;   // User input error
 typedef unsigned long ulong;
 typedef unsigned int uint;
 typedef unsigned short ushort;
+typedef unsigned char uchar;
 constexpr double pi = 3.1415926535897932384626433832795;
 constexpr gm_string crlf = "\r\n";
 constexpr double epsilon = 0.00001;
+
 #define complain(x) gm::show_error(x,false); return gerror;
+#define simple_catch(funcname, returns)															\
+	catch (const std::exception& e)	{															\
+		gm::show_error("An error occurred while executing function " funcname					\
+		" in GMGraphic.dll:\n" + std::string(e.what()), false);									\
+		return returns;																			\
+	}
 
 // Define away a bunch of gibberish...
 #define return_string(str)  str_ret = str;  return str_ret.c_str();

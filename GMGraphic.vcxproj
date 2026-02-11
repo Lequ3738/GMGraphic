@@ -288,8 +288,13 @@
     <ClInclude Include="Direct3D_8\vpnotify.h" />
     <ClInclude Include="Direct3D_8\vptype.h" />
     <ClInclude Include="Direct3D_8\xprtdefs.h" />
+    <ClInclude Include="Librarys\buffer.h" />
+    <ClInclude Include="Librarys\load_resources.h" />
     <ClInclude Include="Librarys\math_s.h" />
+    <ClInclude Include="Librarys\MaxRectsBinPack.h" />
+    <ClInclude Include="Librarys\Rect.h" />
     <ClInclude Include="Librarys\structs.h" />
+    <ClInclude Include="texture_atlas.h" />
     <ClInclude Include="main.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="GMAPI\Gmapi.h" />
@@ -326,7 +331,12 @@
     <ClCompile Include="GMAPI\GmapiPopups.cpp" />
     <ClCompile Include="GMAPI\GmapiResources.cpp" />
     <ClCompile Include="GMAPI\GmapiSounds.cpp" />
+    <ClCompile Include="Librarys\buffer.cpp" />
+    <ClCompile Include="Librarys\load_resources.cpp" />
     <ClCompile Include="Librarys\math_s.cpp" />
+    <ClCompile Include="Librarys\MaxRectsBinPack.cpp" />
+    <ClCompile Include="Librarys\Rect.cpp" />
+    <ClCompile Include="texture_atlas.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>

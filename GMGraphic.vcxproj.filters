@@ -435,6 +435,21 @@
     <ClInclude Include="Librarys\structs.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="texture_atlas.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Librarys\buffer.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Librarys\MaxRectsBinPack.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Librarys\Rect.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Librarys\load_resources.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp">
@@ -486,6 +501,21 @@
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="Librarys\math_s.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="texture_atlas.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Librarys\buffer.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Librarys\MaxRectsBinPack.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Librarys\Rect.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Librarys\load_resources.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>

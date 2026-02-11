@@ -35,7 +35,7 @@ double cerp(double vala, double valb, double x)
 }
 
 // Cubic interpolation.  0-1 == B-C.
-// A && D are the datapoints before && after those.
+// A and D are the datapoints before and after those.
 double curp(double a, double b, double c, double d, double x)
 {
 	double p, q;
