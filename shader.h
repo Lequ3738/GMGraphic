@@ -2,6 +2,13 @@
 
 #include "main.h"
 
+exp_uint get_vbuff_d3d();
+exp_uint get_vbuff_int();
+exp_uint get_vbuff_c();
+exp_uint get_vbuff_prim();
+exp_uint get_vbuff_usevs();
+exp_uint get_vbuff_autoinc();
+
 exp_real init();
 
 exp_str d3d_dev_get_name();
@@ -33,6 +40,8 @@ exp_real d3d_set_tex_all(double tex);
 exp_real d3d_set_tex_int(double stage, double mode);
 exp_real d3d_set_tex_wrap(double stage, double xmode, double ymode);
 exp_real d3d_set_tex_border(double stage, double col, double alpha);
+exp_real d3d_set_tex_aniso(double stage, double anisotropy);
+exp_real d3d_set_tex_mip(double stage, double mode);
 exp_real d3d_set_tex_conf(double conf);
 
 exp_real d3d_conf_ps_create();

@@ -28,4 +28,4 @@ uint   col_d3d(int gmcol, double gmalpha);
 
 bool   file_read(char* file_in, char*& target, uint& size);
 bool   file_write(char* file_out, void* data, uint size, bool append = false);
-bool   file_write(char* file_out, std::string data, uint size, bool append = false);
+bool   file_write(char* file_out, std::string& data, uint size, bool append = false);

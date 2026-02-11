@@ -3,6 +3,7 @@
 #include "main.h"
 
 gm::CGMAPI* gmapi;
+std::string str_ret = "BABEBEEF"; // Used to return strings by macro.
 
 bool WINAPI DllMain(HINSTANCE aModuleHandle, int aReason, int aReserved)
 {
@@ -12,10 +13,11 @@ bool WINAPI DllMain(HINSTANCE aModuleHandle, int aReason, int aReserved)
 		{
 			ulong result = 0;
 			gmapi = gm::CGMAPI::Create(&result);
+			
 			// Check the initialization
 			if (result == gm::GMAPI_INITIALIZATION_FAILED)
 			{
-				MessageBox(NULL, L"Unable to initialize GMAPI.", NULL, MB_SYSTEMMODAL | MB_ICONERROR);
+				complain("Unable to initialize GMAPI.");
 				return FALSE;
 			}
 		}

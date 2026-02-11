@@ -9,6 +9,7 @@
 #include "d3dx8.h"
 
 extern gm::CGMAPI* gmapi;
+extern std::string str_ret; // Used to return strings by macro.
 
 typedef double gm_real;
 typedef const char* gm_string;
@@ -31,7 +32,7 @@ constexpr double epsilon = 0.00001;
 #define complain(x) gm::show_error(x,false); return gerror;
 
 // Define away a bunch of gibberish...
-#define return_gmxs(str)    str_ret = str;  return (char*) str_ret.c_str();
+#define return_string(str)  str_ret = str;  return str_ret.c_str();
 #define dword               DWORD                               // Capslock is autopilot for cool!
 #define d3dvar(x)           *((DWORD*)&x)                       // Float as dword pointer for D3D's more shitastic functions.
 #define d3dcheck(f)         return (double) (D3D_OK == (f))     // Returns status immediately.
