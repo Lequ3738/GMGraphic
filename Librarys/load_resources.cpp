@@ -57,6 +57,7 @@ gm::sprite gm::decode_gmspr(std::string& file)
 			gm::buffer_get_pos(data));
 		if (image_data == nullptr)
 		{
+			gm::buffer_destroy(data);
 			throw std::runtime_error("Invalid image data block.\nFile: " + std::string(file)
 				+ "\nIndex: " + std::to_string(i));
 		}
@@ -76,6 +77,8 @@ gm::sprite gm::decode_gmspr(std::string& file)
 	int bounding_right = (int)gm::buffer_read_int32(data);
 	int bounding_bottom = (int)gm::buffer_read_int32(data);
 	int bounding_top = (int)gm::buffer_read_int32(data);
+
+	gm::buffer_destroy(data);
 
 	return gm::sprite {
 		.width = width, .height = height,

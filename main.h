@@ -8,6 +8,7 @@
 #include <math.h>
 #include "gmapi.h"
 #include "d3dx8.h"
+#include "dxerr8.h"
 
 extern gm::CGMAPI* gmapi;
 extern std::string str_ret; // Used to return strings by macro.
@@ -60,3 +61,11 @@ constexpr int vb_count = 8192; // Max verts per prim; GM's limit of 1024 is exce
 constexpr static double degtorad_mul = pi / 180.0;
 constexpr static double radtodeg_mul = 180.0 / pi;
 constexpr static double pi2 = pi * 2.0;
+
+inline void D3DCheck(HRESULT result, int pos = 0)
+{
+	if (SUCCEEDED(result))
+		return;
+
+	throw std::runtime_error("Pos " + std::to_string(pos) + ": " + DXGetErrorDescription8A(result));
+}

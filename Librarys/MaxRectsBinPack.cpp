@@ -21,8 +21,8 @@ namespace rbp {
 
 	using namespace std;
 
-	MaxRectsBinPack::MaxRectsBinPack()
-		:binWidth(0),
+	MaxRectsBinPack::MaxRectsBinPack() :
+		binWidth(0),
 		binHeight(0)
 	{
 	}

@@ -23,6 +23,8 @@ namespace gm
 		int bounding_right = 0;
 		int bounding_top = 0;
 		int bounding_bottom = 0;
+
+		inline uint frame_count() const { return data.size(); }
 	};
 
 	sprite decode_gmspr(std::string& file);

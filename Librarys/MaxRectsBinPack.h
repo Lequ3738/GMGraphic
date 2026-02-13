@@ -52,12 +52,12 @@ namespace rbp {
 		double Occupancy() const;
 
 	private:
-		int binWidth;
-		int binHeight;
+		int binWidth = 0;
+		int binHeight = 0;
 
-		bool binAllowFlip;
+		bool binAllowFlip = false;
 
-		size_t newFreeRectanglesLastSize;
+		size_t newFreeRectanglesLastSize = 0;
 		std::vector<Rect> newFreeRectangles;
 
 		std::vector<Rect> usedRectangles;

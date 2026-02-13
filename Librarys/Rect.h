@@ -1,5 +1,5 @@
 /** @file Rect.h
-	@author Jukka Jylänki
+	@author Jukka Jylé‹˜ki
 
 	This work is released to Public Domain, do whatever you want with it.
 */
@@ -22,16 +22,16 @@ namespace rbp {
 
 struct RectSize
 {
-	int width;
-	int height;
+	int width = 0;
+	int height = 0;
 };
 
 struct Rect
 {
-	int x;
-	int y;
-	int width;
-	int height;
+	int x = 0;
+	int y = 0;
+	int width = 0;
+	int height = 0;
 };
 
 /// Performs a lexicographic compare on (rect short side, rect long side).
