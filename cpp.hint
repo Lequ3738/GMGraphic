@@ -1,0 +1,21 @@
+#define expdll
+#define exp_real
+#define exp_str
+#define exp_uint
+
+#define complain(x)
+#define simple_catch(funcname, returns)
+
+#define return_string(str)
+#define dword
+#define d3dvar(x)
+#define d3dcheck(f)
+#define d3dfail(v,f)
+#define d3drs(state,value)
+#define d3dcrs(state,value)
+#define d3dtex
+
+#define fvf_default
+#define fvf_ext
+
+#define vb_bytes

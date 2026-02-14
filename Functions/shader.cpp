@@ -467,7 +467,7 @@ exp_real d3d_set_tex_aniso(double stage, double anisotropy)
         return gerror;
 
     d3dcheck(d3ddev->SetTextureStageState(s, D3DTSS_MAXANISOTROPY, 
-        (dword)min(anisotropy, d3dcaps.MaxAnisotropy)));
+        (dword)std::min((dword)anisotropy, d3dcaps.MaxAnisotropy)));
 }
 
 // Set mipmap filtering mode. tex_int_nearest or tex_int_bilinear.
@@ -491,7 +491,7 @@ exp_real d3d_set_tex_conf(double conf)
 
     uint vpos = (uint)floor(conf);
 
-    for (uint i = 0; i < min(8, d3dcaps.MaxSimultaneousTextures); i++)
+    for (uint i = 0; i < (uint)std::min(8, (int)d3dcaps.MaxSimultaneousTextures); i++)
     {
         if (conf_vec_tex[vpos].set[i])
         {
@@ -712,7 +712,7 @@ exp_real d3d_set_mask(double r, double g, double b, double a)
     if (!(d3dcaps.PrimitiveMiscCaps & D3DPMISCCAPS_COLORWRITEENABLE))
         return gfalse;
 
-    dword mask[4];
+    dword mask[4]{};
     mask[0] = (r > 0.0) ? D3DCOLORWRITEENABLE_RED : 0;
     mask[1] = (g > 0.0) ? D3DCOLORWRITEENABLE_GREEN : 0;
     mask[2] = (b > 0.0) ? D3DCOLORWRITEENABLE_BLUE : 0;

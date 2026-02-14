@@ -42,33 +42,54 @@ struct texture_atlas
 
 	IDirect3DTexture8* texture = nullptr;	// 该图集对应的 GPU 纹理
 
-	inline bool read_only() const			// 指示该纹理图集是否为只读模式
+	/// <summary>
+	/// 创建一个新的纹理图集。
+	/// </summary>
+	/// <param name="size">纹理图集的大小，可以为 256，512，1024 或 2048。</param>
+	/// <param name="kind">纹理图集的类型。</param>
+	texture_atlas(uint size, atlas_kind kind);
+
+	/// <summary>
+	/// 该结构体的析构函数。
+	/// </summary>
+	~texture_atlas();
+
+	/// <summary>
+	/// 在该纹理图集中添加一个 Sprite。
+	/// </summary>
+	/// <param name="gmspr_file">GameMaker Sprite 文件。</param>
+	/// <returns>该 Sprite 是否成功添加至纹理图集中。</returns>
+	bool add_sprite(std::string& gmspr_file);
+
+	/// <summary>
+	/// 将纹理图集数据上传至 GPU。
+	/// </summary>
+	/// <param name="del_memdata">是否删除内存中的纹理图集数据。
+	/// 若为 true，使用此函数后纹理图集将变为只读状态。</param>
+	/// <returns>是否成功。</returns>
+	bool burn(bool del_memdata = true);
+
+	/// <summary>
+	/// 将纹理图集保存至一个 png 文件中，该纹理图集必须使用过 burn 方法。
+	/// </summary>
+	/// <param name="file_path">要保存的文件路径。</param>
+	void save(path& file_path);
+
+	/// <summary>
+	/// 指示该纹理图集是否为只读模式
+	/// </summary>
+	inline bool read_only() const
 	{
 		return texture != nullptr && data.empty();
 	}
 };
 
-/// <summary>
-/// 创建一个新的纹理图集。
-/// </summary>
-/// <param name="size">纹理图集的大小，可以为 256，512，1024 或 2048。</param>
-/// <param name="kind">纹理图集的类型。</param>
-/// <returns>纹理图集的id。</returns>
-uint texture_atlas_create(uint size, texture_atlas::atlas_kind kind);
+// ============================================================================
+// Export Functions
+// ============================================================================
 
-/// <summary>
-/// 在指定的纹理图集中添加一个 Sprite。
-/// </summary>
-/// <param name="id">纹理图集的id。</param>
-/// <param name="gmspr_file">GameMaker Sprite 文件。</param>
-/// <returns>该 Sprite 是否成功添加至纹理图集中。</returns>
-bool texture_atlas_add_sprite(uint id, std::string& gmspr_file);
-
-/// <summary>
-/// 将纹理图集数据上传至 GPU。
-/// </summary>
-/// <param name="id">纹理图集的id。</param>
-/// <param name="del_memdata">是否删除内存中的纹理图集数据。
-/// 若为 true，使用此函数后纹理图集将变为只读状态。</param>
-/// <returns>是否成功。</returns>
-bool texture_atlas_burn(uint id, bool del_memdata = true);
+exp_real texture_atlas_create(gm_real size, gm_real kind);
+exp_real texture_atlas_delete(gm_real id);
+exp_real texture_atlas_add_sprite(gm_real id, gm_string gmspr_file);
+exp_real texture_atlas_burn(gm_real id, gm_real del_memdata);
+exp_real texture_atlas_save(gm_real id, gm_string file_path);

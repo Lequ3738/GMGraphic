@@ -450,6 +450,9 @@
     <ClInclude Include="Librarys\load_resources.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="Librarys\lodepng.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp">
@@ -518,6 +521,9 @@
     <ClCompile Include="Librarys\load_resources.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="Librarys\lodepng.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Library Include="Direct3D_8\amstrmid.lib" />
@@ -561,5 +567,6 @@
     <None Include="Direct3D_8\Msvidctl.tlb" />
     <None Include="Direct3D_8\Tuner.tlb" />
     <None Include="README.md" />
+    <None Include="cpp.hint" />
   </ItemGroup>
 </Project>

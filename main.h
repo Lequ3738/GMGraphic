@@ -6,9 +6,12 @@
 #include <unordered_map>
 #include <fstream>
 #include <math.h>
+#include <filesystem>
 #include "gmapi.h"
 #include "d3dx8.h"
 #include "dxerr8.h"
+
+using path = std::filesystem::path;
 
 extern gm::CGMAPI* gmapi;
 extern std::string str_ret; // Used to return strings by macro.

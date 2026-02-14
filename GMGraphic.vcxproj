@@ -290,6 +290,7 @@
     <ClInclude Include="Direct3D_8\xprtdefs.h" />
     <ClInclude Include="Librarys\buffer.h" />
     <ClInclude Include="Librarys\load_resources.h" />
+    <ClInclude Include="Librarys\lodepng.h" />
     <ClInclude Include="Librarys\math_s.h" />
     <ClInclude Include="Librarys\MaxRectsBinPack.h" />
     <ClInclude Include="Librarys\Rect.h" />
@@ -333,6 +334,7 @@
     <ClCompile Include="GMAPI\GmapiSounds.cpp" />
     <ClCompile Include="Librarys\buffer.cpp" />
     <ClCompile Include="Librarys\load_resources.cpp" />
+    <ClCompile Include="Librarys\lodepng.cpp" />
     <ClCompile Include="Librarys\math_s.cpp" />
     <ClCompile Include="Librarys\MaxRectsBinPack.cpp" />
     <ClCompile Include="Librarys\Rect.cpp" />
@@ -379,6 +381,7 @@
     <None Include="Direct3D_8\dxsdk.inc" />
     <None Include="Direct3D_8\Msvidctl.tlb" />
     <None Include="Direct3D_8\Tuner.tlb" />
+    <None Include="cpp.hint" />
     <None Include="README.md" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

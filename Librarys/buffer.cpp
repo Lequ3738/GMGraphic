@@ -24,7 +24,7 @@ namespace gm
 	r_rrrr buffer_write_buffer_part;
 }
 
-template<typename T> void load(T& var, gm_string name)
+template<typename T> static void load(T& var, gm_string name)
 {
 	var = (T)GetProcAddress(BufferDLL, name);
 	if (var == nullptr) {
