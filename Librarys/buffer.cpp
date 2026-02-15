@@ -28,8 +28,8 @@ template<typename T> static void load(T& var, gm_string name)
 {
 	var = (T)GetProcAddress(BufferDLL, name);
 	if (var == nullptr) {
-		throw std::runtime_error("加载 Http.dll 时获取函数 ( " +
-			std::string(name) + ") 失败。");
+		throw std::runtime_error("Failed to obtain function (" +
+			std::string(name) + ") when loading Http.dll.");
 	}
 }
 
@@ -41,7 +41,7 @@ exp_real ImportBufferModule(gm_string name)
 		BufferDLL = GetModuleHandle(wname.c_str());
 
 		if (BufferDLL == nullptr)
-			throw std::runtime_error("加载 " + std::string(name) + " 失败。");
+			throw std::runtime_error("Failed to load " + std::string(name) + ".");
 
 		load(gm::buffer_create, "buffer_create");
 		load(gm::buffer_destroy, "buffer_destroy");

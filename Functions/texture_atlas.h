@@ -50,6 +50,11 @@ struct texture_atlas
 	texture_atlas(uint size, atlas_kind kind);
 
 	/// <summary>
+	/// 创建一个边长为 1024，类型为 atlas_kind::sprite 的纹理图集。
+	/// </summary>
+	texture_atlas();
+
+	/// <summary>
 	/// 该结构体的析构函数。
 	/// </summary>
 	~texture_atlas();
@@ -93,3 +98,13 @@ exp_real texture_atlas_delete(gm_real id);
 exp_real texture_atlas_add_sprite(gm_real id, gm_string gmspr_file);
 exp_real texture_atlas_burn(gm_real id, gm_real del_memdata);
 exp_real texture_atlas_save(gm_real id, gm_string file_path);
+
+exp_real texture_atlas_auto_add(gm_string file);
+exp_real texture_atlas_auto_finish();
+
+exp_real texture_atlas_count();
+exp_real texture_atlas_exists(gm_real id);
+exp_real texture_atlas_type(gm_real id);
+exp_real texture_atlas_find_first();
+exp_real texture_atlas_find_next(gm_real id);
+exp_real texture_atlas_find_last();

@@ -3,9 +3,9 @@
 // Updated: 22/Dec/2010  by LSnK
 //          2026/2/10    by Lequ
 
-#include "shader.h"
 #include "math_s.h"
 #include "structs.h"
+#include "shader.h"
 
 // ============================================================================
 // Variables

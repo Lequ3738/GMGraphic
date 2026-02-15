@@ -1,5 +1,5 @@
-#include "load_resources.h"
 #include "buffer.h"
+#include "load_resources.h"
 
 gm::sprite gm::decode_gmspr(std::string& file)
 {

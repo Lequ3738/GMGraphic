@@ -1,6 +1,6 @@
-#include "texture_atlas.h"
 #include "load_resources.h"
 #include "MaxRectsBinPack.h"
+#include "texture_atlas.h"
 
 std::unordered_map<uint, texture_atlas> game_texture_atlas;
 uint texture_atlas_id_position = 0, atlas_image_id = 0;
@@ -25,6 +25,14 @@ texture_atlas::texture_atlas(uint size, atlas_kind kind)
 			throw std::runtime_error("Invalid texture atlas size. "
 				"Supported sizes are 256, 512, 1024, and 2048.");
 	}
+}
+
+texture_atlas::texture_atlas()
+{
+	size = 1024;
+	kind = sprite;
+	data = std::vector<uchar>(size * size * 4, 0);
+	bin = rbp::MaxRectsBinPack(size, size, true);
 }
 
 texture_atlas::~texture_atlas()
@@ -142,7 +150,7 @@ bool texture_atlas::add_sprite(std::string& gmspr_file)
 	return true;
 }
 
-bool texture_atlas::burn(bool del_memdata = true)
+bool texture_atlas::burn(bool del_memdata)
 {
 	if (read_only())
 		return false;
@@ -247,4 +255,101 @@ exp_real texture_atlas_save(gm_real id, gm_string file_path)
 		return gtrue;
 	}
 	simple_catch("texture_atlas_save", gfalse)
+}
+
+exp_real texture_atlas_auto_add(gm_string file)
+{
+	try
+	{
+		texture_atlas::atlas_kind kind = texture_atlas::atlas_kind::sprite;
+
+		gm_string ext = gm::filename_ext(file);
+		if (strcmp(ext, ".png") == 0)
+			kind = texture_atlas::atlas_kind::background;
+		else if (strcmp(ext, ".gmspr") == 0)
+			kind = texture_atlas::atlas_kind::sprite;
+		else
+		{
+			throw std::runtime_error("Unsupported file type for auto-adding to texture atlas: " +
+				std::string(ext));
+		}
+
+		
+		for (auto& [atlas_id, atlas] : game_texture_atlas)
+		{
+			if (atlas.kind != kind || atlas.read_only())
+				continue;
+
+			std::string f(file);
+			if (kind == texture_atlas::atlas_kind::sprite)
+			{
+				if (atlas.add_sprite(f))
+					return gtrue;
+			}
+			else
+			{
+
+			}
+		}
+
+		game_texture_atlas[texture_atlas_id_position] = texture_atlas(1024, kind);
+		texture_atlas& atlas = game_texture_atlas[texture_atlas_id_position];
+		uint id = texture_atlas_id_position++;
+
+		std::string f(file);
+		return (gm_real)atlas.add_sprite(f);
+	}
+	simple_catch("texture_atlas_auto_add", gfalse)
+}
+
+exp_real texture_atlas_auto_finish()
+{
+	try
+	{
+		for (auto& [atlas_id, atlas] : game_texture_atlas)
+			atlas.burn();
+
+		return gtrue;
+	}
+	simple_catch("texture_atlas_auto_finish", gfalse)
+}
+
+exp_real texture_atlas_count()
+{
+	return (gm_real)game_texture_atlas.size();
+}
+
+exp_real texture_atlas_exists(gm_real id)
+{
+	return game_texture_atlas.count((uint)id) ? gtrue : gfalse;
+}
+
+exp_real texture_atlas_type(gm_real id)
+{
+	try
+	{
+		texture_atlas& atlas = game_texture_atlas.at((uint)id);
+		return (gm_real)atlas.kind;
+	}
+	simple_catch("texture_atlas_type", -1)
+}
+
+exp_real texture_atlas_find_first()
+{
+	return game_texture_atlas.empty() ? -1 : 
+		(gm_real)game_texture_atlas.begin()->first;
+}
+
+exp_real texture_atlas_find_next(gm_real id)
+{
+	auto it = game_texture_atlas.find((uint)id);
+	if (it == game_texture_atlas.end() || std::next(it) == game_texture_atlas.end())
+		return -1;
+	return (gm_real)std::next(it)->first;
+}
+
+exp_real texture_atlas_find_last()
+{
+	return game_texture_atlas.empty() ? -1 : 
+		(gm_real)std::prev(game_texture_atlas.end())->first;
 }

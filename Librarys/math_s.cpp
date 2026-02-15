@@ -177,5 +177,5 @@ bool file_write(char* file_out, void* data, uint size, bool append)
 
 bool file_write(char* file_out, std::string& data, uint size, bool append)
 {
-	return file_write(file_out, data.data(), min(size, data.length()), append);
+	return file_write(file_out, data.data(), std::min(size, data.length()), append);
 }
