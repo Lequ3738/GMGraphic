@@ -28,4 +28,7 @@ namespace gm
 	};
 
 	sprite decode_gmspr(std::string& file);
+	sprite decode_png(std::string& file);
+	sprite get_sprite_data(uint id);
+	sprite get_background_data(uint id);
 }

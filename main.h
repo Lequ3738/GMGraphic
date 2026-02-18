@@ -40,8 +40,12 @@ constexpr double epsilon = 0.00001;
 #define simple_catch(funcname, returns)															\
 	catch (const std::exception& e)	{															\
 		gm::show_error("An error occurred while executing function " funcname					\
-		" in GMGraphic.dll:\n" + std::string(e.what()), false);									\
+			" in GMGraphic.dll:\n" + std::string(e.what()), false);								\
 		return returns;																			\
+	}
+#define transpond_catch(funcname)																\
+	catch (const std::exception& e)	{															\
+		throw std::runtime_error("    in function " funcname ":\n" + std::string(e.what()));	\
 	}
 
 // Define away a bunch of gibberish...
@@ -55,8 +59,8 @@ constexpr double epsilon = 0.00001;
 #define d3dtex              IDirect3DTexture8
 
 // Buffer parameters
-#define fvf_default  ( D3DFVF_XYZ | D3DFVF_NORMAL  | D3DFVF_DIFFUSE  | D3DFVF_TEX1 ) // GM's FVF for D3D.
-#define fvf_ext      ( D3DFVF_XYZ | D3DFVF_NORMAL  | D3DFVF_DIFFUSE  | D3DFVF_SPECULAR | D3DFVF_TEX8 )  // M-M-M-MEGA KILL
+#define fvf_default  ( D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE | D3DFVF_TEX1 ) // GM's FVF for D3D.
+#define fvf_ext      ( D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE | D3DFVF_SPECULAR | D3DFVF_TEX8 )  // M-M-M-MEGA KILL
 
 constexpr int vb_count = 8192; // Max verts per prim; GM's limit of 1024 is excessively conservative.
 #define vb_bytes vb_count * sizeof(vert_ext)  // 768KB
