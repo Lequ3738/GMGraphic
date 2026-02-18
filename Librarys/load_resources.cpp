@@ -182,7 +182,7 @@ gm::sprite gm::get_sprite_data(uint id)
 		ISprite spr = gmapi->Sprites[id];
 		std::vector<std::vector<uchar>> images(spr.Subimages.GetCount());
 
-		for (uint i = 0; i < spr.Subimages.GetCount(); ++i)
+		for (uint i = 0; i < (uint)spr.Subimages.GetCount(); ++i)
 		{
 			IDirect3DTexture8* texture = spr.Subimages[id].GetTexture();
 			auto [data, w, h] = get_image_data(texture);
