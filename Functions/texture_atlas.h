@@ -17,10 +17,13 @@ struct texture_atlas
 		/// </summary>
 		struct sub_image
 		{
-			uint left = 0;
-			uint top = 0;
-			uint width = 0;  // width 和 height 都按照未进行旋转的情况进行存储
-			uint height = 0;
+			uint texture_left = 0;
+			uint texture_top = 0;
+			uint texture_width = 0;  // width 和 height 都按照未进行旋转的情况进行存储
+			uint texture_height = 0; // 这里存储的是经过裁剪后的宽高
+
+			int orig_x = 0;  // 该偏移为相对 texture_left 的，可以为负
+			int orig_y = 0;  // 该偏移为相对 texture_top 的，可以为负
 
 			bool is_rotated = false;  // 是否在图集中旋转了 90 度存储
 
@@ -28,15 +31,16 @@ struct texture_atlas
 			// 为了和 GM8 内部的 texture ID 区分，从 100,000 开始计数。
 			uint texture_id = 0;
 
-			sub_image(uint left, uint top, uint width, uint height, bool is_rotated,
-				uint texture_id) : left(left), top(top), width(width), height(height),
+			sub_image(uint left, uint top, uint width, uint height, int ox, int oy, 
+				bool is_rotated, uint texture_id) : texture_left(left), texture_top(top), 
+				texture_width(width), texture_height(height), orig_x(ox), orig_y(oy),
 				is_rotated(is_rotated), texture_id(texture_id) {}
 
 			sub_image() = delete;
 		};
 
-		int orig_x = 0;  // 该偏移为相对 left 的
-		int orig_y = 0;  // 该偏移为相对 top 的
+		uint image_width = 0;  // 图像的虚拟宽，为实际使用的时候的宽
+		uint image_height = 0; // 图像的虚拟高
 
 		using sub_image_ptr = std::unique_ptr<sub_image>;
 		std::vector<sub_image_ptr> frames;
@@ -46,9 +50,9 @@ struct texture_atlas
 		uint image_id = 0;
 		uint atlas_id = 0;  // 该图像所在的纹理图集 ID
 
-		images(int orig_x, int orig_y, std::vector<sub_image_ptr> frames, uint image_id, 
-			uint atlas_id) : orig_x(orig_x), orig_y(orig_y), frames(std::move(frames)), 
-			image_id(image_id), atlas_id(atlas_id) {}
+		images(uint width, uint height, std::vector<sub_image_ptr> frames, 
+			uint image_id, uint atlas_id) : image_width(width), image_height(height), 
+			frames(std::move(frames)), image_id(image_id), atlas_id(atlas_id) {}
 
 		images() = delete;
 	};
@@ -116,7 +120,7 @@ struct texture_atlas
 	/// 将纹理图集保存至一个 png 文件中，该纹理图集必须使用过 burn 方法。
 	/// </summary>
 	/// <param name="file_path">要保存的文件路径。</param>
-	void save(path& file_path);
+	void save(path& file_path) const;
 
 	/// <summary>
 	/// 指示该纹理图集是否为只读模式
@@ -130,6 +134,7 @@ private:
 	void add_image_to_memory(std::vector<uchar>& image_data, rbp::Rect& rect, 
 		images::sub_image& image);
 	uint write_image_data(gm::sprite& spr);
+	static gm::image_rect crop_blank_area(gm::image_data& image);
 };
 
 // ============================================================================

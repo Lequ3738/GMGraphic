@@ -3,6 +3,17 @@
 
 namespace gm
 {
+	// data + width + height
+	typedef std::tuple<std::vector<uchar>, uint, uint> image_data;
+
+	struct image_rect
+	{
+		int left = 0;
+		int top = 0;
+		int right = 0;
+		int bottom = 0;
+	};
+
 	struct sprite
 	{
 		uint width = 0;
@@ -31,4 +42,6 @@ namespace gm
 	sprite decode_png(std::string& file);
 	sprite get_sprite_data(uint id);
 	sprite get_background_data(uint id);
+
+	image_data get_image_data(IDirect3DTexture8* texture);
 }

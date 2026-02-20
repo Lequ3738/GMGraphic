@@ -40,12 +40,12 @@ constexpr double epsilon = 0.00001;
 #define simple_catch(funcname, returns)															\
 	catch (const std::exception& e)	{															\
 		gm::show_error("An error occurred while executing function " funcname					\
-			" in GMGraphic.dll:\n" + std::string(e.what()), false);								\
+			" in GMGraphic.dll:\r\n" + std::string(e.what()), false);							\
 		return returns;																			\
 	}
 #define transpond_catch(funcname)																\
 	catch (const std::exception& e)	{															\
-		throw std::runtime_error("    in function " funcname ":\n" + std::string(e.what()));	\
+		throw std::runtime_error("    in function " funcname ":\r\n" + std::string(e.what()));	\
 	}
 
 // Define away a bunch of gibberish...

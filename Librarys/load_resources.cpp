@@ -134,9 +134,7 @@ gm::sprite gm::decode_png(std::string& file)
 	transpond_catch("gm::decode_png(std::string&)")
 }
 
-typedef std::tuple<std::vector<uchar>, uint, uint> image_data;
-
-static image_data get_image_data(IDirect3DTexture8* texture)
+gm::image_data gm::get_image_data(IDirect3DTexture8* texture)
 {
 	try
 	{
