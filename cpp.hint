@@ -5,6 +5,7 @@
 
 #define complain(x)
 #define simple_catch(funcname, returns)
+#define transpond_catch(funcname)
 
 #define return_string(str)
 #define dword

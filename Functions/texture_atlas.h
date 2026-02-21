@@ -2,6 +2,21 @@
 
 #include "../main.h"
 
+struct copy_image_rect
+{
+	uint draw_x = 0;
+	uint draw_y = 0;
+	uint texture_width = 0;
+	uint texture_height = 0;
+
+	uint bleed_x = 0;
+	uint bleed_y = 0;
+	uint image_width = 0;
+	uint image_height = 0;
+
+	bool is_rotated = false;
+};
+
 /// <summary>
 /// 纹理图集结构体。
 /// </summary>
@@ -26,6 +41,7 @@ struct texture_atlas
 			int orig_y = 0;  // 该偏移为相对 texture_top 的，可以为负
 
 			bool is_rotated = false;  // 是否在图集中旋转了 90 度存储
+			bool is_blank = false;    // 是否是完全透明的空白图像
 
 			// 虚拟纹理 ID，可在所有纹理图集中通过该 ID 找到该唯一图像。
 			// 为了和 GM8 内部的 texture ID 区分，从 100,000 开始计数。
@@ -89,24 +105,31 @@ struct texture_atlas
 	/// 在该纹理图集中添加一个图像文件。不是已导入到 GameMaker 里面的 Sprite 和 Background。
 	/// </summary>
 	/// <param name="image_file">图像文件。仅支持 gmspr 和 png 文件。</param>
-	/// <returns>Image ID。</returns>
-	uint add_image(std::string& image_file);
+	/// <returns>若成功，返回 ID，否则返回 -1。</returns>
+	static gm::sprite decode_image(std::string& image_file);
 
 	/// <summary>
 	/// 在该纹理图集中添加一个已导入到 GameMaker 里的 Sprite。
 	/// 该 Sprite 在添加至纹理图集后，不会自动删除，需要使用 gm::sprite_delete 进行删除。
 	/// </summary>
 	/// <param name="id">Sprite ID。</param>
-	/// <returns>Image ID。</returns>
-	uint add_sprite(uint id);
+	/// <returns>若成功，返回 ID，否则返回 -1。</returns>
+	static gm::sprite decode_sprite(uint id);
 
 	/// <summary>
 	/// 在该纹理图集中添加一个已导入到 GameMaker 里的 Background。<para>
 	/// 该 Background 在添加至纹理图集后，不会自动删除，需要使用 gm::background_delete 进行删除。
 	/// </para></summary>
 	/// <param name="id">Background ID。</param>
-	/// <returns>Image ID。</returns>
-	uint add_background(uint id);
+	/// <returns>若成功，返回 ID，否则返回 -1。</returns>
+	static gm::sprite decode_background(uint id);
+	
+	/// <summary>
+	/// 
+	/// </summary>
+	/// <param name="spr"></param>
+	/// <returns></returns>
+	int add_image(gm::sprite& spr);
 
 	/// <summary>
 	/// 将纹理图集数据上传至 GPU。
@@ -131,10 +154,7 @@ struct texture_atlas
 	}
 
 private:
-	void add_image_to_memory(std::vector<uchar>& image_data, rbp::Rect& rect, 
-		images::sub_image& image);
-	uint write_image_data(gm::sprite& spr);
-	static gm::image_rect crop_blank_area(gm::image_data& image);
+	void add_image_to_memory(std::vector<uchar>& image_data, copy_image_rect& rect);
 };
 
 // ============================================================================

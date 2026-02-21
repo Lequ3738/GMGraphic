@@ -2,6 +2,81 @@
 #include "load_resources.h"
 #include "lodepng.h"
 
+#pragma warning(disable: 4102)  // unreferenced label
+static gm::image_rect crop_blank_area(gm::image_data& image)
+{
+	try
+	{
+		std::vector<uchar>& data = std::get<0>(image);
+		int width = (int)std::get<1>(image);
+		int height = (int)std::get<2>(image);
+
+		if (data.size() != width * height * 4)
+			throw std::runtime_error("Image data size does not match width and height.");
+
+		int top = 0, bottom = 0, left = 0, right = 0;
+
+	calculate_top:
+		for (int y = 0; y < height; ++y)
+		{
+			for (int x = 0; x < width; ++x)
+			{
+				if (data[(y * width + x) * 4 + 3] > 0)
+				{
+					top = y;
+					goto calculate_bottom;
+				}
+			}
+		}
+
+		return { 0, 0, 0, 0 };
+
+	calculate_bottom:
+		for (int y = height - 1; y >= top; --y)
+		{
+			for (int x = 0; x < width; ++x)
+			{
+				if (data[(y * width + x) * 4 + 3] > 0)
+				{
+					bottom = y;
+					goto calculate_left;
+				}
+			}
+		}
+
+	calculate_left:
+		for (int x = 0; x < width; ++x)
+		{
+			for (int y = 0; y < height; ++y)
+			{
+				if (data[(y * width + x) * 4 + 3] > 0)
+				{
+					left = x;
+					goto calculate_right;
+				}
+			}
+		}
+
+	calculate_right:
+		for (int x = width - 1; x >= left; --x)
+		{
+			for (int y = 0; y < height; ++y)
+			{
+				if (data[(y * width + x) * 4 + 3] > 0)
+				{
+					right = x;
+					goto calculate_result;
+				}
+			}
+		}
+
+	calculate_result:
+		return { left, top, right, bottom };
+	}
+	transpond_catch("crop_blank_area(gm::image_data&)")
+}
+#pragma warning(default: 4102)  // unreferenced label
+
 gm::sprite gm::decode_gmspr(std::string& file)
 {
 	try
@@ -9,6 +84,7 @@ gm::sprite gm::decode_gmspr(std::string& file)
 		if (BufferDLL == nullptr)
 			throw std::runtime_error("Buffer library is not loaded.");
 
+		// 解析 gmspr 文件
 		gm_real buffer = gm::buffer_create();
 		bool result = (bool)gm::buffer_read_from_file(buffer, file.c_str());
 		if (!result)
@@ -83,6 +159,24 @@ gm::sprite gm::decode_gmspr(std::string& file)
 
 		gm::buffer_destroy(data);
 
+		// 进行空白裁剪计算
+		std::vector<gm::image_rect> cropped_rects(count);
+
+		for (uint i = 0; i < (uint)count; ++i)
+		{
+			gm::image_data image{ std::move(images[i]), width, height };
+			cropped_rects[i] = crop_blank_area(image);
+
+			if (cropped_rects[i].right <= cropped_rects[i].left ||
+				cropped_rects[i].bottom <= cropped_rects[i].top)
+			{
+				cropped_rects[i] = { 0, 0, 0, 0 };
+			}
+
+			images[i] = std::move(std::get<0>(image));
+		}
+
+		// 构建结果
 		return gm::sprite {
 			.width = width, .height = height,
 			.xorig = xorig, .yorig = yorig,
@@ -97,7 +191,9 @@ gm::sprite gm::decode_gmspr(std::string& file)
 			.bounding_left = bounding_left,
 			.bounding_right = bounding_right,
 			.bounding_top = bounding_top,
-			.bounding_bottom = bounding_bottom
+			.bounding_bottom = bounding_bottom,
+
+			.cropped_rects = std::move(cropped_rects)
 		};
 	}
 	transpond_catch("gm::decode_gmspr(std::string&)")
@@ -107,6 +203,7 @@ gm::sprite gm::decode_png(std::string& file)
 {
 	try
 	{
+		// PNG 文件解码
 		std::vector<uchar> image, d3dimage;
 		uint width, height;
 		uint error = lodepng::decode(image, width, height, file);
@@ -123,12 +220,29 @@ gm::sprite gm::decode_png(std::string& file)
 			d3dimage[i + 3] = image[i + 3]; // A
 		}
 
+		// 进行空白裁剪计算
+		std::vector<gm::image_rect> cropped_rects(1);
+
+		// 直接将不需要的 image vector 移动到 image_data 里面
+		// crop_blank_area() 只分析 alpha 通道，所以 RGB 通道并不重要
+		gm::image_data image_data{ std::move(image), width, height };
+		cropped_rects[0] = crop_blank_area(image_data);
+
+		if (cropped_rects[0].right <= cropped_rects[0].left ||
+			cropped_rects[0].bottom <= cropped_rects[0].top)
+		{
+			cropped_rects[0] = { 0, 0, 0, 0 };
+		}
+
+		// 构建结果
 		std::vector<std::vector<uchar>> images;
 		images.push_back(std::move(d3dimage));
 
 		return gm::sprite {
 			.width = width, .height = height,
-			.data = std::move(images)
+			.data = std::move(images),
+
+			.cropped_rects = std::move(cropped_rects)
 		};
 	}
 	transpond_catch("gm::decode_png(std::string&)")
@@ -179,20 +293,31 @@ gm::sprite gm::get_sprite_data(uint id)
 	{
 		ISprite spr = gmapi->Sprites[id];
 		std::vector<std::vector<uchar>> images(spr.Subimages.GetCount());
+		std::vector<gm::image_rect> cropped_rects(spr.Subimages.GetCount());
 
 		for (uint i = 0; i < (uint)spr.Subimages.GetCount(); ++i)
 		{
 			IDirect3DTexture8* texture = spr.Subimages[id].GetTexture();
-			auto [data, w, h] = get_image_data(texture);
+			gm::image_data image_data = get_image_data(texture);
 
-			images[i] = std::move(data);
+			// 进行空白裁剪计算
+			cropped_rects[i] = crop_blank_area(image_data);
+
+			if (cropped_rects[i].right <= cropped_rects[i].left ||
+				cropped_rects[i].bottom <= cropped_rects[i].top)
+			{
+				cropped_rects[i] = { 0, 0, 0, 0 };
+			}
+
+			images[i] = std::move(std::get<0>(image_data));
 		}
 
-		return gm::sprite{
+		return gm::sprite {
 			.width = (uint)spr.GetWidth(), .height = (uint)spr.GetHeight(),
 			.xorig = spr.GetOffsetX(), .yorig = spr.GetOffsetY(),
 
-			.data = std::move(images)
+			.data = std::move(images),
+			.cropped_rects = std::move(cropped_rects)
 		};
 	}
 	transpond_catch("gm::get_sprite_data(uint)")
@@ -203,17 +328,31 @@ gm::sprite gm::get_background_data(uint id)
 	try
 	{
 		IDirect3DTexture8* texture = gmapi->Backgrounds[id].GetTexture();
-		auto [data, width, height] = get_image_data(texture);
+		gm::image_data image_data = get_image_data(texture);
 		
-		width = std::min((uint)gmapi->Backgrounds[id].GetWidth(), width);
-		height = std::min((uint)gmapi->Backgrounds[id].GetHeight(), height);
+		uint width = std::min((uint)gmapi->Backgrounds[id].GetWidth(), 
+			std::get<1>(image_data));
+		uint height = std::min((uint)gmapi->Backgrounds[id].GetHeight(), 
+			std::get<2>(image_data));
+
+		// 进行空白裁剪计算
+		std::vector<gm::image_rect> cropped_rects(1);
+		cropped_rects[0] = crop_blank_area(image_data);
+
+		if (cropped_rects[0].right <= cropped_rects[0].left ||
+			cropped_rects[0].bottom <= cropped_rects[0].top)
+		{
+			cropped_rects[0] = { 0, 0, 0, 0 };
+		}
 
 		std::vector<std::vector<uchar>> images;
-		images.push_back(std::move(data));
+		images.push_back(std::move(std::get<0>(image_data)));
 		
 		return gm::sprite {
 			.width = width, .height = height,
-			.data = std::move(images)
+			.data = std::move(images),
+
+			.cropped_rects = std::move(cropped_rects)
 		};
 	}
 	transpond_catch("gm::get_background_data(uint)")

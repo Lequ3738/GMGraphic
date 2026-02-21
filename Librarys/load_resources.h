@@ -12,6 +12,8 @@ namespace gm
 		int top = 0;
 		int right = 0;
 		int bottom = 0;
+
+		bool operator==(const image_rect&) const = default;
 	};
 
 	struct sprite
@@ -34,6 +36,8 @@ namespace gm
 		int bounding_right = 0;
 		int bounding_top = 0;
 		int bounding_bottom = 0;
+
+		std::vector<image_rect> cropped_rects;  // 裁剪后的图像区域，供图集打包使用
 
 		inline uint frame_count() const { return data.size(); }
 	};
