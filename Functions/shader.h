@@ -1,13 +1,13 @@
 #pragma once
-
 #include "../main.h"
+#include "structs.h"
 
-exp_uint get_vbuff_d3d();
-exp_uint get_vbuff_int();
-exp_uint get_vbuff_c();
-exp_uint get_vbuff_prim();
-exp_uint get_vbuff_usevs();
-exp_uint get_vbuff_autoinc();
+extern LPDIRECT3DVERTEXBUFFER8 vbuff_d3d;            // Pointer to D3D vertex buffer
+extern vert_ext                vbuff_int[vb_count];  // Internal vertex buffer
+extern uint                    vbuff_c;              // Internal counter
+extern D3DPRIMITIVETYPE        vbuff_prim;           // Primitive to draw
+extern bool                    vbuff_usevs;          // Use vertex shader?
+extern bool                    vbuff_autoinc;        // Automatic increment?
 
 exp_real init();
 
@@ -84,3 +84,15 @@ exp_real draw_vertex_ext(double x, double y, double col, double alpha, double sp
 exp_real draw_vertex_ext_tex(double set, double xtex, double ytex);
 exp_real draw_vertex_ext_next();
 exp_real draw_primitive_end_ext();
+
+namespace vertex
+{
+	void begin(D3DPRIMITIVETYPE primitive, bool textured);
+	void add(float x, float y, float z, float nx, float ny, float nz, uint col, uint speccol);
+	void add_tex(uint stage, float xtex, float ytex);
+	void next();
+	void end();
+
+	vert_ext& get_struct();
+	vert_ext& get_struct(uint pos);
+}

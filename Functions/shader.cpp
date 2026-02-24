@@ -4,39 +4,27 @@
 //          2026/2/10    by Lequ
 
 #include "math_s.h"
-#include "structs.h"
 #include "shader.h"
 
 // ============================================================================
 // Variables
 // ============================================================================
 
-static IDirect3DDevice8* d3ddev;		// D3D device pointer
-static IDirect3D8* d3dint;				// D3D interface pointer
+static IDirect3DDevice8*       d3ddev;	// D3D device pointer
+static IDirect3D8*             d3dint;	// D3D interface pointer
 static D3DCAPS8                d3dcaps; // GPU capability struct
 static D3DADAPTER_IDENTIFIER8  d3daid;  // GPU identification struct
 
-static LPDIRECT3DVERTEXBUFFER8 vbuff_d3d;            // Pointer to D3D vertex buffer
-static vert_ext                vbuff_int[vb_count];  // Internal vertex buffer
-static uint                    vbuff_c;              // Internal counter
-static D3DPRIMITIVETYPE        vbuff_prim;           // Primitive to draw
-static bool                    vbuff_usevs;          // Use vertex shader?
-static bool                    vbuff_autoinc;        // Automatic increment?
+LPDIRECT3DVERTEXBUFFER8 vbuff_d3d;            // Pointer to D3D vertex buffer
+vert_ext                vbuff_int[vb_count];  // Internal vertex buffer
+uint                    vbuff_c;              // Internal counter
+D3DPRIMITIVETYPE        vbuff_prim;           // Primitive to draw
+bool                    vbuff_usevs;          // Use vertex shader?
+bool                    vbuff_autoinc;        // Automatic increment?
 
 static std::vector<ps_conf>    conf_vec_ps;			 // Dynamic arrays for configs
 static std::vector<vs_conf>    conf_vec_vs;          // 
 static std::vector<tex_conf>   conf_vec_tex;         // 
-
-// ============================================================================
-// Other dll exports
-// ============================================================================
-
-exp_uint get_vbuff_d3d() { return (uint)vbuff_d3d; }
-exp_uint get_vbuff_int() { return (uint)vbuff_int; }
-exp_uint get_vbuff_c() { return (uint)&vbuff_c; }
-exp_uint get_vbuff_prim() { return (uint)vbuff_prim; }
-exp_uint get_vbuff_usevs() { return (uint)vbuff_usevs; }
-exp_uint get_vbuff_autoinc() { return (uint)vbuff_autoinc; }
 
 // ============================================================================
 // Initialisation
@@ -781,116 +769,148 @@ exp_real d3d_set_normal_auto(double state)
 // ============================================================================
 
 // Begin drawing an extended primitive.
-exp_real d3d_primitive_begin_ext(double primitive, double textured)
+void vertex::begin(D3DPRIMITIVETYPE primitive, bool textured)
 {
     vbuff_c = 0;
-    vbuff_autoinc = (textured < 0.5);
+    vbuff_autoinc = textured;
+    vbuff_prim = primitive;
 
     // Zero the buffer.
     SecureZeroMemory((PVOID)vbuff_int, vb_bytes);
+}
 
+exp_real d3d_primitive_begin_ext(double primitive, double textured)
+{
+    D3DPRIMITIVETYPE prim = D3DPT_POINTLIST;
     switch ((int)primitive)
     {
-        case 1: { vbuff_prim = D3DPT_POINTLIST; } break;
-        case 2: { vbuff_prim = D3DPT_LINELIST; } break;
-        case 3: { vbuff_prim = D3DPT_LINESTRIP; } break;
-        case 4: { vbuff_prim = D3DPT_TRIANGLELIST; } break;
-        case 5: { vbuff_prim = D3DPT_TRIANGLESTRIP; } break;
-        case 6: { vbuff_prim = D3DPT_TRIANGLEFAN; } break;
+        case 1: { prim = D3DPT_POINTLIST; } break;
+        case 2: { prim = D3DPT_LINELIST; } break;
+        case 3: { prim = D3DPT_LINESTRIP; } break;
+        case 4: { prim = D3DPT_TRIANGLELIST; } break;
+        case 5: { prim = D3DPT_TRIANGLESTRIP; } break;
+        case 6: { prim = D3DPT_TRIANGLEFAN; } break;
         default: { return gerror; } break;
     }
-
+    
+    vertex::begin(prim, textured < 0.5);
     return gtrue;
 }
 
+vert_ext& vertex::get_struct() { return vbuff_int[vbuff_c++]; }
+vert_ext& vertex::get_struct(uint pos) { return vbuff_int[pos]; }
+
 // Position, normal, diffuse/specular colour and alpha.
-exp_real d3d_vertex_ext(double x, double y, double z, double nx, double ny, double nz, 
-    double col, double alpha, double speccol, double specalpha)
+void vertex::add(float x, float y, float z, float nx, float ny, float nz, uint col, uint speccol)
 {
-    vbuff_int[vbuff_c].x = (float)x;
-    vbuff_int[vbuff_c].y = (float)y;
-    vbuff_int[vbuff_c].z = (float)z;
-    vbuff_int[vbuff_c].nx = (float)nx;
-    vbuff_int[vbuff_c].ny = (float)ny;
-    vbuff_int[vbuff_c].nz = (float)nz;
-    vbuff_int[vbuff_c].c = col_d3d((int)col, alpha);
-    vbuff_int[vbuff_c].s = col_d3d((int)speccol, specalpha);
+    vbuff_int[vbuff_c].x = x;
+    vbuff_int[vbuff_c].y = y;
+    vbuff_int[vbuff_c].z = z;
+    vbuff_int[vbuff_c].nx = nx;
+    vbuff_int[vbuff_c].ny = ny;
+    vbuff_int[vbuff_c].nz = nz;
+    vbuff_int[vbuff_c].c = col;
+    vbuff_int[vbuff_c].s = speccol;
 
     if (vbuff_autoinc)
         vbuff_c++;
+}
+
+exp_real d3d_vertex_ext(double x, double y, double z, double nx, double ny, double nz, 
+    double col, double alpha, double speccol, double specalpha)
+{
+    vertex::add((float)x, (float)y, (float)z, (float)nx, (float)ny, (float)nz,
+        col_d3d((int)col, alpha), col_d3d((int)speccol, specalpha));
 
     return gtrue;
 }
 
 // Set vertex texture coordinates.
 // There are eight sets indexed 0-7, one for each texture stage.
+void vertex::add_tex(uint stage, float xtex, float ytex)
+{
+    if (stage < 0) stage = 0;
+    else if (stage > 7) stage = 7;
+
+    uint ind = (uint)(stage * 2);
+
+    vbuff_int[vbuff_c].uv[ind] = xtex;
+    vbuff_int[vbuff_c].uv[ind + 1] = ytex;
+}
+
 exp_real d3d_vertex_ext_tex(double stage, double xtex, double ytex)
 {
-    uint ind = (uint)(clamp(stage, 0.0, 7.0) * 2.0);
-
-    vbuff_int[vbuff_c].uv[ind] = (float)xtex;
-    vbuff_int[vbuff_c].uv[ind + 1] = (float)ytex;
-
+    vertex::add_tex((uint)stage, (float)xtex, (float)ytex);
     return gtrue;
 }
 
 // Call when finished with the current vertex to start defining the next one.
 // Only required for textured primitives.
-exp_real d3d_vertex_ext_next()
+void vertex::next()
 {
     if (vbuff_autoinc)
     {
-        complain("d3d_vertex_ext_next() is called automatically for untextured"
-            "extended primitives.");
+        gm::show_error("d3d_vertex_ext_next() is called automatically for untextured"
+            "extended primitives.", false);
     }
-
     vbuff_c++;
+}
 
+exp_real d3d_vertex_ext_next()
+{
+    vertex::next();
     return gtrue;
 }
 
 // Draw the primitive.
+void vertex::end()
+{
+    try
+    {
+        BYTE* bytep;
+        uint  count = (vbuff_c + 1);
+        uint  size = (count * sizeof(vert_ext));
+        uint  prims;
+
+        if (count < 1)
+            throw std::runtime_error("An error occurred within the function (vbuff_c < 0).");
+
+        switch (vbuff_prim)
+        {
+            case D3DPT_POINTLIST: { prims = snap_low(count, 2); } break;
+            case D3DPT_LINELIST: { prims = snap_low(count, 2) / 2; } break;
+            case D3DPT_LINESTRIP: { prims = snap_low(count, 2); } break;
+            case D3DPT_TRIANGLELIST: { prims = snap_low(count, 3) / 2; } break;
+            case D3DPT_TRIANGLESTRIP: { prims = uint(snap_low(count, 2) / 1.5); } break;
+            case D3DPT_TRIANGLEFAN: { prims = uint(snap_low(count, 2) / 1.5); } break;
+            default: { throw std::runtime_error("Unknown primitive type."); } break;
+        }
+
+        if (prims < 1)
+            throw std::runtime_error("The number of vertices is too small.");
+
+        D3DCheck(vbuff_d3d->Lock(0, size, &bytep, 0), 0);
+        memcpy(bytep, vbuff_int, size); // Copy only used part to conserve bandwidth
+        D3DCheck(vbuff_d3d->Unlock(), 1);
+
+        D3DCheck(d3ddev->SetStreamSource(0, vbuff_d3d, sizeof(vert_ext)), 2);
+
+        if (!vbuff_usevs)
+            D3DCheck(d3ddev->SetVertexShader(fvf_ext), 3);
+
+        D3DCheck(d3ddev->DrawPrimitive(vbuff_prim, 0, prims), 4);
+    }
+    transpond_catch("vertex::end()")
+}
+
 exp_real d3d_primitive_end_ext()
 {
-    BYTE* bytep;
-    uint  count = (vbuff_c + 1);
-    uint  size = (count * sizeof(vert_ext));
-    uint  prims;
-
-    if (count < 1)
-        return gerror;
-
-    switch (vbuff_prim)
+    try
     {
-        case D3DPT_POINTLIST: { prims = snap_low(count, 2); } break;
-        case D3DPT_LINELIST: { prims = snap_low(count, 2) / 2; } break;
-        case D3DPT_LINESTRIP: { prims = snap_low(count, 2); } break;
-        case D3DPT_TRIANGLELIST: { prims = snap_low(count, 3) / 2; } break;
-        case D3DPT_TRIANGLESTRIP: { prims = uint(snap_low(count, 2) / 1.5); } break;
-        case D3DPT_TRIANGLEFAN: { prims = uint(snap_low(count, 2) / 1.5); } break;
-        default: { return gerror; } break;
+        vertex::end();
+        return gtrue;
     }
-
-
-    if (prims < 1)
-        return gerror;
-
-    vbuff_d3d->Lock(0, size, &bytep, 0);
-    memcpy(bytep, vbuff_int, size); // Copy only used part to conserve bandwidth
-    vbuff_d3d->Unlock();
-
-
-    dword a, b, c;
-    a = d3ddev->SetStreamSource(0, vbuff_d3d, sizeof(vert_ext));
-
-    if (!vbuff_usevs)
-        b = d3ddev->SetVertexShader(fvf_ext);
-    else
-        b = D3D_OK;
-
-    c = d3ddev->DrawPrimitive(vbuff_prim, 0, prims);
-
-    return (double)((a == D3D_OK) && (b == D3D_OK) && (c == D3D_OK));
+    simple_catch("d3d_primitive_end_ext", gerror)
 }
 
 // 2D equivalent.

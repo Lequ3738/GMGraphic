@@ -1,6 +1,10 @@
 #pragma once
-
+#include "load_resources.h"
+#include "MaxRectsBinPack.h"
 #include "../main.h"
+
+constexpr uint IMAGE_START_POSITION = 100000;
+constexpr uint TEXTURE_START_POSITION = 100000;
 
 struct copy_image_rect
 {
@@ -41,16 +45,17 @@ struct texture_atlas
 			int orig_y = 0;  // 该偏移为相对 texture_top 的，可以为负
 
 			bool is_rotated = false;  // 是否在图集中旋转了 90 度存储
-			bool is_blank = false;    // 是否是完全透明的空白图像
 
 			// 虚拟纹理 ID，可在所有纹理图集中通过该 ID 找到该唯一图像。
 			// 为了和 GM8 内部的 texture ID 区分，从 100,000 开始计数。
 			uint texture_id = 0;
+			uint image_id = 0;  // 该子图像所属的 images ID
 
 			sub_image(uint left, uint top, uint width, uint height, int ox, int oy, 
-				bool is_rotated, uint texture_id) : texture_left(left), texture_top(top), 
-				texture_width(width), texture_height(height), orig_x(ox), orig_y(oy),
-				is_rotated(is_rotated), texture_id(texture_id) {}
+				bool is_rotated, uint texture_id, uint image_id) : 
+				texture_left(left), texture_top(top), texture_width(width), 
+				texture_height(height), orig_x(ox), orig_y(oy), is_rotated(is_rotated), 
+				texture_id(texture_id), image_id(image_id) {}
 
 			sub_image() = delete;
 		};
@@ -157,6 +162,10 @@ private:
 	void add_image_to_memory(std::vector<uchar>& image_data, copy_image_rect& rect);
 };
 
+extern std::unordered_map<uint, std::unique_ptr<texture_atlas>> game_texture_atlas;
+extern std::unordered_map<uint, texture_atlas::images*> game_images;
+extern std::unordered_map<uint, texture_atlas::images::sub_image*> game_textures;
+
 // ============================================================================
 // Export Functions
 // ============================================================================
@@ -178,3 +187,6 @@ exp_real texture_atlas_exists(gm_real id);
 exp_real texture_atlas_find_first();
 exp_real texture_atlas_find_next(gm_real id);
 exp_real texture_atlas_find_last();
+
+exp_real image_get_texture_atlas(gm_real image_id);
+exp_real texture_get_image(gm_real texture_id);

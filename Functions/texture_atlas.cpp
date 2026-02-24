@@ -1,5 +1,3 @@
-#include "load_resources.h"
-#include "MaxRectsBinPack.h"
 #include "texture_atlas.h"
 #include "lodepng.h"
 
@@ -8,8 +6,8 @@ std::unordered_map<uint, texture_atlas::images*> game_images;
 std::unordered_map<uint, texture_atlas::images::sub_image*> game_textures;
 
 uint texture_atlas_id_position = 0, 
-	atlas_image_id = 100000, 
-	atlas_texture_id = 100000;
+	atlas_image_id = IMAGE_START_POSITION,
+	atlas_texture_id = TEXTURE_START_POSITION;
 
 enum class file_type { gmspr, png };
 
@@ -132,6 +130,12 @@ int texture_atlas::add_image(gm::sprite& spr)
 
 		for (uint i = 0; i < spr.frame_count(); ++i)
 		{
+			if (spr.cropped_rects[i] == gm::image_rect{ 0, 0, 0, 0 })  // Is blank image
+			{
+				result[i] = { 0, 0, 0, 0 };
+				continue;
+			}
+
 			rbp::Rect node = bin.Insert(pack_rect_sizes[i].width, 
 				pack_rect_sizes[i].height,
 				rbp::MaxRectsBinPack::RectBestShortSideFit);
@@ -152,15 +156,26 @@ int texture_atlas::add_image(gm::sprite& spr)
 
 		for (uint i = 0; i < spr.frame_count(); ++i)
 		{
+			bool is_blank = spr.cropped_rects[i] == gm::image_rect{ 0, 0, 0, 0 };
+			if (is_blank)
+			{
+				atlas_images->frames[i] = nullptr;
+				game_textures[atlas_texture_id] = nullptr;
+				atlas_texture_id++;
+
+				continue;
+			}
+
 			uint img_x = (uint)result[i].x + 1, img_y = (uint)result[i].y + 1;
 			uint tx = (uint)pack_rect_sizes[i].width - 2;
 			uint ty = (uint)pack_rect_sizes[i].height - 2;
 			int orig_x = spr.xorig - spr.cropped_rects[i].left;
 			int orig_y = spr.yorig - spr.cropped_rects[i].top - 1;
 			bool is_rotated = result[i].width != pack_rect_sizes[i].width;
-
+			
 			atlas_images->frames[i] = std::make_unique<images::sub_image>(
-				img_x, img_y, tx, ty, orig_x, orig_y, is_rotated, atlas_texture_id);
+				img_x, img_y, tx, ty, orig_x, orig_y, is_rotated, atlas_texture_id, 
+				image_id);
 
 			game_textures[atlas_texture_id] = atlas_images->frames[i].get();
 			atlas_texture_id++;
@@ -501,4 +516,24 @@ exp_real texture_atlas_find_last()
 {
 	return game_texture_atlas.empty() ? -1 : 
 		(gm_real)std::prev(game_texture_atlas.end())->first;
+}
+
+exp_real image_get_texture_atlas(gm_real image_id)
+{
+	try
+	{
+		texture_atlas::images* image = game_images.at((uint)image_id);
+		return (gm_real)image->atlas_id;
+	}
+	simple_catch("image_get_texture_atlas", -1)
+}
+
+exp_real texture_get_image(gm_real texture_id)
+{
+	try
+	{
+		texture_atlas::images::sub_image* sub_image = game_textures.at((uint)texture_id);
+		return (gm_real)sub_image->image_id;
+	}
+	simple_catch("texture_get_sub_image", -1)
 }

@@ -288,6 +288,7 @@
     <ClInclude Include="Direct3D_8\vpnotify.h" />
     <ClInclude Include="Direct3D_8\vptype.h" />
     <ClInclude Include="Direct3D_8\xprtdefs.h" />
+    <ClInclude Include="Functions\draw_atlas.h" />
     <ClInclude Include="Librarys\buffer.h" />
     <ClInclude Include="Librarys\load_resources.h" />
     <ClInclude Include="Librarys\lodepng.h" />
@@ -319,6 +320,7 @@
     <ClInclude Include="Functions\shader.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="Functions\draw_atlas.cpp" />
     <ClCompile Include="GMAPI\Gmapi3DGraphics.cpp" />
     <ClCompile Include="GMAPI\GmapiConsts.cpp" />
     <ClCompile Include="GMAPI\GmapiDataStructures.cpp" />
