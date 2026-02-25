@@ -121,6 +121,12 @@ uint col_d3d(int gmcol, double gmalpha)
 	return (a << 24) + (r << 16) + (g << 8) + b;
 }
 
+uint d3dcol_to_col(d3dcolor color) { return color & 0x00FFFFFF; }
+double d3dcol_to_alpha(d3dcolor color)
+{
+	return static_cast<double>((color & 0xFF000000) >> 24) / 255.0;
+}
+
 // Load file into RAM.
 // You need to declare the target pointer && size vars first.
 // Returns whether it succeeded.  If it fails, there's nothing to clean up.

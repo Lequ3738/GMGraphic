@@ -93,6 +93,6 @@ namespace vertex
 	void next();
 	void end();
 
-	vert_ext& get_struct();
-	vert_ext& get_struct(uint pos);
+	vert_ext* get_struct();
+	vert_ext* get_struct(uint pos);
 }

@@ -776,7 +776,10 @@ void vertex::begin(D3DPRIMITIVETYPE primitive, bool textured)
     vbuff_prim = primitive;
 
     // Zero the buffer.
-    SecureZeroMemory((PVOID)vbuff_int, vb_bytes);
+	std::memset(vbuff_int, 0, vb_bytes);
+
+    if (!textured)
+        d3d_set_tex_all(-1);
 }
 
 exp_real d3d_primitive_begin_ext(double primitive, double textured)
@@ -797,8 +800,8 @@ exp_real d3d_primitive_begin_ext(double primitive, double textured)
     return gtrue;
 }
 
-vert_ext& vertex::get_struct() { return vbuff_int[vbuff_c++]; }
-vert_ext& vertex::get_struct(uint pos) { return vbuff_int[pos]; }
+vert_ext* vertex::get_struct() { return &vbuff_int[vbuff_c++]; }
+vert_ext* vertex::get_struct(uint pos) { return &vbuff_int[pos]; }
 
 // Position, normal, diffuse/specular colour and alpha.
 void vertex::add(float x, float y, float z, float nx, float ny, float nz, uint col, uint speccol)

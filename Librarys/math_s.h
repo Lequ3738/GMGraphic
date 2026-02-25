@@ -25,6 +25,8 @@ int    col_blue(int col);
 int    col_make(int r, int g, int b);
 int    col_lerp(int cola, int colb, double a);
 uint   col_d3d(int gmcol, double gmalpha);
+uint d3dcol_to_col(d3dcolor color);
+double d3dcol_to_alpha(d3dcolor color);
 
 bool   file_read(char* file_in, char*& target, uint& size);
 bool   file_write(char* file_out, void* data, uint size, bool append = false);

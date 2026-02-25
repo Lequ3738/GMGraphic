@@ -32,6 +32,7 @@ typedef unsigned long ulong;
 typedef unsigned int uint;
 typedef unsigned short ushort;
 typedef unsigned char uchar;
+typedef uint d3dcolor;
 constexpr double pi = 3.1415926535897932384626433832795;
 constexpr gm_string crlf = "\r\n";
 constexpr double epsilon = 0.00001;
