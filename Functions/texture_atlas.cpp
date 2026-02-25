@@ -170,7 +170,7 @@ int texture_atlas::add_image(gm::sprite& spr)
 			uint tx = (uint)pack_rect_sizes[i].width - 2;
 			uint ty = (uint)pack_rect_sizes[i].height - 2;
 			int orig_x = spr.xorig - spr.cropped_rects[i].left;
-			int orig_y = spr.yorig - spr.cropped_rects[i].top - 1;
+			int orig_y = spr.yorig - spr.cropped_rects[i].top;
 			bool is_rotated = result[i].width != pack_rect_sizes[i].width;
 			
 			atlas_images->frames[i] = std::make_unique<images::sub_image>(
@@ -202,7 +202,7 @@ int texture_atlas::add_image(gm::sprite& spr)
 	transpond_catch("texture_atlas::add_image(gm::sprite&)")
 }
 
-gm::sprite texture_atlas::decode_image(std::string& image_file)
+gm::sprite texture_atlas::decode_image(const std::string& image_file)
 {
 	try
 	{
@@ -343,8 +343,8 @@ exp_real texture_atlas_add_file(gm_real id, gm_string file)
 	try
 	{
 		texture_atlas& atlas = *game_texture_atlas.at((uint)id);
-		std::string file(file);
-		gm::sprite sprite = atlas.decode_image(file);
+		std::string f(file);
+		gm::sprite sprite = atlas.decode_image(f);
 		return (gm_real)atlas.add_image(sprite);
 	}
 	simple_catch("texture_atlas_add_file", -1)

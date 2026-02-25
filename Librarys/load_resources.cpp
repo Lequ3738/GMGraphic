@@ -77,7 +77,7 @@ static gm::image_rect crop_blank_area(gm::image_data& image)
 }
 #pragma warning(default: 4102)  // unreferenced label
 
-gm::sprite gm::decode_gmspr(std::string& file)
+gm::sprite gm::decode_gmspr(const std::string& file)
 {
 	try
 	{
@@ -199,7 +199,7 @@ gm::sprite gm::decode_gmspr(std::string& file)
 	transpond_catch("gm::decode_gmspr(std::string&)")
 }
 
-gm::sprite gm::decode_png(std::string& file)
+gm::sprite gm::decode_png(const std::string& file)
 {
 	try
 	{

@@ -111,7 +111,7 @@ struct texture_atlas
 	/// </summary>
 	/// <param name="image_file">图像文件。仅支持 gmspr 和 png 文件。</param>
 	/// <returns>若成功，返回 ID，否则返回 -1。</returns>
-	static gm::sprite decode_image(std::string& image_file);
+	static gm::sprite decode_image(const std::string& image_file);
 
 	/// <summary>
 	/// 在该纹理图集中添加一个已导入到 GameMaker 里的 Sprite。

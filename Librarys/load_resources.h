@@ -42,8 +42,8 @@ namespace gm
 		inline uint frame_count() const { return data.size(); }
 	};
 
-	sprite decode_gmspr(std::string& file);
-	sprite decode_png(std::string& file);
+	sprite decode_gmspr(const std::string& file);
+	sprite decode_png(const std::string& file);
 	sprite get_sprite_data(uint id);
 	sprite get_background_data(uint id);
 
