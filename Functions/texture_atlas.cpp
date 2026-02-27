@@ -23,6 +23,7 @@ texture_atlas::texture_atlas(uint size, uint id)
 			case 2048:
 			{
 				texture_atlas::size = size;
+				texture_atlas::id = id;
 				data = std::vector<uchar>(size * size * 4, 0);
 				bin = rbp::MaxRectsBinPack(size, size, true);
 			}
@@ -32,6 +33,11 @@ texture_atlas::texture_atlas(uint size, uint id)
 				throw std::runtime_error("Invalid texture atlas size. "
 					"Supported sizes are 256, 512, 1024, and 2048.");
 		}
+
+#ifdef _DEBUG
+		OutputDebugStringA(("Texture atlas " + std::to_string(id) + " created with size " + 
+			std::to_string(size) + ".\n").c_str());
+#endif
 	}
 	transpond_catch("texture_atlas::texture_atlas(uint)")
 }
@@ -51,6 +57,10 @@ texture_atlas::~texture_atlas()
 
 	texture->Release();
 	texture = nullptr;
+
+#ifdef _DEBUG
+	OutputDebugStringA(("Texture atlas " + std::to_string(id) + " destroyed.\n").c_str());
+#endif
 }
 
 void texture_atlas::add_image_to_memory(std::vector<uchar>& image_data, 

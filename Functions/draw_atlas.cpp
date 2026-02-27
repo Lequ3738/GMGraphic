@@ -33,7 +33,7 @@ static void draw_image(atlas::draw_info& info)
 
 			current_atlas = &info.atlas;
 			if (current_atlas->texture == nullptr)
-				throw std::runtime_error("");
+				throw std::runtime_error("Cannot find the texture atlas of this sprite.");
 
 			vertex::begin(D3DPT_TRIANGLELIST, true);
 		}
@@ -168,11 +168,20 @@ void atlas::draw_sprite(uint id, uint subimg, double x, double y)
 		texture_atlas::images* images_ptr = game_images.at(id);
 		texture_atlas* atlas_ptr = nullptr;
 		texture_atlas::images::sub_image* sub_image_ptr = nullptr;
-		if (images_ptr)
+
+		if (images_ptr != nullptr)
 		{
 			atlas_ptr = game_texture_atlas.at(images_ptr->atlas_id).get();
 			sub_image_ptr = images_ptr->frames.at(subimg).get();
 		}
+		else
+			throw std::runtime_error("Cannot find the sprite.");
+
+		if (atlas_ptr == nullptr)
+			throw std::runtime_error("Cannot find the texture atlas of this sprite.");
+
+		if (sub_image_ptr == nullptr)  // 如果该子图像不存在（可能是空白图），则不进行绘制
+			return;
 
 		draw_info info = {
 			.atlas = *atlas_ptr, .images = *images_ptr, .sub_image = *sub_image_ptr,
@@ -191,11 +200,20 @@ void atlas::draw_sprite_ext(uint id, uint subimg, double x, double y, double xsc
 		texture_atlas::images* images_ptr = game_images.at(id);
 		texture_atlas* atlas_ptr = nullptr;
 		texture_atlas::images::sub_image* sub_image_ptr = nullptr;
-		if (images_ptr)
+
+		if (images_ptr != nullptr)
 		{
 			atlas_ptr = game_texture_atlas.at(images_ptr->atlas_id).get();
 			sub_image_ptr = images_ptr->frames.at(subimg).get();
 		}
+		else
+			throw std::runtime_error("Cannot find the sprite.");
+
+		if (atlas_ptr == nullptr)
+			throw std::runtime_error("Cannot find the texture atlas of this sprite.");
+
+		if (sub_image_ptr == nullptr)  // 如果该子图像不存在（可能是空白图），则不进行绘制
+			return;
 
 		draw_info info = {
 			.atlas = *atlas_ptr, .images = *images_ptr, .sub_image = *sub_image_ptr,
