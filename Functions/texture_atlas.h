@@ -89,6 +89,8 @@ struct texture_atlas
 
 	uint id = 0;							// 纹理图集 ID
 
+	static bool texture_amplification;		// 是否按照“边缘像素重复”的方式添加纹理到纹理图集中
+
 	/// <summary>
 	/// 创建一个新的纹理图集。
 	/// </summary>
@@ -197,3 +199,5 @@ exp_real atlas_background_get_height(gm_real id);
 
 exp_real texture_atlas_set_crop(gm_real crop);
 exp_real texture_atlas_get_crop();
+exp_real texture_atlas_set_amplificate(gm_real ampl);
+exp_real texture_atlas_get_amplificate();

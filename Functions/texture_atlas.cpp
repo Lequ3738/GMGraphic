@@ -11,6 +11,8 @@ uint texture_atlas_id_position = 0,
 
 enum class file_type { gmspr, png };
 
+bool texture_atlas::texture_amplification = false;
+
 texture_atlas::texture_atlas(uint size, uint id)
 {
 	try
@@ -70,14 +72,33 @@ void texture_atlas::add_image_to_memory(std::vector<uchar>& image_data,
 	{
 		if (!rect.is_rotated)
 		{
-			for (uint y = 0; y < rect.texture_height; ++y)
+			int top = 0, bottom = (int)rect.texture_height - 1;
+			if (texture_amplification)
 			{
-				uchar* const dst_ptr = data.data() + ((rect.draw_y + y) * size + 
-					rect.draw_x) * 4;
-				const uchar* const src_ptr = image_data.data() + ((rect.bleed_y + 
-					y) * rect.image_width + rect.bleed_x) * 4;
+				top = -1;
+				bottom = (int)rect.texture_height;
+			}
+
+			// 上下各扩增1像素，以匹配 GameMaker 在边缘插值的特性
+			for (int y = top; y <= bottom; ++y)
+			{
+				uint dst_y = rect.draw_y + (uint)y;
+				uint src_y = (rect.bleed_y + (uint)std::clamp(y, 0, (int)rect.texture_height - 1));
+
+				uchar* const dst_ptr = data.data() + (dst_y * size + rect.draw_x) * 4;
+				const uchar* const src_ptr = image_data.data() + (src_y * rect.image_width + 
+					rect.bleed_x) * 4;
 
 				std::memcpy(dst_ptr, src_ptr, rect.texture_width * 4);
+
+				if (!texture_amplification)
+					continue;
+
+				*((uint32_t*)(dst_ptr - 4)) = *(uint32_t*)src_ptr;  // 处理左边缘重复
+
+				// 处理右边缘重复
+				uint32_t right_pixel = *(uint32_t*)(src_ptr + (rect.texture_width - 1) * 4);
+				*(uint32_t*)(dst_ptr + rect.texture_width * 4) = right_pixel;
 			}
 		}
 		else
@@ -85,15 +106,25 @@ void texture_atlas::add_image_to_memory(std::vector<uchar>& image_data,
 			uint dest_w = rect.texture_height;
 			uint dest_h = rect.texture_width;
 
-			for (uint v = 0; v < dest_h; ++v)
+			int left = 0, right = (int)dest_w - 1, top = 0, bottom = (int)dest_h - 1;
+			if (texture_amplification)
 			{
-				for (uint u = 0; u < dest_w; ++u)
+				left = -1;
+				right = (int)dest_w;
+				top = -1;
+				bottom = (int)dest_h;
+			}
+
+			for (int v = top; v <= bottom; ++v)
+			{
+				for (int u = left; u <= right; ++u)
 				{
 					uchar* const dst_pixel = data.data() + ((rect.draw_y + v) * 
 						size + rect.draw_x + u) * 4;
 
-					const uint src_x = rect.bleed_x + v;
-					const uint src_y = rect.bleed_y + (rect.texture_height - 1 - u);
+					const uint src_x = rect.bleed_x + (uint)std::clamp(v, 0, (int)dest_h - 1);
+					const uint src_y = rect.bleed_y + (rect.texture_height - 1 - 
+						(uint)std::clamp(u, 0, (int)dest_w - 1));
 
 					const uchar* src_pixel = image_data.data() + (src_y * 
 						rect.image_width + src_x) * 4;
@@ -607,3 +638,14 @@ exp_real texture_atlas_set_crop(gm_real crop)
 }
 
 exp_real texture_atlas_get_crop() { return gm::crop_blank; }
+
+exp_real texture_atlas_set_amplificate(gm_real ampl)
+{
+	texture_atlas::texture_amplification = (ampl >= 0.5);
+	return gtrue;
+}
+
+exp_real texture_atlas_get_amplificate()
+{
+	return texture_atlas::texture_amplification;
+}
