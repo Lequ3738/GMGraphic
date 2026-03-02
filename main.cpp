@@ -21,6 +21,10 @@ bool WINAPI DllMain(HINSTANCE aModuleHandle, int aReason, int aReserved)
 				complain("Unable to initialize GMAPI.");
 				return FALSE;
 			}
+
+#ifdef _DEBUG
+			gm::show_message("Debug Mode.");
+#endif
 		}
 		break;
 

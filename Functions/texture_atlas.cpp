@@ -547,3 +547,63 @@ exp_real texture_get_image(gm_real texture_id)
 	}
 	simple_catch("texture_get_sub_image", -1)
 }
+
+exp_real atlas_sprite_get_width(gm_real id)
+{
+	try
+	{
+		if (id < IMAGE_START_POSITION)
+			return gm::sprite_get_width((int)id);
+
+		texture_atlas::images* image = game_images.at((uint)id);
+		return (gm_real)image->image_width;
+	}
+	simple_catch("atlas_sprite_get_width", 0)
+}
+
+exp_real atlas_sprite_get_height(gm_real id)
+{
+	try
+	{
+		if (id < IMAGE_START_POSITION)
+			return gm::sprite_get_height((int)id);
+
+		texture_atlas::images* image = game_images.at((uint)id);
+		return (gm_real)image->image_height;
+	}
+	simple_catch("atlas_sprite_get_height", 0)
+}
+
+exp_real atlas_background_get_width(gm_real id)
+{
+	try
+	{
+		if (id < IMAGE_START_POSITION)
+			return gm::background_get_width((int)id);
+
+		texture_atlas::images* image = game_images.at((uint)id);
+		return (gm_real)image->image_width;
+	}
+	simple_catch("atlas_sprite_get_width", 0)
+}
+
+exp_real atlas_background_get_height(gm_real id)
+{
+	try
+	{
+		if (id < IMAGE_START_POSITION)
+			return gm::background_get_height((int)id);
+
+		texture_atlas::images* image = game_images.at((uint)id);
+		return (gm_real)image->image_height;
+	}
+	simple_catch("atlas_sprite_get_height", 0)
+}
+
+exp_real texture_atlas_set_crop(gm_real crop)
+{
+	gm::crop_blank = (crop >= 0.5);
+	return gtrue;
+}
+
+exp_real texture_atlas_get_crop() { return gm::crop_blank; }

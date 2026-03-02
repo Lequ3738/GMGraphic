@@ -3,6 +3,8 @@
 
 namespace gm
 {
+	extern bool crop_blank;
+
 	// data + width + height
 	typedef std::tuple<std::vector<uchar>, uint, uint> image_data;
 

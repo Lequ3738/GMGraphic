@@ -2,6 +2,8 @@
 #include "load_resources.h"
 #include "lodepng.h"
 
+bool gm::crop_blank = true;
+
 #pragma warning(disable: 4102)  // unreferenced label
 static gm::image_rect crop_blank_area(gm::image_data& image)
 {
@@ -164,16 +166,21 @@ gm::sprite gm::decode_gmspr(const std::string& file)
 
 		for (uint i = 0; i < (uint)count; ++i)
 		{
-			gm::image_data image{ std::move(images[i]), width, height };
-			cropped_rects[i] = crop_blank_area(image);
-
-			if (cropped_rects[i].right <= cropped_rects[i].left ||
-				cropped_rects[i].bottom <= cropped_rects[i].top)
+			if (crop_blank)
 			{
-				cropped_rects[i] = { 0, 0, 0, 0 };
-			}
+				gm::image_data image{ std::move(images[i]), width, height };
+				cropped_rects[i] = crop_blank_area(image);
 
-			images[i] = std::move(std::get<0>(image));
+				if (cropped_rects[i].right <= cropped_rects[i].left ||
+					cropped_rects[i].bottom <= cropped_rects[i].top)
+				{
+					cropped_rects[i] = { 0, 0, 0, 0 };
+				}
+
+				images[i] = std::move(std::get<0>(image));
+			}
+			else
+				cropped_rects[i] = { 0, 0, (int)width - 1, (int)height - 1 };
 		}
 
 		// 构建结果
@@ -222,17 +229,21 @@ gm::sprite gm::decode_png(const std::string& file)
 
 		// 进行空白裁剪计算
 		std::vector<gm::image_rect> cropped_rects(1);
-
-		// 直接将不需要的 image vector 移动到 image_data 里面
-		// crop_blank_area() 只分析 alpha 通道，所以 RGB 通道并不重要
-		gm::image_data image_data{ std::move(image), width, height };
-		cropped_rects[0] = crop_blank_area(image_data);
-
-		if (cropped_rects[0].right <= cropped_rects[0].left ||
-			cropped_rects[0].bottom <= cropped_rects[0].top)
+		if (crop_blank)
 		{
-			cropped_rects[0] = { 0, 0, 0, 0 };
+			// 直接将不需要的 image vector 移动到 image_data 里面
+			// crop_blank_area() 只分析 alpha 通道，所以 RGB 通道并不重要
+			gm::image_data data{ std::move(image), width, height };
+			cropped_rects[0] = crop_blank_area(data);
+
+			if (cropped_rects[0].right <= cropped_rects[0].left ||
+				cropped_rects[0].bottom <= cropped_rects[0].top)
+			{
+				cropped_rects[0] = { 0, 0, 0, 0 };
+			}
 		}
+		else
+			cropped_rects[0] = { 0, 0, (int)width - 1, (int)height - 1 };
 
 		// 构建结果
 		std::vector<std::vector<uchar>> images;
@@ -298,18 +309,28 @@ gm::sprite gm::get_sprite_data(uint id)
 		for (uint i = 0; i < (uint)spr.Subimages.GetCount(); ++i)
 		{
 			IDirect3DTexture8* texture = spr.Subimages[id].GetTexture();
-			gm::image_data image_data = get_image_data(texture);
+			gm::image_data data = get_image_data(texture);
 
 			// 进行空白裁剪计算
-			cropped_rects[i] = crop_blank_area(image_data);
-
-			if (cropped_rects[i].right <= cropped_rects[i].left ||
-				cropped_rects[i].bottom <= cropped_rects[i].top)
+			if (crop_blank)
 			{
-				cropped_rects[i] = { 0, 0, 0, 0 };
+				cropped_rects[i] = crop_blank_area(data);
+
+				if (cropped_rects[i].right <= cropped_rects[i].left ||
+					cropped_rects[i].bottom <= cropped_rects[i].top)
+				{
+					cropped_rects[i] = { 0, 0, 0, 0 };
+				}
+			}
+			else
+			{
+				cropped_rects[i] = { 0, 0,
+					(int)std::get<1>(data) - 1,  // width
+					(int)std::get<2>(data) - 1   // height
+				};
 			}
 
-			images[i] = std::move(std::get<0>(image_data));
+			images[i] = std::move(std::get<0>(data));
 		}
 
 		return gm::sprite {
@@ -328,25 +349,30 @@ gm::sprite gm::get_background_data(uint id)
 	try
 	{
 		IDirect3DTexture8* texture = gmapi->Backgrounds[id].GetTexture();
-		gm::image_data image_data = get_image_data(texture);
+		gm::image_data data = get_image_data(texture);
 		
 		uint width = std::min((uint)gmapi->Backgrounds[id].GetWidth(), 
-			std::get<1>(image_data));
+			std::get<1>(data));
 		uint height = std::min((uint)gmapi->Backgrounds[id].GetHeight(), 
-			std::get<2>(image_data));
+			std::get<2>(data));
 
 		// 进行空白裁剪计算
 		std::vector<gm::image_rect> cropped_rects(1);
-		cropped_rects[0] = crop_blank_area(image_data);
-
-		if (cropped_rects[0].right <= cropped_rects[0].left ||
-			cropped_rects[0].bottom <= cropped_rects[0].top)
+		if (crop_blank)
 		{
-			cropped_rects[0] = { 0, 0, 0, 0 };
+			cropped_rects[0] = crop_blank_area(data);
+
+			if (cropped_rects[0].right <= cropped_rects[0].left ||
+				cropped_rects[0].bottom <= cropped_rects[0].top)
+			{
+				cropped_rects[0] = { 0, 0, 0, 0 };
+			}
 		}
+		else
+			cropped_rects[0] = { 0, 0, (int)width - 1, (int)height - 1 };
 
 		std::vector<std::vector<uchar>> images;
-		images.push_back(std::move(std::get<0>(image_data)));
+		images.push_back(std::move(std::get<0>(data)));
 		
 		return gm::sprite {
 			.width = width, .height = height,
