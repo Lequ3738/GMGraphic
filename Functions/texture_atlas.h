@@ -190,12 +190,20 @@ exp_real texture_atlas_find_first();
 exp_real texture_atlas_find_next(gm_real id);
 exp_real texture_atlas_find_last();
 
+exp_real texture_atlas_get_image_count(gm_real atlas_id);
 exp_real image_get_texture_atlas(gm_real image_id);
+exp_real texture_atlas_get_image(gm_real atlas_id, gm_real pos);
 exp_real texture_get_image(gm_real texture_id);
+exp_real atlas_sprite_get_texture(gm_real spr, gm_real subimg);
+exp_real atlas_background_get_texture(gm_real back);
 exp_real atlas_sprite_get_width(gm_real id);
 exp_real atlas_sprite_get_height(gm_real id);
 exp_real atlas_background_get_width(gm_real id);
 exp_real atlas_background_get_height(gm_real id);
+exp_real atlas_texture_get_width(gm_real id);
+exp_real atlas_texture_get_height(gm_real id);
+exp_real texture_get_atlas_x(gm_real id);
+exp_real texture_get_atlas_y(gm_real id);
 
 exp_real texture_atlas_set_crop(gm_real crop);
 exp_real texture_atlas_get_crop();

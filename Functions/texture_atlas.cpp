@@ -357,6 +357,8 @@ void texture_atlas::save(path& file_path) const
 // Export Functions
 // ============================================================================
 
+#pragma region Texture Atlas Create / Add image
+
 exp_real texture_atlas_create(gm_real size)
 {
 	try
@@ -529,6 +531,10 @@ exp_real texture_atlas_auto_finish(gm_real dont_twice)
 	simple_catch("texture_atlas_auto_finish", gfalse)
 }
 
+#pragma endregion
+
+#pragma region Get
+
 exp_real texture_atlas_count()
 {
 	return (gm_real)game_texture_atlas.size();
@@ -559,12 +565,32 @@ exp_real texture_atlas_find_last()
 		(gm_real)std::prev(game_texture_atlas.end())->first;
 }
 
+exp_real texture_atlas_get_image_count(gm_real atlas_id)
+{
+	try
+	{
+		texture_atlas* atlas = game_texture_atlas.at((uint)atlas_id).get();
+		return (gm_real)atlas->images_list.size();
+	}
+	simple_catch("texture_atlas_get_image_count", -1)
+}
+
 exp_real image_get_texture_atlas(gm_real image_id)
 {
 	try
 	{
 		texture_atlas::images* image = game_images.at((uint)image_id);
 		return (gm_real)image->atlas_id;
+	}
+	simple_catch("image_get_texture_atlas", -1)
+}
+
+exp_real texture_atlas_get_image(gm_real atlas_id, gm_real pos)
+{
+	try
+	{
+		texture_atlas* atlas = game_texture_atlas.at((uint)atlas_id).get();
+		return (gm_real)atlas->images_list.at((uint)pos)->image_id;
 	}
 	simple_catch("image_get_texture_atlas", -1)
 }
@@ -579,11 +605,39 @@ exp_real texture_get_image(gm_real texture_id)
 	simple_catch("texture_get_sub_image", -1)
 }
 
+exp_real atlas_sprite_get_texture(gm_real spr, gm_real subimg)
+{
+	try
+	{
+		if ((uint)spr < IMAGE_START_POSITION)
+			return gm::sprite_get_texture((int)spr, (int)subimg);
+
+		texture_atlas::images* image = game_images.at((uint)spr);
+		texture_atlas::images::sub_image* sub_image = image->frames.at((uint)subimg).get();
+		return sub_image->texture_id;
+	}
+	simple_catch("sprite_get_texture", -1)
+}
+
+exp_real atlas_background_get_texture(gm_real back)
+{
+	try
+	{
+		if ((uint)back < IMAGE_START_POSITION)
+			return gm::background_get_texture((int)back);
+
+		texture_atlas::images* image = game_images.at((uint)back);
+		texture_atlas::images::sub_image* sub_image = image->frames.at(0).get();
+		return sub_image->texture_id;
+	}
+	simple_catch("sprite_get_texture", -1)
+}
+
 exp_real atlas_sprite_get_width(gm_real id)
 {
 	try
 	{
-		if (id < IMAGE_START_POSITION)
+		if ((uint)id < IMAGE_START_POSITION)
 			return gm::sprite_get_width((int)id);
 
 		texture_atlas::images* image = game_images.at((uint)id);
@@ -596,7 +650,7 @@ exp_real atlas_sprite_get_height(gm_real id)
 {
 	try
 	{
-		if (id < IMAGE_START_POSITION)
+		if ((uint)id < IMAGE_START_POSITION)
 			return gm::sprite_get_height((int)id);
 
 		texture_atlas::images* image = game_images.at((uint)id);
@@ -609,7 +663,7 @@ exp_real atlas_background_get_width(gm_real id)
 {
 	try
 	{
-		if (id < IMAGE_START_POSITION)
+		if ((uint)id < IMAGE_START_POSITION)
 			return gm::background_get_width((int)id);
 
 		texture_atlas::images* image = game_images.at((uint)id);
@@ -622,7 +676,7 @@ exp_real atlas_background_get_height(gm_real id)
 {
 	try
 	{
-		if (id < IMAGE_START_POSITION)
+		if ((uint)id < IMAGE_START_POSITION)
 			return gm::background_get_height((int)id);
 
 		texture_atlas::images* image = game_images.at((uint)id);
@@ -630,6 +684,74 @@ exp_real atlas_background_get_height(gm_real id)
 	}
 	simple_catch("atlas_sprite_get_height", 0)
 }
+
+exp_real atlas_texture_get_width(gm_real id)
+{
+	try
+	{
+		if ((uint)id < TEXTURE_START_POSITION)
+			return gm::texture_get_width((int)id);
+
+		texture_atlas::images::sub_image* subimg = game_textures.at((uint)id);
+		texture_atlas::images* image = game_images.at(subimg->image_id);
+		texture_atlas* atlas = game_texture_atlas.at(image->atlas_id).get();
+
+		return (gm_real)subimg->texture_width / (gm_real)atlas->size;
+	}
+	simple_catch("atlas_texture_get_width", 0)
+}
+
+exp_real atlas_texture_get_height(gm_real id)
+{
+	try
+	{
+		if ((uint)id < TEXTURE_START_POSITION)
+			return gm::texture_get_height((int)id);
+
+		texture_atlas::images::sub_image* subimg = game_textures.at((uint)id);
+		texture_atlas::images* image = game_images.at(subimg->image_id);
+		texture_atlas* atlas = game_texture_atlas.at(image->atlas_id).get();
+
+		return (gm_real)subimg->texture_height / (gm_real)atlas->size;
+	}
+	simple_catch("atlas_texture_get_width", 0)
+}
+
+exp_real texture_get_atlas_x(gm_real id)
+{
+	try
+	{
+		if ((uint)id < TEXTURE_START_POSITION)
+			return 0;
+
+		texture_atlas::images::sub_image* subimg = game_textures.at((uint)id);
+		texture_atlas::images* image = game_images.at(subimg->image_id);
+		texture_atlas* atlas = game_texture_atlas.at(image->atlas_id).get();
+
+		return (gm_real)subimg->texture_left / (gm_real)atlas->size;
+	}
+	simple_catch("texture_get_atlas_x", -1)
+}
+
+exp_real texture_get_atlas_y(gm_real id)
+{
+	try
+	{
+		if ((uint)id < TEXTURE_START_POSITION)
+			return 0;
+
+		texture_atlas::images::sub_image* subimg = game_textures.at((uint)id);
+		texture_atlas::images* image = game_images.at(subimg->image_id);
+		texture_atlas* atlas = game_texture_atlas.at(image->atlas_id).get();
+
+		return (gm_real)subimg->texture_top / (gm_real)atlas->size;
+	}
+	simple_catch("texture_get_atlas_y", -1)
+}
+
+#pragma endregion
+
+#pragma region Configs
 
 exp_real texture_atlas_set_crop(gm_real crop)
 {
@@ -649,3 +771,5 @@ exp_real texture_atlas_get_amplificate()
 {
 	return texture_atlas::texture_amplification;
 }
+
+#pragma endregion
