@@ -49,13 +49,9 @@ namespace sdf
 
 	struct draw_info
 	{
-		std::string str;
-
 		double x = 0, y = 0;
 		double xscale = 1, yscale = 1;
 		double rot = 0;
-		
-		double clamp_w = 0;
 
 		d3dcolor col_lt = 0xFFFFFFFF;
 		d3dcolor col_rt = 0xFFFFFFFF;
@@ -64,7 +60,22 @@ namespace sdf
 	};
 
 	extern double game_font_size;
+	extern double line_spacing;
+	extern bool per_line_halign;
+
 	typedef std::unique_ptr<glyphs> glyphs_ptr;
+
+	struct composed_string
+	{
+		struct line
+		{
+			std::vector<uint> str_unicode;
+			float x = 0, width = 0;
+		};
+
+		std::vector<line> lines;
+		float width = 0, height = 0;
+	};
 }
 
 extern std::unordered_map<uint, sdf::glyphs_ptr> game_sdf_glyphs;

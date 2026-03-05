@@ -4,7 +4,10 @@
 #include "shader.h"
 #include "draw_text.h"
 
-double sdf::game_font_size = 24.0;
+double sdf::game_font_size = 16.0;
+double sdf::line_spacing = 1.0;
+bool sdf::per_line_halign = false;
+
 sdf::glyphs* current_sdf_glyphs = nullptr;
 
 static std::vector<std::string> string_token(std::string& str, std::string&& sep)
@@ -125,35 +128,198 @@ static d3dcolor* game_d3dcolor = (d3dcolor*)0x58D344;
 
 constexpr uint absence_character_unicode = '?';
 
-static void draw_text_line(sdf::draw_info& info)
+static float pt_to_px(float pt) { return pt * 96.0f / 72.0f; }
+
+static sdf::composed_string composing_string(std::string& str)
 {
 	try
 	{
 		if (current_sdf_glyphs == nullptr)
 			throw std::runtime_error("No font is currently set for drawing text.");
 
+		std::istringstream str_stream(str);
+		std::string line_str;
 		sdf::glyphs& glyphs = *current_sdf_glyphs;
-		auto cur_it = info.str.begin();
-		auto end_it = info.str.end();
 
-		while (cur_it != end_it)
+		sdf::composed_string result;
+		float font_size = pt_to_px((float)sdf::game_font_size);
+		float max_width = 0, height = 0;
+
+		while (std::getline(str_stream, line_str))
 		{
-			// 获取一个 utf-8 字符码点
-			uint unicode = utf8::next(cur_it, end_it);
+			sdf::composed_string::line line_glyphs;
+			float width = 0;
 			
-			// 在字形图集中查找该字符的字形数据
-			auto glyph_it = glyphs.glaph_map.find(unicode);
-			if (glyph_it == glyphs.glaph_map.end())
-				glyph_it = glyphs.glaph_map.find(absence_character_unicode);
-			if (glyph_it == glyphs.glaph_map.end())
+			auto cur_it = line_str.begin();
+			auto end_it = line_str.end();
+
+			while (cur_it != end_it)
 			{
-				throw std::runtime_error("The font does not contain the absence "
-					"character (?).");
+				// 获取一个 utf-8 字符码点
+				uint unicode = utf8::next(cur_it, end_it);
+				
+				// 在字形图集中查找该字符的字形数据
+				auto glyph_it = glyphs.glaph_map.find(unicode);
+				if (glyph_it == glyphs.glaph_map.end())
+				{
+					unicode = absence_character_unicode;
+					glyph_it = glyphs.glaph_map.find(unicode);
+				}
+				if (glyph_it == glyphs.glaph_map.end())
+				{
+					throw std::runtime_error("The font does not contain the absence "
+						"character (?).");
+				}
+				sdf::glyphs::glyph& glyph = glyph_it->second;
+				line_glyphs.str_unicode.push_back(unicode);
+
+				// 计算该行的宽
+				width += (float)glyph.advance * font_size;
 			}
-			sdf::glyphs::glyph glyph = glyph_it->second;
+
+			height += font_size + (float)sdf::line_spacing;
+			if (width > max_width)
+				max_width = width;
+
+			line_glyphs.width = width;
+			result.lines.push_back(std::move(line_glyphs));
+		}
+
+		height -= (float)sdf::line_spacing;
+		result.width = max_width;
+		result.height = height;
+
+		if (sdf::per_line_halign)
+		{
+			for (uint i = 0; i < result.lines.size(); ++i)
+			{
+				if (*game_text_halign == gm::fa_center)
+					result.lines[i].x = (result.width - result.lines[i].width) / 2.0f;
+				else if (*game_text_halign == gm::fa_right)
+					result.lines[i].x = result.width - result.lines[i].width;
+			}
+		}
+
+		return result;
+	}
+	transpond_catch("composing_string(std::string&)")
+}
+
+static void draw_text(sdf::composed_string& str, sdf::draw_info& info)
+{
+	try
+	{
+		if (current_sdf_glyphs == nullptr)
+			throw std::runtime_error("No font is currently set for drawing text.");
+
+		atlas::end_draw();
+		atlas::start_draw(current_sdf_glyphs->texture);
+
+		sdf::glyphs& glyphs = *current_sdf_glyphs;
+		float font_size = pt_to_px((float)sdf::game_font_size);
+
+		// 计算对齐后的绘制位置
+		float draw_x = (float)info.x, draw_y = (float)info.y;
+
+		if (*game_text_valign == gm::fa_middle)
+			draw_y -= str.height / 2.0f;
+		else if (*game_text_valign == gm::fa_bottom)
+			draw_y -= str.height;
+
+		if (*game_text_halign == gm::fa_center)
+			draw_x -= str.width / 2.0f;
+		else if (*game_text_valign == gm::fa_right)
+			draw_x -= str.width;
+
+		float orig_x = draw_x - (float)info.x, orig_y = draw_y - (float)info.y;
+
+		// 进行逐字符绘制
+		for (uint line_i = 0; line_i < str.lines.size(); ++line_i)
+		{
+			auto& line = str.lines[line_i];
+			float x_offset = line.x;
+
+			for (uint i = 0; i < line.str_unicode.size(); ++i)
+			{
+				uint unicode = line.str_unicode[i];
+
+				auto glyph_it = glyphs.glaph_map.find(unicode);
+				sdf::glyphs::glyph& glyph = glyph_it->second;
+
+				// 添加顶点
+				float u0 = (float)(glyph.atlas_bound.left) / (float)glyphs.width;
+				float v0 = (float)(glyph.atlas_bound.top) / (float)glyphs.height;
+				float u1 = (float)(glyph.atlas_bound.right) / (float)glyphs.width;
+				float v1 = (float)(glyph.atlas_bound.bottom) / (float)glyphs.height;
+
+				float left = (float)((glyph.plane_bound.left - orig_x) * info.xscale - 0.5);
+				float top = (float)((glyph.plane_bound.top - orig_y) * info.yscale - 0.5);
+				float right = (float)((glyph.plane_bound.right - orig_x) * info.xscale - 0.5);
+				float bottom = (float)((glyph.plane_bound.bottom - orig_y) * info.yscale - 0.5);
+
+				float x_lt = 0, y_lt = 0, x_rt = 0, y_rt = 0, x_rb = 0, y_rb = 0, 
+					x_lb = 0, y_lb = 0;
+
+				if (std::abs(info.rot) > 0.00000001)
+				{
+					double c = std::cos(info.rot);
+					double s = std::sin(info.rot);
+
+					x_lt = static_cast<float>(draw_x + x_offset + left * c + top * s);
+					y_lt = static_cast<float>(draw_y - left * s + top * c);
+					x_rt = static_cast<float>(draw_x + x_offset + right * c + top * s);
+					y_rt = static_cast<float>(draw_y - right * s + top * c);
+					x_rb = static_cast<float>(draw_x + x_offset + right * c + bottom * s);
+					y_rb = static_cast<float>(draw_y - right * s + bottom * c);
+					x_lb = static_cast<float>(draw_x + x_offset + left * c + bottom * s);
+					y_lb = static_cast<float>(draw_y - left * s + bottom * c);
+				}
+				else
+				{
+					x_lt = static_cast<float>(draw_x + x_offset + left);
+					y_lt = static_cast<float>(draw_y + top);
+					x_rt = static_cast<float>(draw_x + x_offset + right);
+					y_rt = y_lt;
+					x_rb = x_rt;
+					y_rb = static_cast<float>(draw_y + bottom);
+					x_lb = x_lt;
+					y_lb = y_rb;
+				}
+
+				// 三角形 1
+				vert_ext* vert = vertex::get_struct();
+				vert->x = x_lt; vert->y = y_lt; vert->c = info.col_lt;
+				vert->uv[0] = u0; vert->uv[1] = v0;
+
+				vert = vertex::get_struct();
+				vert->x = x_rt; vert->y = y_rt; vert->c = info.col_rt;
+				vert->uv[0] = u1; vert->uv[1] = v0;
+
+				vert = vertex::get_struct();
+				vert->x = x_rb; vert->y = y_rb; vert->c = info.col_rb;
+				vert->uv[0] = u1; vert->uv[1] = v1;
+
+				// 三角形 2
+				vert = vertex::get_struct();
+				vert->x = x_lt; vert->y = y_lt; vert->c = info.col_lt;
+				vert->uv[0] = u0; vert->uv[1] = v0;
+
+				vert = vertex::get_struct();
+				vert->x = x_rb; vert->y = y_rb; vert->c = info.col_rb;
+				vert->uv[0] = u1; vert->uv[1] = v1;
+
+				vert = vertex::get_struct();
+				vert->x = x_lb; vert->y = y_lb; vert->c = info.col_lb;
+				vert->uv[0] = u0; vert->uv[1] = v1;
+
+				// 根据字形的水平步进调整绘制位置
+				draw_x += (float)(glyph.advance * info.xscale);
+			}
+
+			draw_y += font_size + (float)sdf::line_spacing;
 		}
 	}
-	transpond_catch("draw_text_line(sdf::draw_info&)")
+	transpond_catch("draw_text(sdf::composed_string&, sdf::draw_info&)")
 }
 
 void sdf::draw_text(double x, double y, std::string& str)

@@ -3,22 +3,15 @@
 #include "draw_atlas.h"
 #include "math_s.h"
 
-static texture_atlas* current_atlas = nullptr;
-
 static void draw_image(atlas::draw_info& info)
 {
 	try
 	{
-		if (&info.atlas != current_atlas)
-		{
-			atlas::end_draw();
+		if (info.atlas.texture == nullptr)
+			throw std::runtime_error("Cannot find the texture atlas of this sprite.");
 
-			current_atlas = &info.atlas;
-			if (current_atlas->texture == nullptr)
-				throw std::runtime_error("Cannot find the texture atlas of this sprite.");
-
-			atlas::start_draw(current_atlas->texture);
-		}
+		atlas::end_draw();
+		atlas::start_draw(info.atlas.texture);
 
 		bool draw_part = (info.region.width != 0 && info.region.height != 0);
 		float u0 = 0, v0 = 0, u1 = 0, v1 = 0, u2 = 0, v2 = 0, u3 = 0, v3 = 0;
@@ -254,7 +247,6 @@ void atlas::force_draw_to_screen()
 	try
 	{
 		atlas::end_draw();
-		current_atlas = nullptr;
 		current_texture = nullptr;
 	}
 	transpond_catch("atlas::force_draw_to_screen()")
