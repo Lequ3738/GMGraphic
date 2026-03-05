@@ -289,6 +289,7 @@
     <ClInclude Include="Direct3D_8\vptype.h" />
     <ClInclude Include="Direct3D_8\xprtdefs.h" />
     <ClInclude Include="Functions\draw_atlas.h" />
+    <ClInclude Include="Functions\draw_text.h" />
     <ClInclude Include="Librarys\buffer.h" />
     <ClInclude Include="Librarys\load_resources.h" />
     <ClInclude Include="Librarys\lodepng.h" />
@@ -297,6 +298,13 @@
     <ClInclude Include="Librarys\Rect.h" />
     <ClInclude Include="Librarys\structs.h" />
     <ClInclude Include="Functions\texture_atlas.h" />
+    <ClInclude Include="Librarys\utf8.h" />
+    <ClInclude Include="Librarys\utf8\checked.h" />
+    <ClInclude Include="Librarys\utf8\core.h" />
+    <ClInclude Include="Librarys\utf8\cpp11.h" />
+    <ClInclude Include="Librarys\utf8\cpp17.h" />
+    <ClInclude Include="Librarys\utf8\cpp20.h" />
+    <ClInclude Include="Librarys\utf8\unchecked.h" />
     <ClInclude Include="main.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="GMAPI\Gmapi.h" />
@@ -321,6 +329,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Functions\draw_atlas.cpp" />
+    <ClCompile Include="Functions\draw_text.cpp" />
     <ClCompile Include="GMAPI\Gmapi3DGraphics.cpp" />
     <ClCompile Include="GMAPI\GmapiConsts.cpp" />
     <ClCompile Include="GMAPI\GmapiDataStructures.cpp" />

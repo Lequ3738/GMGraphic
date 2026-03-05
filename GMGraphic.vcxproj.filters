@@ -456,6 +456,30 @@
     <ClInclude Include="Functions\draw_atlas.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="Functions\draw_text.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Librarys\utf8\checked.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Librarys\utf8\core.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Librarys\utf8\cpp11.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Librarys\utf8\cpp17.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Librarys\utf8\cpp20.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Librarys\utf8\unchecked.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Librarys\utf8.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp">
@@ -528,6 +552,9 @@
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="Functions\draw_atlas.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Functions\draw_text.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>

@@ -9,7 +9,12 @@ extern D3DPRIMITIVETYPE        vbuff_prim;           // Primitive to draw
 extern bool                    vbuff_usevs;          // Use vertex shader?
 extern bool                    vbuff_autoinc;        // Automatic increment?
 
-exp_real init();
+namespace gm
+{
+	extern int argument_list;
+}
+
+exp_real init(gm_real arg_list);
 
 exp_str d3d_dev_get_name();
 exp_real d3d_dev_get_point_max_size();

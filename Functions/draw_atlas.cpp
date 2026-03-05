@@ -11,23 +11,13 @@ static void draw_image(atlas::draw_info& info)
 	{
 		if (&info.atlas != current_atlas)
 		{
-			if (current_atlas != nullptr)
-			{
-				IDirect3DDevice8* device = gmapi->GetDirect3DDevice();
-
-				d3d_set_tex_all(-1);
-				D3DCheck(device->SetTexture(0, current_atlas->texture), 0);
-				D3DCheck(device->SetTextureStageState(0, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP), 1);
-				D3DCheck(device->SetTextureStageState(0, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP), 2);
-
-				vertex::end();
-			}
+			atlas::end_draw();
 
 			current_atlas = &info.atlas;
 			if (current_atlas->texture == nullptr)
 				throw std::runtime_error("Cannot find the texture atlas of this sprite.");
 
-			vertex::begin(D3DPT_TRIANGLELIST, true);
+			atlas::start_draw(current_atlas->texture);
 		}
 
 		bool draw_part = (info.region.width != 0 && info.region.height != 0);
@@ -140,23 +130,23 @@ static void draw_image(atlas::draw_info& info)
 		
 		// 三角形 1
 		vert_ext* vert = vertex::get_struct();
-		vert->x = x_lt; vert->y = y_lt; vert->c = info.color; vert->uv[0] = u0; vert->uv[1] = v0;
+		vert->x = x_lt; vert->y = y_lt; vert->c = info.color_lt; vert->uv[0] = u0; vert->uv[1] = v0;
 
 		vert = vertex::get_struct();
-		vert->x = x_rt; vert->y = y_rt; vert->c = info.color; vert->uv[0] = u1; vert->uv[1] = v1;
+		vert->x = x_rt; vert->y = y_rt; vert->c = info.color_rt; vert->uv[0] = u1; vert->uv[1] = v1;
 
 		vert = vertex::get_struct();
-		vert->x = x_rb; vert->y = y_rb; vert->c = info.color; vert->uv[0] = u2; vert->uv[1] = v2;
+		vert->x = x_rb; vert->y = y_rb; vert->c = info.color_rb; vert->uv[0] = u2; vert->uv[1] = v2;
 
 		// 三角形 2
 		vert = vertex::get_struct();
-		vert->x = x_lt; vert->y = y_lt; vert->c = info.color; vert->uv[0] = u0; vert->uv[1] = v0;
+		vert->x = x_lt; vert->y = y_lt; vert->c = info.color_lt; vert->uv[0] = u0; vert->uv[1] = v0;
 
 		vert = vertex::get_struct();
-		vert->x = x_rb; vert->y = y_rb; vert->c = info.color; vert->uv[0] = u2; vert->uv[1] = v2;
+		vert->x = x_rb; vert->y = y_rb; vert->c = info.color_rb; vert->uv[0] = u2; vert->uv[1] = v2;
 
 		vert = vertex::get_struct();
-		vert->x = x_lb; vert->y = y_lb; vert->c = info.color; vert->uv[0] = u3; vert->uv[1] = v3;
+		vert->x = x_lb; vert->y = y_lb; vert->c = info.color_lb; vert->uv[0] = u3; vert->uv[1] = v3;
 	}
 	transpond_catch("draw_image(atlas::draw_info&)")
 }
@@ -251,7 +241,7 @@ void atlas::draw_sprite_ext(uint id, uint subimg, double x, double y, double xsc
 		draw_info info = {
 			.atlas = *atlas_ptr, .images = *images_ptr, .sub_image = *sub_image_ptr,
 			.trans = {.x = x, .y = y, .xscale = xscale, .yscale = yscale, .rot = rot},
-			.color = color
+			.color_lt = color, .color_rt = color, .color_rb = color, .color_lb = color
 		};
 		draw_image(info);
 	}
@@ -263,18 +253,9 @@ void atlas::force_draw_to_screen()
 {
 	try
 	{
-		if (current_atlas != nullptr)
-		{
-			IDirect3DDevice8* device = gmapi->GetDirect3DDevice();
-
-			d3d_set_tex_all(-1);
-			D3DCheck(device->SetTexture(0, current_atlas->texture), 0);
-			D3DCheck(device->SetTextureStageState(0, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP), 1);
-			D3DCheck(device->SetTextureStageState(0, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP), 2);
-
-			vertex::end();
-		}
+		atlas::end_draw();
 		current_atlas = nullptr;
+		current_texture = nullptr;
 	}
 	transpond_catch("atlas::force_draw_to_screen()")
 }
@@ -292,7 +273,7 @@ exp_real atlas_draw_sprite(gm_real id, gm_real subimg, gm_real x, gm_real y)
 		atlas::draw_sprite((uint)id, (uint)subimg, x, y);
 		return gtrue;
 	}
-	simple_catch("atlas_draw_sprite", gerror)
+	simple_catch("atlas_draw_sprite", gfalse)
 }
 
 exp_real atlas_draw_sprite_part(gm_real id, gm_real subimg, gm_real left, gm_real top,
@@ -311,7 +292,7 @@ exp_real atlas_draw_sprite_part(gm_real id, gm_real subimg, gm_real left, gm_rea
 			(int)height, x, y);
 		return gtrue;
 	}
-	simple_catch("atlas_draw_sprite_part", gerror)
+	simple_catch("atlas_draw_sprite_part", gfalse)
 }
 
 exp_real atlas_draw_sprite_ext(gm_real id, gm_real subimg, gm_real x, gm_real y,
@@ -330,7 +311,7 @@ exp_real atlas_draw_sprite_ext(gm_real id, gm_real subimg, gm_real x, gm_real y,
 			rot * pi / 180, col_d3d((int)color, alpha));
 		return gtrue;
 	}
-	simple_catch("atlas_draw_sprite_ext", gerror)
+	simple_catch("atlas_draw_sprite_ext", gfalse)
 }
 
 exp_real atlas_draw_background(gm_real id, gm_real x, gm_real y)
@@ -346,7 +327,7 @@ exp_real atlas_draw_background(gm_real id, gm_real x, gm_real y)
 		atlas::draw_sprite((uint)id, 0, x, y);
 		return gtrue;
 	}
-	simple_catch("atlas_draw_background", gerror)
+	simple_catch("atlas_draw_background", gfalse)
 }
 
 exp_real atlas_draw_background_part(gm_real id, gm_real left, gm_real top, gm_real width,
@@ -365,7 +346,7 @@ exp_real atlas_draw_background_part(gm_real id, gm_real left, gm_real top, gm_re
 			(int)height, x, y);
 		return gtrue;
 	}
-	simple_catch("atlas_draw_background_part", gerror)
+	simple_catch("atlas_draw_background_part", gfalse)
 }
 
 exp_real atlas_draw_background_ext(gm_real id, gm_real x, gm_real y, gm_real xscale, 
@@ -383,7 +364,7 @@ exp_real atlas_draw_background_ext(gm_real id, gm_real x, gm_real y, gm_real xsc
 			col_d3d((int)color, alpha));
 		return gtrue;
 	}
-	simple_catch("atlas_draw_background_ext", gerror)
+	simple_catch("atlas_draw_background_ext", gfalse)
 }
 
 exp_real force_draw_to_screen()
@@ -393,5 +374,5 @@ exp_real force_draw_to_screen()
 		atlas::force_draw_to_screen();
 		return gtrue;
 	}
-	simple_catch("force_draw_to_screen", gerror)
+	simple_catch("force_draw_to_screen", gfalse)
 }

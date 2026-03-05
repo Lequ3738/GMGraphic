@@ -30,7 +30,11 @@ namespace atlas
 
 		transform trans;
 		texture_region region;
-		d3dcolor color = 0xFFFFFFFF;  // ARGB
+
+		d3dcolor color_lt = 0xFFFFFFFF;  // ARGB
+		d3dcolor color_rt = 0xFFFFFFFF;
+		d3dcolor color_rb = 0xFFFFFFFF;
+		d3dcolor color_lb = 0xFFFFFFFF;
 	};
 
 	void draw_sprite(uint id, uint subimg, double x, double y);

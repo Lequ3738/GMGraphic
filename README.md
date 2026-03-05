@@ -24,3 +24,5 @@
 感谢以下项目提供的技术支持：
 - [**GMAPI**](https://github.com/snakedeveloper/gmapi) by Snake
 - [**RectangleBinPack**](https://github.com/juj/RectangleBinPack) by Jukka Jylänki
+- [**LodePNG**](https://github.com/lvandeve/lodepng) by Lode Vandevenne
+- [**UTF8-CPP**](https://github.com/nemtrif/utfcpp) by Nemanja Trifunovic

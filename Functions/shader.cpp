@@ -26,12 +26,17 @@ static std::vector<ps_conf>    conf_vec_ps;			 // Dynamic arrays for configs
 static std::vector<vs_conf>    conf_vec_vs;          // 
 static std::vector<tex_conf>   conf_vec_tex;         // 
 
+namespace gm
+{
+    int argument_list = noone;
+}
+
 // ============================================================================
 // Initialisation
 // ============================================================================
 
 // Initialises device pointer, GPU information, buffers, etc.
-exp_real init()
+exp_real init(gm_real arg_list)
 {
     d3ddev = gmapi->GetDirect3DDevice();
     d3dint = gmapi->GetDirect3DInterface();
@@ -41,6 +46,8 @@ exp_real init()
 
     d3ddev->CreateVertexBuffer(vb_bytes, D3DUSAGE_WRITEONLY, fvf_ext, D3DPOOL_MANAGED, 
         &vbuff_d3d);
+
+    gm::argument_list = (int)arg_list;
 
     return gtrue;
 }

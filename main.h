@@ -15,6 +15,7 @@ using path = std::filesystem::path;
 
 extern gm::CGMAPI* gmapi;
 extern std::string str_ret; // Used to return strings by macro.
+extern IDirect3DTexture8* current_texture;
 
 typedef double gm_real;
 typedef const char* gm_string;
@@ -76,4 +77,10 @@ inline void D3DCheck(HRESULT result, int pos = 0)
 		return;
 
 	throw std::runtime_error("Pos " + std::to_string(pos) + ": " + DXGetErrorDescription8A(result));
+}
+
+namespace atlas
+{
+	void start_draw(IDirect3DTexture8* texture);
+	void end_draw();
 }

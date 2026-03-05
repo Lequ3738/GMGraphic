@@ -5,7 +5,7 @@ std::unordered_map<uint, std::unique_ptr<texture_atlas>> game_texture_atlas;
 std::unordered_map<uint, texture_atlas::images*> game_images;
 std::unordered_map<uint, texture_atlas::images::sub_image*> game_textures;
 
-uint texture_atlas_id_position = 0, 
+uint texture_atlas_id_position = 1, 
 	atlas_image_id = IMAGE_START_POSITION,
 	atlas_texture_id = TEXTURE_START_POSITION;
 
