@@ -10,8 +10,11 @@ static void draw_image(atlas::draw_info& info)
 		if (info.atlas.texture == nullptr)
 			throw std::runtime_error("Cannot find the texture atlas of this sprite.");
 
-		atlas::end_draw();
-		atlas::start_draw(info.atlas.texture);
+		if (current_texture.texture != info.atlas.texture)
+		{
+			atlas::end_draw();
+			atlas::start_draw(info.atlas.texture, D3DFMT_A8R8G8B8);
+		}
 
 		bool draw_part = (info.region.width != 0 && info.region.height != 0);
 		float u0 = 0, v0 = 0, u1 = 0, v1 = 0, u2 = 0, v2 = 0, u3 = 0, v3 = 0;
@@ -247,7 +250,6 @@ void atlas::force_draw_to_screen()
 	try
 	{
 		atlas::end_draw();
-		current_texture = nullptr;
 	}
 	transpond_catch("atlas::force_draw_to_screen()")
 }

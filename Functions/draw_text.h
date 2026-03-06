@@ -1,6 +1,10 @@
 #pragma once
 #include "../main.h"
 
+extern int* game_text_halign;
+extern int* game_text_valign;
+extern d3dcolor* game_d3dcolor;
+
 namespace sdf
 {
 	struct glyphs
@@ -53,10 +57,10 @@ namespace sdf
 		double xscale = 1, yscale = 1;
 		double rot = 0;
 
-		d3dcolor col_lt = 0xFFFFFFFF;
-		d3dcolor col_rt = 0xFFFFFFFF;
-		d3dcolor col_rb = 0xFFFFFFFF;
-		d3dcolor col_lb = 0xFFFFFFFF;
+		d3dcolor col_lt = *game_d3dcolor;
+		d3dcolor col_rt = *game_d3dcolor;
+		d3dcolor col_rb = *game_d3dcolor;
+		d3dcolor col_lb = *game_d3dcolor;
 	};
 
 	extern double game_font_size;
@@ -86,3 +90,12 @@ extern std::unordered_map<uint, sdf::glyphs_ptr> game_sdf_glyphs;
 
 exp_real sdf_add_font(gm_string image_path, gm_string csv_path, gm_real font_size);
 exp_real sdf_delete_font(gm_real id);
+
+exp_real draw_get_halign();
+exp_real draw_get_valign();
+exp_real sdf_draw_set_font(gm_real font_id);
+exp_real sdf_draw_get_font();
+exp_real sdf_draw_set_font_size(gm_real size);
+exp_real sdf_draw_get_font_size();
+
+exp_real sdf_draw_text(gm_real x, gm_real y, gm_string str);

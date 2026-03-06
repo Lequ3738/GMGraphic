@@ -44,9 +44,9 @@ bool WINAPI DllMain(HINSTANCE aModuleHandle, int aReason, int aReserved)
 	return true;
 }
 
-IDirect3DTexture8* current_texture = nullptr;
+atlas::texture_info current_texture;
 
-void atlas::start_draw(IDirect3DTexture8* texture)
+void atlas::start_draw(IDirect3DTexture8* texture, D3DFORMAT format)
 {
 	try
 	{
@@ -54,7 +54,7 @@ void atlas::start_draw(IDirect3DTexture8* texture)
 			throw std::runtime_error("The texture atlas is null.");
 
 		vertex::begin(D3DPT_TRIANGLELIST, true);
-		current_texture = texture;
+		current_texture = { texture, format };
 	}
 	transpond_catch("atlas::start_draw(IDirect3DTexture8*)")
 }
@@ -63,37 +63,35 @@ void atlas::end_draw()
 {
 	try
 	{
-		if (current_texture == nullptr)
+		if (current_texture.texture == nullptr)
 			return;
 
 		IDirect3DDevice8* device = gmapi->GetDirect3DDevice();
 
-		D3DSURFACE_DESC desc{};
-		D3DCheck(current_texture->GetLevelDesc(0, &desc), 0);
-
 		d3d_set_tex_all(-1);
-		D3DCheck(device->SetTexture(0, current_texture), 0);
+		D3DCheck(device->SetTexture(0, current_texture.texture), 0);
 		D3DCheck(device->SetTextureStageState(0, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP), 1);
 		D3DCheck(device->SetTextureStageState(0, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP), 2);
 
-		if (desc.Format == D3DFMT_A8R8G8B8)
-		{
-			// 颜色 = 纹理RGB * 顶点RGB
-			device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
-			device->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-			device->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
-		}
-		else if (desc.Format == D3DFMT_A8)
+		if (current_texture.format == D3DFMT_A8)
 		{
 			// 颜色 = 直接使用顶点颜色 (忽略纹理中不存在的RGB)
 			device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
 			device->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_DIFFUSE);
 		}
-		else
+		else if (current_texture.format != D3DFMT_A8R8G8B8)
 			throw std::runtime_error("Unsupported texture format.");
 
 		vertex::end();
-		current_texture = nullptr;
+		
+		if (current_texture.format == D3DFMT_A8)
+		{
+			device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
+			device->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+			device->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
+		}
+		
+		current_texture = { nullptr, D3DFMT_A8R8G8B8 };
 	}
 	transpond_catch("atlas::end_draw()")
 }

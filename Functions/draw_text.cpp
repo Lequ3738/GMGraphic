@@ -122,9 +122,9 @@ sdf::glyphs::~glyphs()
 		current_sdf_glyphs = nullptr;
 }
 
-static int* game_text_halign = (int*)0x58F2B4;
-static int* game_text_valign = (int*)0x58F2B8;
-static d3dcolor* game_d3dcolor = (d3dcolor*)0x58D344;
+int* game_text_halign = (int*)0x58F2B4;
+int* game_text_valign = (int*)0x58F2B8;
+d3dcolor* game_d3dcolor = (d3dcolor*)0x58D344;
 
 constexpr uint absence_character_unicode = '?';
 
@@ -205,15 +205,19 @@ static sdf::composed_string composing_string(std::string& str)
 	transpond_catch("composing_string(std::string&)")
 }
 
-static void draw_text(sdf::composed_string& str, sdf::draw_info& info)
+static void inner_draw_text(sdf::composed_string& str, sdf::draw_info& info)
 {
 	try
 	{
 		if (current_sdf_glyphs == nullptr)
 			throw std::runtime_error("No font is currently set for drawing text.");
 
-		atlas::end_draw();
-		atlas::start_draw(current_sdf_glyphs->texture);
+		// 切换到字体图集纹理并准备绘制
+		if (current_texture.texture != current_sdf_glyphs->texture)
+		{
+			atlas::end_draw();
+			atlas::start_draw(current_sdf_glyphs->texture, D3DFMT_A8);
+		}
 
 		sdf::glyphs& glyphs = *current_sdf_glyphs;
 		float font_size = pt_to_px((float)sdf::game_font_size);
@@ -319,14 +323,16 @@ static void draw_text(sdf::composed_string& str, sdf::draw_info& info)
 			draw_y += font_size + (float)sdf::line_spacing;
 		}
 	}
-	transpond_catch("draw_text(sdf::composed_string&, sdf::draw_info&)")
+	transpond_catch("inner_draw_text(sdf::composed_string&, sdf::draw_info&)")
 }
 
 void sdf::draw_text(double x, double y, std::string& str)
 {
 	try
 	{
-
+		auto composing = composing_string(str);
+		sdf::draw_info info = { .x = x, .y = y };
+		inner_draw_text(composing, info);
 	}
 	transpond_catch("sdf::draw_text(double, double, std::string&)")
 }
@@ -396,6 +402,9 @@ exp_real sdf_draw_text(gm_real x, gm_real y, gm_string str)
 {
 	try
 	{
+		std::string text(str);
+		sdf::draw_text(x, y, text);
+		return gtrue;
 	}
 	simple_catch("sdf_draw_text", gfalse)
 }
