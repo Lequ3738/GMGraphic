@@ -296,6 +296,7 @@
     <ClInclude Include="Librarys\math_s.h" />
     <ClInclude Include="Librarys\MaxRectsBinPack.h" />
     <ClInclude Include="Librarys\Rect.h" />
+    <ClInclude Include="Librarys\pixel_shader_defs.h" />
     <ClInclude Include="Librarys\structs.h" />
     <ClInclude Include="Functions\texture_atlas.h" />
     <ClInclude Include="Librarys\utf8.h" />

@@ -32,11 +32,14 @@ bool WINAPI DllMain(HINSTANCE aModuleHandle, int aReason, int aReserved)
 
 		case DLL_PROCESS_DETACH:
 		{
-			gmapi->Destroy();
-
 			// 如下内容提前清理，确保不会发生全局变量析构顺序问题。
 			game_texture_atlas.clear();  
 			game_sdf_glyphs.clear();
+
+			d3d_ps_destroy((double)ps_sdf_comp);
+			d3d_ps_destroy((double)ps_sdf_premul_comp);
+			
+			gmapi->Destroy();
 		}
 		break;
 	}
@@ -67,6 +70,7 @@ void atlas::end_draw()
 			return;
 
 		IDirect3DDevice8* device = gmapi->GetDirect3DDevice();
+		dword prev_pixel_shader = 0;
 
 		d3d_set_tex_all(-1);
 		D3DCheck(device->SetTexture(0, current_texture.texture), 0);
@@ -78,6 +82,14 @@ void atlas::end_draw()
 			// 颜色 = 直接使用顶点颜色 (忽略纹理中不存在的RGB)
 			device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
 			device->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_DIFFUSE);
+
+			if (sdf::use_shader)
+			{
+				device->GetPixelShader(&prev_pixel_shader);
+				device->SetPixelShader(sdf::shader);
+
+				d3d_set_ps_const(0, sdf::font_sharpness / 32, sdf::font_thickness, 0, 0);
+			}
 		}
 		else if (current_texture.format != D3DFMT_A8R8G8B8)
 			throw std::runtime_error("Unsupported texture format.");
@@ -89,6 +101,9 @@ void atlas::end_draw()
 			device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
 			device->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
 			device->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
+
+			if (sdf::use_shader)
+				device->SetPixelShader(prev_pixel_shader);
 		}
 		
 		current_texture = { nullptr, D3DFMT_A8R8G8B8 };

@@ -35,14 +35,13 @@ namespace sdf
 
 		uint width = 0;								// 该图集的宽
 		uint height = 0;							// 该图集的高
-		uint font_size = 0;							// 字体大小（以像素为单位）
 
 		std::unordered_map<uint, glyph> glaph_map;	// 该图集含有的字形
 		IDirect3DTexture8* texture = nullptr;		// 该图集对应的 GPU 纹理
 
 		uint id = 0;								// 纹理图集 ID
 
-		glyphs(std::string& image_path, std::string& csv_path, uint font_size);
+		glyphs(std::string& image_path, std::string& csv_path);
 
 		glyphs() = delete;
 
@@ -66,6 +65,11 @@ namespace sdf
 	extern double game_font_size;
 	extern double line_spacing;
 	extern bool per_line_halign;
+	extern bool use_shader;
+	extern dword shader;
+
+	extern double font_sharpness;
+	extern double font_thickness;
 
 	typedef std::unique_ptr<glyphs> glyphs_ptr;
 
@@ -80,15 +84,25 @@ namespace sdf
 		std::vector<line> lines;
 		float width = 0, height = 0;
 	};
+
+	struct font_info
+	{
+		glyphs* font = nullptr;
+		double size = 16;
+		double line_spacing = 1;
+		double sharpness = 24;
+		double thickness = 0.5;
+	};
 }
 
 extern std::unordered_map<uint, sdf::glyphs_ptr> game_sdf_glyphs;
+extern std::unordered_map<uint, sdf::font_info> game_font_info;
 
 // ============================================================================
 // Export Functions
 // ============================================================================
 
-exp_real sdf_add_font(gm_string image_path, gm_string csv_path, gm_real font_size);
+exp_real sdf_add_font(gm_string image_path, gm_string csv_path);
 exp_real sdf_delete_font(gm_real id);
 
 exp_real draw_get_halign();
@@ -97,5 +111,21 @@ exp_real sdf_draw_set_font(gm_real font_id);
 exp_real sdf_draw_get_font();
 exp_real sdf_draw_set_font_size(gm_real size);
 exp_real sdf_draw_get_font_size();
+exp_real sdf_draw_set_line_spacing(gm_real spacing);
+exp_real sdf_draw_get_line_spacing();
+exp_real sdf_draw_set_align_by_line(gm_real by_line);
+exp_real sdf_draw_get_align_by_line();
+exp_real sdf_draw_set_use_shader(gm_real use);
+exp_real sdf_draw_get_use_shader();
+exp_real sdf_draw_set_premul(gm_real premul);
+exp_real sdf_draw_get_premul();
+exp_real sdf_draw_set_font_sharpness(gm_real sharpness);
+exp_real sdf_draw_get_font_sharpness();
+exp_real sdf_draw_set_font_thickness(gm_real thickness);
+exp_real sdf_draw_get_font_thickness();
+
+exp_real sdf_draw_set_conf(gm_real font, gm_real size, gm_real line_spacing,
+	gm_real sharpness, gm_real thickness);
+exp_real sdf_apply_conf(gm_real conf_id);
 
 exp_real sdf_draw_text(gm_real x, gm_real y, gm_string str);

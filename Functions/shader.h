@@ -9,6 +9,9 @@ extern D3DPRIMITIVETYPE        vbuff_prim;           // Primitive to draw
 extern bool                    vbuff_usevs;          // Use vertex shader?
 extern bool                    vbuff_autoinc;        // Automatic increment?
 
+extern dword ps_sdf_comp;
+extern dword ps_sdf_premul_comp;
+
 namespace gm
 {
 	extern int argument_list;
@@ -24,7 +27,7 @@ exp_real d3d_dev_get_tex_max_height();
 exp_real d3d_dev_get_tex_max_stages();
 exp_real d3d_dev_get_tex_mem();
 
-exp_real d3d_ps_create(char* src_asm);
+exp_real d3d_ps_create(const char* src_asm);
 exp_real d3d_ps_destroy(double shader);
 exp_real d3d_set_ps(double shader);
 exp_real d3d_set_ps_ext(double shader, double conf);
@@ -32,7 +35,7 @@ exp_real d3d_set_ps_const(double constant, double r, double g, double b, double 
 exp_real d3d_set_ps_const_col(double constant, double col, double alpha);
 exp_real d3d_set_ps_conf(double conf);
 
-exp_real d3d_vs_create(char* src_asm);
+exp_real d3d_vs_create(const char* src_asm);
 exp_real d3d_vs_destroy(double shader);
 exp_real d3d_set_vs(double shader);
 exp_real d3d_set_vs_const(double constant, double x, double y, double z, double w);

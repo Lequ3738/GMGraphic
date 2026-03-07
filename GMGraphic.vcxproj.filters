@@ -480,6 +480,9 @@
     <ClInclude Include="Librarys\utf8.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="Librarys\pixel_shader_defs.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp">

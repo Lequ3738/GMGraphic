@@ -7,6 +7,11 @@
 double sdf::game_font_size = 16.0;
 double sdf::line_spacing = 1.0;
 bool sdf::per_line_halign = false;
+bool sdf::use_shader = true;
+dword sdf::shader = (dword)-1;
+
+double sdf::font_sharpness = 24;		// 字体的锐度。在 0 - 32 之间
+double sdf::font_thickness = 0.5;	// 字体的粗细度。在 0 - 1 之间
 
 sdf::glyphs* current_sdf_glyphs = nullptr;
 
@@ -33,7 +38,7 @@ static std::vector<std::string> string_token(std::string& str, std::string&& sep
 	return tokens;
 }
 
-sdf::glyphs::glyphs(std::string& image_path, std::string& csv_path, uint font_size)
+sdf::glyphs::glyphs(std::string& image_path, std::string& csv_path)
 {
 	try
 	{
@@ -46,7 +51,6 @@ sdf::glyphs::glyphs(std::string& image_path, std::string& csv_path, uint font_si
 
 		glyphs::width = width;
 		glyphs::height = height;
-		glyphs::font_size = font_size;
 
 		alp_image.resize(image.size() / 4);
 		for (size_t i = 0; i < image.size() / 4; i += 1)
@@ -223,69 +227,76 @@ static void inner_draw_text(sdf::composed_string& str, sdf::draw_info& info)
 		float font_size = pt_to_px((float)sdf::game_font_size);
 
 		// 计算对齐后的绘制位置
-		float draw_x = (float)info.x, draw_y = (float)info.y;
+		float offset_x = 0, offset_y = 0;
 
 		if (*game_text_valign == gm::fa_middle)
-			draw_y -= str.height / 2.0f;
+			offset_y = -str.height / 2.0f;
 		else if (*game_text_valign == gm::fa_bottom)
-			draw_y -= str.height;
+			offset_y = -str.height;
 
 		if (*game_text_halign == gm::fa_center)
-			draw_x -= str.width / 2.0f;
+			offset_x = -str.width / 2.0f;
 		else if (*game_text_valign == gm::fa_right)
-			draw_x -= str.width;
+			offset_x = -str.width;
 
-		float orig_x = draw_x - (float)info.x, orig_y = draw_y - (float)info.y;
+		float cursor_y = offset_y;
+
+		double rot_c = 0, rot_s = 0;
+		if (std::abs(info.rot) > 0.00000001)
+		{
+			rot_c = std::cos(info.rot);
+			rot_s = std::sin(info.rot);
+		}
 
 		// 进行逐字符绘制
 		for (uint line_i = 0; line_i < str.lines.size(); ++line_i)
 		{
 			auto& line = str.lines[line_i];
-			float x_offset = line.x;
+			float cursor_x = offset_x + line.x;
 
 			for (uint i = 0; i < line.str_unicode.size(); ++i)
 			{
 				uint unicode = line.str_unicode[i];
-
 				auto glyph_it = glyphs.glaph_map.find(unicode);
 				sdf::glyphs::glyph& glyph = glyph_it->second;
 
 				// 添加顶点
-				float u0 = (float)(glyph.atlas_bound.left) / (float)glyphs.width;
-				float v0 = (float)(glyph.atlas_bound.top) / (float)glyphs.height;
-				float u1 = (float)(glyph.atlas_bound.right) / (float)glyphs.width;
-				float v1 = (float)(glyph.atlas_bound.bottom) / (float)glyphs.height;
+				float u0 = (float)glyph.atlas_bound.left / (float)glyphs.width;
+				float v0 = (float)glyph.atlas_bound.top / (float)glyphs.height;
+				float u1 = (float)glyph.atlas_bound.right / (float)glyphs.width;
+				float v1 = (float)glyph.atlas_bound.bottom / (float)glyphs.height;
 
-				float left = (float)((glyph.plane_bound.left - orig_x) * info.xscale - 0.5);
-				float top = (float)((glyph.plane_bound.top - orig_y) * info.yscale - 0.5);
-				float right = (float)((glyph.plane_bound.right - orig_x) * info.xscale - 0.5);
-				float bottom = (float)((glyph.plane_bound.bottom - orig_y) * info.yscale - 0.5);
+				float left = (float)(glyph.plane_bound.left * font_size * info.xscale) + 
+					cursor_x - 0.5f;
+				float top = (float)(glyph.plane_bound.top * font_size * info.yscale) + 
+					cursor_y - 0.5f;
+				float right = (float)(glyph.plane_bound.right * font_size * info.xscale) +
+					cursor_x - 0.5f;
+				float bottom = (float)(glyph.plane_bound.bottom * font_size * info.yscale) +
+					cursor_y - 0.5f;
 
 				float x_lt = 0, y_lt = 0, x_rt = 0, y_rt = 0, x_rb = 0, y_rb = 0, 
 					x_lb = 0, y_lb = 0;
 
 				if (std::abs(info.rot) > 0.00000001)
 				{
-					double c = std::cos(info.rot);
-					double s = std::sin(info.rot);
-
-					x_lt = static_cast<float>(draw_x + x_offset + left * c + top * s);
-					y_lt = static_cast<float>(draw_y - left * s + top * c);
-					x_rt = static_cast<float>(draw_x + x_offset + right * c + top * s);
-					y_rt = static_cast<float>(draw_y - right * s + top * c);
-					x_rb = static_cast<float>(draw_x + x_offset + right * c + bottom * s);
-					y_rb = static_cast<float>(draw_y - right * s + bottom * c);
-					x_lb = static_cast<float>(draw_x + x_offset + left * c + bottom * s);
-					y_lb = static_cast<float>(draw_y - left * s + bottom * c);
+					x_lt = static_cast<float>(info.x + left * rot_c + top * rot_s);
+					y_lt = static_cast<float>(info.y - left * rot_s + top * rot_c);
+					x_rt = static_cast<float>(info.x + right * rot_c + top * rot_s);
+					y_rt = static_cast<float>(info.y - right * rot_s + top * rot_c);
+					x_rb = static_cast<float>(info.x + right * rot_c + bottom * rot_s);
+					y_rb = static_cast<float>(info.y - right * rot_s + bottom * rot_c);
+					x_lb = static_cast<float>(info.x + left * rot_c + bottom * rot_s);
+					y_lb = static_cast<float>(info.y - left * rot_s + bottom * rot_c);
 				}
 				else
 				{
-					x_lt = static_cast<float>(draw_x + x_offset + left);
-					y_lt = static_cast<float>(draw_y + top);
-					x_rt = static_cast<float>(draw_x + x_offset + right);
+					x_lt = static_cast<float>(info.x + left);
+					y_lt = static_cast<float>(info.y + top);
+					x_rt = static_cast<float>(info.x + right);
 					y_rt = y_lt;
 					x_rb = x_rt;
-					y_rb = static_cast<float>(draw_y + bottom);
+					y_rb = static_cast<float>(info.y + bottom);
 					x_lb = x_lt;
 					y_lb = y_rb;
 				}
@@ -317,10 +328,10 @@ static void inner_draw_text(sdf::composed_string& str, sdf::draw_info& info)
 				vert->uv[0] = u0; vert->uv[1] = v1;
 
 				// 根据字形的水平步进调整绘制位置
-				draw_x += (float)(glyph.advance * info.xscale);
+				cursor_x += (float)(glyph.advance * info.xscale) * font_size;
 			}
 
-			draw_y += font_size + (float)sdf::line_spacing;
+			cursor_y += font_size + (float)sdf::line_spacing;
 		}
 	}
 	transpond_catch("inner_draw_text(sdf::composed_string&, sdf::draw_info&)")
@@ -344,15 +355,14 @@ void sdf::draw_text(double x, double y, std::string& str)
 std::unordered_map<uint, sdf::glyphs_ptr> game_sdf_glyphs;
 uint glyphs_id_position = 1;
 
-exp_real sdf_add_font(gm_string image_path, gm_string csv_path, gm_real font_size)
+exp_real sdf_add_font(gm_string image_path, gm_string csv_path)
 {
 	try
 	{
 		std::string image(image_path), csv(csv_path);
-		uint size = (uint)font_size;
 		uint id = glyphs_id_position++;
 
-		game_sdf_glyphs[id] = std::make_unique<sdf::glyphs>(image, csv, size);
+		game_sdf_glyphs[id] = std::make_unique<sdf::glyphs>(image, csv);
 		game_sdf_glyphs[id].get()->id = id;
 
 		return (gm_real)id;
@@ -395,8 +405,92 @@ exp_real sdf_draw_set_font_size(gm_real size)
 	sdf::game_font_size = size;
 	return gtrue;
 }
-
 exp_real sdf_draw_get_font_size() { return sdf::game_font_size; }
+
+exp_real sdf_draw_set_line_spacing(gm_real spacing)
+{
+	sdf::line_spacing = spacing;
+	return gtrue;
+}
+exp_real sdf_draw_get_line_spacing() { return sdf::line_spacing; }
+
+exp_real sdf_draw_set_align_by_line(gm_real by_line)
+{
+	sdf::per_line_halign = (by_line >= 0.5);
+	return gtrue;
+}
+exp_real sdf_draw_get_align_by_line() { return sdf::per_line_halign ? gtrue : gfalse; }
+
+exp_real sdf_draw_set_use_shader(gm_real use)
+{
+	sdf::use_shader = (use >= 0.5);
+	return gtrue;
+}
+exp_real sdf_draw_get_use_shader() { return sdf::use_shader ? gtrue : gfalse; }
+
+exp_real sdf_draw_set_premul(gm_real premul)
+{
+	if (premul >= 0.5)
+		sdf::shader = ps_sdf_premul_comp;
+	else
+		sdf::shader = ps_sdf_comp;
+	return gtrue;
+}
+exp_real sdf_draw_get_premul()
+{
+	return (sdf::shader == ps_sdf_premul_comp) ? gtrue : gfalse;
+}
+
+exp_real sdf_draw_set_font_sharpness(gm_real sharpness)
+{
+	sdf::font_sharpness = sharpness;
+	return gtrue;
+}
+exp_real sdf_draw_get_font_sharpness() { return sdf::font_sharpness; }
+
+exp_real sdf_draw_set_font_thickness(gm_real thickness)
+{
+	sdf::font_thickness = thickness;
+	return gtrue;
+}
+exp_real sdf_draw_get_font_thickness() { return sdf::font_thickness; }
+
+std::unordered_map<uint, sdf::font_info> game_font_info;
+uint font_info_position = 10000;
+
+exp_real sdf_draw_set_conf(gm_real font, gm_real size, gm_real line_spacing,
+	gm_real sharpness, gm_real thickness)
+{
+	try
+	{
+		uint id = font_info_position++;
+
+		game_font_info[id] = {
+			.font = game_sdf_glyphs.at((uint)font).get(),
+			.size = size,
+			.line_spacing = line_spacing,
+			.sharpness = sharpness,
+			.thickness = thickness
+		};
+		return id;
+	}
+	simple_catch("sdf_draw_set_conf", gm::noone)
+}
+exp_real sdf_apply_conf(gm_real conf_id)
+{
+	try
+	{
+		sdf::font_info& conf = game_font_info.at((uint)conf_id);
+
+		current_sdf_glyphs = conf.font;
+		sdf::game_font_size = conf.size;
+		sdf::line_spacing = conf.line_spacing;
+		sdf::font_sharpness = conf.sharpness;
+		sdf::font_thickness = conf.thickness;
+		return gtrue;
+	}
+	simple_catch("sdf_apply_conf", gfalse)
+}
 
 exp_real sdf_draw_text(gm_real x, gm_real y, gm_string str)
 {

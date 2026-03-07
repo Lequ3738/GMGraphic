@@ -5,6 +5,8 @@
 
 #include "math_s.h"
 #include "shader.h"
+#include "draw_text.h"
+#include "pixel_shader_defs.h"
 
 // ============================================================================
 // Variables
@@ -21,10 +23,13 @@ uint                    vbuff_c;              // Internal counter
 D3DPRIMITIVETYPE        vbuff_prim;           // Primitive to draw
 bool                    vbuff_usevs;          // Use vertex shader?
 bool                    vbuff_autoinc;        // Automatic increment?
+bool					vbuff_use_struct;     // Use struct vertices instead of raw data?
 
 static std::vector<ps_conf>    conf_vec_ps;			 // Dynamic arrays for configs
 static std::vector<vs_conf>    conf_vec_vs;          // 
 static std::vector<tex_conf>   conf_vec_tex;         // 
+
+dword ps_sdf_comp = NULL, ps_sdf_premul_comp = NULL;
 
 namespace gm
 {
@@ -48,6 +53,11 @@ exp_real init(gm_real arg_list)
         &vbuff_d3d);
 
     gm::argument_list = (int)arg_list;
+
+    ps_sdf_comp = (dword)d3d_ps_create(ps_sdf);
+	ps_sdf_premul_comp = (dword)d3d_ps_create(ps_sdf_premul);
+
+    sdf::shader = ps_sdf_comp;
 
     return gtrue;
 }
@@ -93,7 +103,7 @@ exp_real d3d_dev_get_tex_mem()
 // ============================================================================
 
 // Assembles and creates pixel shader. Returns handle.
-exp_real d3d_ps_create(char* src_asm)
+exp_real d3d_ps_create(const char* src_asm)
 {
     using namespace std;
     
@@ -215,7 +225,7 @@ exp_real d3d_set_ps_conf(double conf)
 
 // Assembles && creates vertex shader. Returns handle.
 // Whoever wrote the D3D API should be punched in the balls. Just for the record.
-exp_real d3d_vs_create(char* src_asm)
+exp_real d3d_vs_create(const char* src_asm)
 {
     using namespace std;
     
@@ -781,6 +791,7 @@ void vertex::begin(D3DPRIMITIVETYPE primitive, bool textured)
     vbuff_c = 0;
     vbuff_autoinc = textured;
     vbuff_prim = primitive;
+    vbuff_use_struct = false;
 
     // Zero the buffer.
 	std::memset(vbuff_int, 0, vb_bytes);
@@ -807,8 +818,17 @@ exp_real d3d_primitive_begin_ext(double primitive, double textured)
     return gtrue;
 }
 
-vert_ext* vertex::get_struct() { return &vbuff_int[vbuff_c++]; }
-vert_ext* vertex::get_struct(uint pos) { return &vbuff_int[pos]; }
+vert_ext* vertex::get_struct()
+{
+    vbuff_use_struct = true;
+    return &vbuff_int[vbuff_c++];
+}
+
+vert_ext* vertex::get_struct(uint pos)
+{
+    vbuff_use_struct = true;
+    return &vbuff_int[pos];
+}
 
 // Position, normal, diffuse/specular colour and alpha.
 void vertex::add(float x, float y, float z, float nx, float ny, float nz, uint col, uint speccol)
@@ -877,23 +897,26 @@ void vertex::end()
 {
     try
     {
-        BYTE* bytep;
-        uint  count = (vbuff_c + 1);
-        uint  size = (count * sizeof(vert_ext));
-        uint  prims;
+		uint count = vbuff_c;
+        if (!vbuff_autoinc && !vbuff_use_struct)
+            count += 1;
 
         if (count < 1)
-            throw std::runtime_error("An error occurred within the function (vbuff_c < 0).");
+            return;
+
+        BYTE* bytep;
+        uint  size = vbuff_c * sizeof(vert_ext);
+        uint  prims;
 
         switch (vbuff_prim)
         {
-            case D3DPT_POINTLIST: { prims = snap_low(count, 2); } break;
-            case D3DPT_LINELIST: { prims = snap_low(count, 2) / 2; } break;
-            case D3DPT_LINESTRIP: { prims = snap_low(count, 2); } break;
-            case D3DPT_TRIANGLELIST: { prims = snap_low(count, 3) / 2; } break;
-            case D3DPT_TRIANGLESTRIP: { prims = uint(snap_low(count, 2) / 1.5); } break;
-            case D3DPT_TRIANGLEFAN: { prims = uint(snap_low(count, 2) / 1.5); } break;
-            default: { throw std::runtime_error("Unknown primitive type."); } break;
+            case D3DPT_POINTLIST:     prims = count; break;
+            case D3DPT_LINELIST:      prims = count / 2; break;
+            case D3DPT_LINESTRIP:     prims = count - 1; break;
+            case D3DPT_TRIANGLELIST:  prims = count / 3; break;
+            case D3DPT_TRIANGLESTRIP: prims = count - 2; break;
+            case D3DPT_TRIANGLEFAN:   prims = count - 2; break;
+            default: throw std::runtime_error("Unknown primitive type."); break;
         }
 
         if (prims < 1)

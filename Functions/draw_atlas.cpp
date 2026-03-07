@@ -260,6 +260,7 @@ exp_real atlas_draw_sprite(gm_real id, gm_real subimg, gm_real x, gm_real y)
 	{
 		if (id < IMAGE_START_POSITION)
 		{
+			atlas::force_draw_to_screen();
 			gm::draw_sprite((int)id, (int)subimg, x, y);
 			return gtrue;
 		}
@@ -277,6 +278,7 @@ exp_real atlas_draw_sprite_part(gm_real id, gm_real subimg, gm_real left, gm_rea
 	{
 		if (id < IMAGE_START_POSITION)
 		{
+			atlas::force_draw_to_screen();
 			gm::draw_sprite_part((int)id, (int)subimg, (int)left, (int)top, (int)width,
 				(int)height, x, y);
 			return gtrue;
@@ -296,6 +298,7 @@ exp_real atlas_draw_sprite_ext(gm_real id, gm_real subimg, gm_real x, gm_real y,
 	{
 		if (id < IMAGE_START_POSITION)
 		{
+			atlas::force_draw_to_screen();
 			gm::draw_sprite_ext((int)id, (int)subimg, x, y, xscale, yscale, rot,
 				(int)color, alpha);
 			return gtrue;
@@ -314,6 +317,7 @@ exp_real atlas_draw_background(gm_real id, gm_real x, gm_real y)
 	{
 		if (id < IMAGE_START_POSITION)
 		{
+			atlas::force_draw_to_screen();
 			gm::draw_background((int)id, x, y);
 			return gtrue;
 		}
@@ -331,6 +335,7 @@ exp_real atlas_draw_background_part(gm_real id, gm_real left, gm_real top, gm_re
 	{
 		if (id < IMAGE_START_POSITION)
 		{
+			atlas::force_draw_to_screen();
 			gm::draw_background_part((int)id, (int)left, (int)top, (int)width,
 				(int)height, x, y);
 			return gtrue;
@@ -350,6 +355,7 @@ exp_real atlas_draw_background_ext(gm_real id, gm_real x, gm_real y, gm_real xsc
 	{
 		if (id < IMAGE_START_POSITION)
 		{
+			atlas::force_draw_to_screen();
 			gm::draw_background_ext((int)id, x, y, xscale, yscale, rot, (int)color, alpha);
 			return gtrue;
 		}
