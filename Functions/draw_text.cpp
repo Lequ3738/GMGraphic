@@ -216,6 +216,10 @@ static sdf::composed_string composing_string(std::string& str)
 
 				// 计算该行的宽
 				width += (float)glyph.advance * font_size;
+
+				// 计算该行相对于基线的高
+				if (line_glyphs.height < -(float)glyph.plane_bound.top * font_size)
+					line_glyphs.height = -(float)glyph.plane_bound.top * font_size;
 			}
 
 			height += font_size + (float)sdf::line_spacing;
@@ -269,6 +273,9 @@ static void inner_draw_text(sdf::composed_string& str, sdf::draw_info& info)
 {
 	try
 	{
+		if (str.lines.empty())
+			return;
+
 		if (current_sdf_glyphs == nullptr)
 			throw std::runtime_error("No font is currently set for drawing text.");
 
@@ -286,16 +293,16 @@ static void inner_draw_text(sdf::composed_string& str, sdf::draw_info& info)
 		float offset_x = 0, offset_y = 0;
 
 		if (*game_text_valign == gm::fa_middle)
-			offset_y = -str.height / 2.0f;
+			offset_y = -str.height / 2.0f * (float)info.yscale;
 		else if (*game_text_valign == gm::fa_bottom)
-			offset_y = -str.height;
+			offset_y = -str.height * (float)info.yscale;
 
 		if (*game_text_halign == gm::fa_center)
-			offset_x = -str.width / 2.0f;
+			offset_x = -str.width / 2.0f * (float)info.xscale;
 		else if (*game_text_halign == gm::fa_right)
-			offset_x = -str.width;
+			offset_x = -str.width * (float)info.xscale;
 
-		float cursor_y = offset_y;
+		float cursor_y = offset_y + str.lines[0].height;
 
 		double rot_c = 0, rot_s = 0;
 		if (std::abs(info.rot) > 0.00000001)
@@ -308,7 +315,7 @@ static void inner_draw_text(sdf::composed_string& str, sdf::draw_info& info)
 		for (uint line_i = 0; line_i < str.lines.size(); ++line_i)
 		{
 			auto& line = str.lines[line_i];
-			float cursor_x = offset_x + line.x;
+			float cursor_x = offset_x + line.x * (float)info.xscale;
 
 			for (uint i = 0; i < line.str_unicode.size(); ++i)
 			{
@@ -387,7 +394,7 @@ static void inner_draw_text(sdf::composed_string& str, sdf::draw_info& info)
 				cursor_x += (float)(glyph.advance * info.xscale) * font_size;
 			}
 
-			cursor_y += font_size + (float)sdf::line_spacing;
+			cursor_y += (font_size + (float)sdf::line_spacing) * (float)info.yscale;
 		}
 	}
 	transpond_catch("inner_draw_text(sdf::composed_string&, sdf::draw_info&)")
@@ -768,6 +775,12 @@ exp_real sdf_delete_font(gm_real id)
 	simple_catch("sdf_delete_font", gfalse)
 }
 
+exp_real sdf_release_cache()
+{
+	composed_string_map.clear();
+	return gtrue;
+}
+
 exp_real draw_get_halign() { return (gm_real)(*game_text_halign); }
 exp_real draw_get_valign() { return (gm_real)(*game_text_valign); }
 
@@ -1044,7 +1057,7 @@ exp_real sdf_draw_text_transformed_color(gm_real x, gm_real y, gm_string str)
 	try
 	{
 		gm_real args[9]{};
-		if (parse_args(args) < 9)
+		if (parse_args(args) < 8)
 			return gfalse;
 
 		gm_real xscale = args[0];
@@ -1069,7 +1082,7 @@ exp_real sdf_draw_text_ext_transformed_color(gm_real x, gm_real y, gm_string str
 	try
 	{
 		gm_real args[10]{};
-		if (parse_args(args) < 10)
+		if (parse_args(args) < 9)
 			return gfalse;
 
 		gm_real w = args[0];

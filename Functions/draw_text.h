@@ -110,7 +110,8 @@ namespace sdf
 		struct line
 		{
 			std::vector<uint> str_unicode;
-			float x = 0, width = 0;
+			float x = 0;
+			float width = 0, height = 0;
 		};
 
 		std::vector<line> lines;
@@ -141,6 +142,7 @@ extern std::unordered_map<uint, sdf::font_info> game_font_info;
 
 exp_real sdf_add_font(gm_string image_path, gm_string csv_path);
 exp_real sdf_delete_font(gm_real id);
+exp_real sdf_release_cache();
 
 exp_real draw_get_halign();
 exp_real draw_get_valign();
