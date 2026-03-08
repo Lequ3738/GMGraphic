@@ -1,17 +1,21 @@
 #include "lodepng.h"
+#include "math_s.h"
 #include "utf8.h"
 #include <fstream>
 #include "shader.h"
+#include "parse_args.h"
+#include "linebreak.h"
+#include "xxhash.hpp"
 #include "draw_text.h"
 
 double sdf::game_font_size = 16.0;
 double sdf::line_spacing = 1.0;
 bool sdf::per_line_halign = false;
 bool sdf::use_shader = true;
-dword sdf::shader = (dword)-1;
+dword sdf::shader = NULL;
 
-double sdf::font_sharpness = 24;		// 字体的锐度。在 0 - 32 之间
-double sdf::font_thickness = 0.5;	// 字体的粗细度。在 0 - 1 之间
+double sdf::font_sharpness = 0.75;		// 字体的锐度。在 0 - 1 之间
+double sdf::font_thickness = 0.5;		// 字体的粗细度。在 0 - 1 之间
 
 sdf::glyphs* current_sdf_glyphs = nullptr;
 
@@ -134,6 +138,40 @@ constexpr uint absence_character_unicode = '?';
 
 static float pt_to_px(float pt) { return pt * 96.0f / 72.0f; }
 
+static std::vector<std::string> split_lines(std::string& str)
+{
+	try
+	{
+		std::vector<std::string> line_str;
+		uint start = 0, i = 0;
+
+		while (i < str.length())
+		{
+			if (str[i] == '\r')
+			{
+				line_str.emplace_back(str.substr(start, i - start));
+				if (i + 1 < str.length() && str[i + 1] == '\n') i += 2;
+				else ++i;
+				start = i;
+			}
+			else if (str[i] == '\n')
+			{
+				line_str.emplace_back(str.substr(start, i - start));
+				++i;
+				start = i;
+			}
+			else
+				++i;
+		}
+
+		if (start < str.length())
+			line_str.emplace_back(str.substr(start, str.length() - start));
+
+		return line_str;
+	}
+	transpond_catch("split_lines(std::string&)")
+}
+
 static sdf::composed_string composing_string(std::string& str)
 {
 	try
@@ -141,21 +179,20 @@ static sdf::composed_string composing_string(std::string& str)
 		if (current_sdf_glyphs == nullptr)
 			throw std::runtime_error("No font is currently set for drawing text.");
 
-		std::istringstream str_stream(str);
-		std::string line_str;
+		std::vector<std::string> line_str = split_lines(str);
 		sdf::glyphs& glyphs = *current_sdf_glyphs;
 
 		sdf::composed_string result;
 		float font_size = pt_to_px((float)sdf::game_font_size);
 		float max_width = 0, height = 0;
 
-		while (std::getline(str_stream, line_str))
+		for (uint i = 0; i < line_str.size(); ++i)
 		{
 			sdf::composed_string::line line_glyphs;
 			float width = 0;
 			
-			auto cur_it = line_str.begin();
-			auto end_it = line_str.end();
+			auto cur_it = line_str[i].begin();
+			auto end_it = line_str[i].end();
 
 			while (cur_it != end_it)
 			{
@@ -190,8 +227,10 @@ static sdf::composed_string composing_string(std::string& str)
 		}
 
 		height -= (float)sdf::line_spacing;
+
 		result.width = max_width;
 		result.height = height;
+		result.raw = str;
 
 		if (sdf::per_line_halign)
 		{
@@ -207,6 +246,23 @@ static sdf::composed_string composing_string(std::string& str)
 		return result;
 	}
 	transpond_catch("composing_string(std::string&)")
+}
+
+using hash_map_composed = std::unordered_map<xxh::hash64_t, std::vector<sdf::composed_string>>;
+hash_map_composed composed_string_map;
+
+static xxh::hash64_t string_hash(std::string& str, double width)
+{
+	xxh::hash_state_t<64> hs;
+
+	hs.update(str.data(), str.size());
+	hs.update(&width, sizeof(width));
+
+	hs.update(&current_sdf_glyphs, sizeof(current_sdf_glyphs));
+	hs.update(&sdf::game_font_size, sizeof(sdf::game_font_size));
+	hs.update(&sdf::line_spacing, sizeof(sdf::line_spacing));
+
+	return hs.digest();
 }
 
 static void inner_draw_text(sdf::composed_string& str, sdf::draw_info& info)
@@ -236,7 +292,7 @@ static void inner_draw_text(sdf::composed_string& str, sdf::draw_info& info)
 
 		if (*game_text_halign == gm::fa_center)
 			offset_x = -str.width / 2.0f;
-		else if (*game_text_valign == gm::fa_right)
+		else if (*game_text_halign == gm::fa_right)
 			offset_x = -str.width;
 
 		float cursor_y = offset_y;
@@ -337,15 +393,347 @@ static void inner_draw_text(sdf::composed_string& str, sdf::draw_info& info)
 	transpond_catch("inner_draw_text(sdf::composed_string&, sdf::draw_info&)")
 }
 
+static float string_width_nohash(std::string& str)
+{
+	auto comp = composing_string(str);
+	return comp.width;
+}
+
+static std::string string_get_ext(gm_string str, gm_real w, gm_string lang)
+{
+	if (w <= 0 || *str == '\0')
+		return "In function gui_get_string_ext(): The argument is valid.";
+
+	std::string text(str);
+
+	gm_string l = lang;
+	if (lang != nullptr && *lang == '\0')
+		l = nullptr;
+
+	// 获取指定字符串的“可合法断点”列表
+	size_t len = text.length() + 1;
+	std::vector<char> brks(len);
+	set_linebreaks_utf8((const utf8_t*)str, len, l, brks.data());
+
+	// 按 utf-8 字符分隔字符串
+	std::vector<std::string> tokens;
+	auto end = text.end();
+	auto cur_it = text.begin();
+	auto prev_it = text.begin();
+
+	while (cur_it != end)
+	{
+		utf8::next(cur_it, end);  // 获取下一个字符
+
+		std::string character(prev_it, cur_it);
+		if (!character.empty())
+			tokens.push_back(std::move(character));
+
+		prev_it = cur_it;
+	}
+
+	size_t num = tokens.size();
+
+	std::string token,	// 从上一个合法断点到当前处理字符的字符串
+		line,			// 从当前行开始到上一个合法断点的字符串
+		result;			// 结果字符串
+
+	// 计算要绘制的字符宽度并自动断行
+	size_t brk_pos = 0;
+	for (size_t i = 0; i < num; i++)
+	{
+		// 将基于字节的“可合法断点”列表由基于字符的模式读取
+		size_t chr_len = tokens[i].length();
+		if (chr_len == 0)
+		{
+			return "In function gui_get_string_ext():"
+				"An Error has occurred in function StringToken().";
+		}
+
+		brk_pos += chr_len;
+		char br = brks[brk_pos - 1];
+
+		token += tokens[i];
+
+		// 遇到库标记出错（断在字符内部）
+		if (br == LINEBREAK_INSIDEACHAR)
+		{
+			return "In function gui_get_string_ext(): "
+				"An Error has occurred in character position ("
+				+ std::to_string(i) + " - " + std::to_string(i + 1) + ").";
+		}
+
+		// 当到达可断点、必须断点或字符串末尾时处理 token
+		if (br == LINEBREAK_ALLOWBREAK || br == LINEBREAK_MUSTBREAK || i == num - 1)
+		{
+			std::string candidate = line + token;
+			double width = (double)string_width_nohash(candidate);
+
+			if (width <= w)  // 放得下，直接合并
+				line = std::move(candidate);
+			else  // 放不下，需要换行
+			{
+				if (!line.empty())
+				{
+					result += line + "\n";
+					line = token;
+				}
+
+				// 检查新起的这一行（原本的 token）是否依然超宽
+				// 如果 token 本身极长，这里需要强制拆分
+				if ((double)string_width_nohash(line) > w)
+				{
+					std::string remain_line = "";
+					std::string temp_token = line;
+					line.clear();
+
+					auto tok_end = temp_token.end();
+					auto tok_it = temp_token.begin();
+					auto tok_prev = tok_it;
+
+					while (tok_it != tok_end)
+					{
+						utf8::next(tok_it, tok_end);
+						std::string character(tok_prev, tok_it);
+
+						if (!character.empty())
+						{
+							// 尝试加入字符
+							std::string line_plus_char = remain_line + character;
+							if ((double)string_width_nohash(line_plus_char) > w)
+							{
+								// 加上这个字就超了 -> 输出前面的 safe 部分
+								result += remain_line + "\n";
+								remain_line = character; // 当前字变为下一行开头
+							}
+							else
+							{
+								remain_line += character;
+							}
+						}
+						tok_prev = tok_it;
+					}
+					// 剩下的部分留在 line 中，等待后续处理
+					line = remain_line;
+				}
+			}
+
+			token.clear();
+
+			if (br == LINEBREAK_MUSTBREAK)
+			{
+				result += line;
+
+				// 如果 line 结尾不是换行符，则手动添加
+				if (line.empty() || (line.back() != '\n' && line.back() != '\r'))
+					result += "\n";
+
+				line.clear();
+			}
+		}
+	}
+
+	// 将残余内容加入结果（如果有）
+	if (!line.empty())
+		result += line;
+	else if (!token.empty())
+		result += token;
+
+	return result;
+}
+
+static sdf::composed_string hash_get_composed_string(std::string& str, double w)
+{
+	xxh::hash64_t hash = string_hash(str, w);
+
+	auto it = composed_string_map.find(hash);
+	if (it != composed_string_map.end())
+	{
+		if (it->second.size() == 1)
+			return it->second[0];
+		else
+		{
+			for (auto& comp : it->second)
+			{
+				if (comp.raw == str && comp.width <= w)
+					return comp;
+			}
+		}
+	}
+
+	if (w <= 0)
+	{
+		auto comp = composing_string(str);
+		composed_string_map[hash].push_back(comp);
+		return comp;
+	}
+	else
+	{
+		std::string str_w = string_get_ext(str.c_str(), w, nullptr);
+		auto comp = composing_string(str_w);
+		composed_string_map[hash].push_back(comp);
+		return comp;
+	}
+}
+
+float sdf::string_width(std::string& str)
+{
+	auto comp = hash_get_composed_string(str, 0);
+	return comp.width;
+}
+float sdf::string_height(std::string& str)
+{
+	auto comp = hash_get_composed_string(str, 0);
+	return comp.height;
+}
+
+float sdf::string_width_ext(std::string& str, double w)
+{
+	auto comp = hash_get_composed_string(str, w);
+	return comp.width;
+}
+float sdf::string_height_ext(std::string& str, double w)
+{
+	auto comp = hash_get_composed_string(str, w);
+	return comp.height;
+}
+
 void sdf::draw_text(double x, double y, std::string& str)
 {
 	try
 	{
-		auto composing = composing_string(str);
+		auto composing = hash_get_composed_string(str, 0);
 		sdf::draw_info info = { .x = x, .y = y };
 		inner_draw_text(composing, info);
 	}
 	transpond_catch("sdf::draw_text(double, double, std::string&)")
+}
+
+void sdf::draw_text_ext(double x, double y, std::string& str, double w)
+{
+	try
+	{
+		auto composing = hash_get_composed_string(str, w);
+		sdf::draw_info info = { .x = x, .y = y };
+		inner_draw_text(composing, info);
+	}
+	transpond_catch("sdf::draw_text_ext(double, double, std::string&, double)")
+}
+
+void sdf::draw_text_transformed(double x, double y, std::string& str, double xscale,
+	double yscale, double angle)
+{
+	try
+	{
+		auto composing = hash_get_composed_string(str, 0);
+		sdf::draw_info info = {
+			.x = x, .y = y, .xscale = xscale, .yscale = yscale, .rot = angle * pi / 180
+		};
+		inner_draw_text(composing, info);
+	}
+	transpond_catch("sdf::draw_text_transformed(double, double, std::string&, double, "
+		"double, double)")
+}
+
+void sdf::draw_text_ext_transformed(double x, double y, std::string& str, double w,
+	double xscale, double yscale, double angle)
+{
+	try
+	{
+		auto composing = hash_get_composed_string(str, w);
+		sdf::draw_info info = {
+			.x = x, .y = y, .xscale = xscale, .yscale = yscale, .rot = angle * pi / 180
+		};
+		inner_draw_text(composing, info);
+	}
+	transpond_catch("sdf::draw_text_ext_transformed(double, double, std::string&, double, "
+		"double, double, double)")
+}
+
+void sdf::draw_text_color(double x, double y, std::string& str, int c1, int c2, int c3, 
+	int c4, double alpha)
+{
+	try
+	{
+		d3dcolor col1 = col_d3d(c1, alpha);
+		d3dcolor col2 = col_d3d(c2, alpha);
+		d3dcolor col3 = col_d3d(c3, alpha);
+		d3dcolor col4 = col_d3d(c4, alpha);
+
+		auto composing = hash_get_composed_string(str, 0);
+		sdf::draw_info info = {
+			.x = x, .y = y,
+			.col_lt = col1, .col_rt = col2, .col_rb = col3, .col_lb = col4
+		};
+		inner_draw_text(composing, info);
+	}
+	transpond_catch("sdf::draw_text_color(double, double, std::string&, int, int, "
+		"int, int, double)")
+}
+
+void sdf::draw_text_ext_color(double x, double y, std::string& str, double w, int c1,
+	int c2, int c3, int c4, double alpha)
+{
+	try
+	{
+		d3dcolor col1 = col_d3d(c1, alpha);
+		d3dcolor col2 = col_d3d(c2, alpha);
+		d3dcolor col3 = col_d3d(c3, alpha);
+		d3dcolor col4 = col_d3d(c4, alpha);
+
+		auto composing = hash_get_composed_string(str, w);
+		sdf::draw_info info = {
+			.x = x, .y = y,
+			.col_lt = col1, .col_rt = col2, .col_rb = col3, .col_lb = col4
+		};
+		inner_draw_text(composing, info);
+	}
+	transpond_catch("sdf::draw_text_ext_color(double, double, std::string&, double, "
+		"int, int, int, int, double)")
+}
+
+void sdf::draw_text_transformed_color(double x, double y, std::string& str, double xscale,
+	double yscale, double angle, int c1, int c2, int c3, int c4,
+	double alpha)
+{
+	try
+	{
+		d3dcolor col1 = col_d3d(c1, alpha);
+		d3dcolor col2 = col_d3d(c2, alpha);
+		d3dcolor col3 = col_d3d(c3, alpha);
+		d3dcolor col4 = col_d3d(c4, alpha);
+
+		auto composing = hash_get_composed_string(str, 0);
+		sdf::draw_info info = {
+			.x = x, .y = y, .xscale = xscale, .yscale = yscale, .rot = angle * pi / 180,
+			.col_lt = col1, .col_rt = col2, .col_rb = col3, .col_lb = col4
+		};
+		inner_draw_text(composing, info);
+	}
+	transpond_catch("sdf::draw_text_transformed_color(double, double, std::string&, "
+		"double, double, double, int, int, int, int, double)")
+}
+
+void sdf::draw_text_ext_transformed_color(double x, double y, std::string& str, double w,
+	double xscale, double yscale, double angle, int c1, int c2, int c3,
+	int c4, double alpha)
+{
+	try
+	{
+		d3dcolor col1 = col_d3d(c1, alpha);
+		d3dcolor col2 = col_d3d(c2, alpha);
+		d3dcolor col3 = col_d3d(c3, alpha);
+		d3dcolor col4 = col_d3d(c4, alpha);
+
+		auto composing = hash_get_composed_string(str, w);
+		sdf::draw_info info = {
+			.x = x, .y = y, .xscale = xscale, .yscale = yscale, .rot = angle * pi / 180,
+			.col_lt = col1, .col_rt = col2, .col_rb = col3, .col_lb = col4
+		};
+		inner_draw_text(composing, info);
+	}
+	transpond_catch("sdf::draw_text_ext_transformed_color(double, double, std::string&, "
+		"double, double, double, double, int, int, int, int, double)")
 }
 
 // ============================================================================
@@ -491,6 +879,55 @@ exp_real sdf_apply_conf(gm_real conf_id)
 	}
 	simple_catch("sdf_apply_conf", gfalse)
 }
+exp_real sdf_delete_conf(gm_real conf_id)
+{
+	try
+	{
+		game_font_info.erase((uint)conf_id);
+		return gtrue;
+	}
+	simple_catch("sdf_delete_conf", gfalse)
+}
+
+exp_real sdf_string_width(gm_string str)
+{
+	try
+	{
+		std::string text(str);
+		return sdf::string_width(text);
+	}
+	simple_catch("sdf_string_width", 0.0)
+}
+
+exp_real sdf_string_height(gm_string str)
+{
+	try
+	{
+		std::string text(str);
+		return sdf::string_height(text);
+	}
+	simple_catch("sdf_string_height", 0.0)
+}
+
+exp_real sdf_string_width_ext(gm_string str, gm_real w)
+{
+	try
+	{
+		std::string text(str);
+		return sdf::string_width_ext(text, w);
+	}
+	simple_catch("sdf_string_width_ext", 0.0)
+}
+
+exp_real sdf_string_height_ext(gm_string str, gm_real w)
+{
+	try
+	{
+		std::string text(str);
+		return sdf::string_height_ext(text, w);
+	}
+	simple_catch("sdf_string_height_ext", 0.0)
+}
 
 exp_real sdf_draw_text(gm_real x, gm_real y, gm_string str)
 {
@@ -501,4 +938,154 @@ exp_real sdf_draw_text(gm_real x, gm_real y, gm_string str)
 		return gtrue;
 	}
 	simple_catch("sdf_draw_text", gfalse)
+}
+
+exp_real sdf_draw_text_ext(gm_real x, gm_real y, gm_string str)
+{
+	try
+	{
+		gm_real args[1]{};
+		if (parse_args(args) < 1)
+			return gfalse;
+
+		gm_real w = args[0];
+
+		std::string text(str);
+		sdf::draw_text_ext(x, y, text, w);
+		return gtrue;
+	}
+	simple_catch("sdf_draw_text_ext", gfalse)
+}
+
+exp_real sdf_draw_text_transformed(gm_real x, gm_real y, gm_string str)
+{
+	try
+	{
+		gm_real args[3]{};
+		if (parse_args(args) < 3)
+			return gfalse;
+
+		gm_real xscale = args[0];
+		gm_real yscale = args[1];
+		gm_real angle = args[2];
+
+		std::string text(str);
+		sdf::draw_text_transformed(x, y, text, xscale, yscale, angle);
+		return gtrue;
+	}
+	simple_catch("sdf_draw_text_transformed", gfalse)
+}
+
+exp_real sdf_draw_text_ext_transformed(gm_real x, gm_real y, gm_string str)
+{
+	try
+	{
+		gm_real args[4]{};
+		if (parse_args(args) < 4)
+			return gfalse;
+
+		gm_real w = args[0];
+		gm_real xscale = args[1];
+		gm_real yscale = args[2];
+		gm_real angle = args[3];
+
+		std::string text(str);
+		sdf::draw_text_ext_transformed(x, y, text, w, xscale, yscale, angle);
+		return gtrue;
+	}
+	simple_catch("sdf_draw_text_ext_transformed", gfalse)
+}
+
+exp_real sdf_draw_text_color(gm_real x, gm_real y, gm_string str)
+{
+	try
+	{
+		gm_real args[5]{};
+		if (parse_args(args) < 5)
+			return gfalse;
+
+		int c1 = (int)args[0];
+		int c2 = (int)args[1];
+		int c3 = (int)args[2];
+		int c4 = (int)args[3];
+		gm_real alpha = args[4];
+
+		std::string text(str);
+		sdf::draw_text_color(x, y, text, c1, c2, c3, c4, alpha);
+		return gtrue;
+	}
+	simple_catch("sdf_draw_text_color", gfalse)
+}
+
+exp_real sdf_draw_text_ext_color(gm_real x, gm_real y, gm_string str)
+{
+	try
+	{
+		gm_real args[6]{};
+		if (parse_args(args) < 6)
+			return gfalse;
+
+		gm_real w = args[0];
+		int c1 = (int)args[1];
+		int c2 = (int)args[2];
+		int c3 = (int)args[3];
+		int c4 = (int)args[4];
+		gm_real alpha = args[5];
+
+		std::string text(str);
+		sdf::draw_text_ext_color(x, y, text, w, c1, c2, c3, c4, alpha);
+		return gtrue;
+	}
+	simple_catch("sdf_draw_text_ext_color", gfalse)
+}
+
+exp_real sdf_draw_text_transformed_color(gm_real x, gm_real y, gm_string str)
+{
+	try
+	{
+		gm_real args[9]{};
+		if (parse_args(args) < 9)
+			return gfalse;
+
+		gm_real xscale = args[0];
+		gm_real yscale = args[1];
+		gm_real angle = args[2];
+		int c1 = (int)args[3];
+		int c2 = (int)args[4];
+		int c3 = (int)args[5];
+		int c4 = (int)args[6];
+		gm_real alpha = args[7];
+
+		std::string text(str);
+		sdf::draw_text_transformed_color(x, y, text, xscale, yscale, angle, c1, c2, c3,
+			c4, alpha);
+		return gtrue;
+	}
+	simple_catch("sdf_draw_text_transformed_color", gfalse)
+}
+
+exp_real sdf_draw_text_ext_transformed_color(gm_real x, gm_real y, gm_string str)
+{
+	try
+	{
+		gm_real args[10]{};
+		if (parse_args(args) < 10)
+			return gfalse;
+
+		gm_real w = args[0];
+		gm_real xscale = args[1];
+		gm_real yscale = args[2];
+		gm_real angle = args[3];
+		int c1 = (int)args[4];
+		int c2 = (int)args[5];
+		int c3 = (int)args[6];
+		int c4 = (int)args[7];
+		gm_real alpha = args[8];
+
+		std::string text(str);
+		sdf::draw_text_ext_transformed_color(x, y, text, w, xscale, yscale, angle, 
+			c1, c2, c3, c4, alpha);
+		return gtrue;
+	}
+	simple_catch("sdf_draw_text_ext_transformed_color", gfalse)
 }

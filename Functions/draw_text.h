@@ -1,14 +1,20 @@
 #pragma once
 #include "../main.h"
 
-extern int* game_text_halign;
-extern int* game_text_valign;
-extern d3dcolor* game_d3dcolor;
+extern int* game_text_halign;		// GM8 中被 draw_set_halign 修改的全局变量地址
+extern int* game_text_valign;		// GM8 中被 draw_set_valign 修改的全局变量地址
+extern d3dcolor* game_d3dcolor;		// GM8 中被 draw_set_color 和 draw_set_alpha 修改的全局变量地址
 
 namespace sdf
 {
+	/// <summary>
+	/// 字体图集结构体
+	/// </summary>
 	struct glyphs
 	{
+		/// <summary>
+		/// 字形结构体，包含一个字符的所有绘制信息
+		/// </summary>
 		struct glyph
 		{
 			struct rect
@@ -47,9 +53,32 @@ namespace sdf
 
 		~glyphs();
 	};
+	
+	float string_width(std::string& str);
+	float string_height(std::string& str);
+	float string_width_ext(std::string& str, double w);
+	float string_height_ext(std::string& str, double w);
 
 	void draw_text(double x, double y, std::string& str);
+	void draw_text_ext(double x, double y, std::string& str, double w);
+	void draw_text_transformed(double x, double y, std::string& str, double xscale, 
+		double yscale, double angle);
+	void draw_text_ext_transformed(double x, double y, std::string& str, double w,
+		double xscale, double yscale, double angle);
+	void draw_text_color(double x, double y, std::string& str, int c1, int c2,
+		int c3, int c4, double alpha);
+	void draw_text_ext_color(double x, double y, std::string& str, double w, int c1, 
+		int c2, int c3, int c4, double alpha);
+	void draw_text_transformed_color(double x, double y, std::string& str, double xscale,
+		double yscale, double angle, int c1, int c2, int c3, int c4,
+		double alpha);
+	void draw_text_ext_transformed_color(double x, double y, std::string& str, double w,
+		double xscale, double yscale, double angle, int c1, int c2, int c3,
+		int c4, double alpha);
 
+	/// <summary>
+	/// 传入 inner_draw_text 函数的结构体，包含所有绘制信息
+	/// </summary>
 	struct draw_info
 	{
 		double x = 0, y = 0;
@@ -62,17 +91,20 @@ namespace sdf
 		d3dcolor col_lb = *game_d3dcolor;
 	};
 
-	extern double game_font_size;
-	extern double line_spacing;
-	extern bool per_line_halign;
-	extern bool use_shader;
-	extern dword shader;
+	extern double game_font_size;		// 字体大小（单位：pt）
+	extern double line_spacing;			// 行距（单位：像素）。默认值为 1
+	extern bool per_line_halign;		// 是否逐行对齐。默认值为 false，即整段文本作为一个整体进行水平对齐
+	extern bool use_shader;				// 是否使用着色器进行 SDF 字体的绘制。默认值为 true
+	extern dword shader;				// 当前使用的着色器。默认为 ps_sdf_comp
 
-	extern double font_sharpness;
-	extern double font_thickness;
+	extern double font_sharpness;		// 字体的锐度。在 0 - 1 之间。默认值为 0.75
+	extern double font_thickness;		// 字体的粗细度。在 0 - 1 之间。默认值为 0.5
 
 	typedef std::unique_ptr<glyphs> glyphs_ptr;
 
+	/// <summary>
+	/// 函数 composing_string 返回的结构体，包含了字符串被切分成多行后的每行信息，以及整段文本的宽高信息
+	/// </summary>
 	struct composed_string
 	{
 		struct line
@@ -83,8 +115,13 @@ namespace sdf
 
 		std::vector<line> lines;
 		float width = 0, height = 0;
+
+		std::string raw;  // 原始字符串
 	};
 
+	/// <summary>
+	/// 用于 sdf_draw_set_conf 等函数的结构体，能一次性配置多个绘制参数
+	/// </summary>
 	struct font_info
 	{
 		glyphs* font = nullptr;
@@ -127,5 +164,18 @@ exp_real sdf_draw_get_font_thickness();
 exp_real sdf_draw_set_conf(gm_real font, gm_real size, gm_real line_spacing,
 	gm_real sharpness, gm_real thickness);
 exp_real sdf_apply_conf(gm_real conf_id);
+exp_real sdf_delete_conf(gm_real conf_id);
+
+exp_real sdf_string_width(gm_string str);
+exp_real sdf_string_height(gm_string str);
+exp_real sdf_string_width_ext(gm_string str, gm_real w);
+exp_real sdf_string_height_ext(gm_string str, gm_real w);
 
 exp_real sdf_draw_text(gm_real x, gm_real y, gm_string str);
+exp_real sdf_draw_text_ext(gm_real x, gm_real y, gm_string str);
+exp_real sdf_draw_text_transformed(gm_real x, gm_real y, gm_string str);
+exp_real sdf_draw_text_ext_transformed(gm_real x, gm_real y, gm_string str);
+exp_real sdf_draw_text_color(gm_real x, gm_real y, gm_string str);
+exp_real sdf_draw_text_ext_color(gm_real x, gm_real y, gm_string str);
+exp_real sdf_draw_text_transformed_color(gm_real x, gm_real y, gm_string str);
+exp_real sdf_draw_text_ext_transformed_color(gm_real x, gm_real y, gm_string str);

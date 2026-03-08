@@ -71,16 +71,16 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
-    <IncludePath>GMAPI;Librarys;Functions;$(IncludePath);Direct3D_8</IncludePath>
+    <IncludePath>GMAPI;Librarys;Librarys\libunibreak;Functions;$(IncludePath);Direct3D_8</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <IncludePath>GMAPI;Librarys;Functions;$(IncludePath);Direct3D_8</IncludePath>
+    <IncludePath>GMAPI;Librarys;Librarys\libunibreak;Functions;$(IncludePath);Direct3D_8</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>GMAPI;Librarys;Functions;$(IncludePath);Direct3D_8</IncludePath>
+    <IncludePath>GMAPI;Librarys;Librarys\libunibreak;Functions;$(IncludePath);Direct3D_8</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>GMAPI;Librarys;Functions;$(IncludePath);Direct3D_8</IncludePath>
+    <IncludePath>GMAPI;Librarys;Librarys\libunibreak;Functions;$(IncludePath);Direct3D_8</IncludePath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -98,8 +98,8 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
-      <AdditionalLibraryDirectories>Direct3D_8;GMAPI;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>legacy_stdio_definitions.lib;GMAPICore.lib;d3d8.lib;d3dx8.lib;DxErr8.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>Direct3D_8;Librarys\libunibreak;GMAPI;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>legacy_stdio_definitions.lib;GMAPICore.lib;unibreak.lib;d3d8.lib;d3dx8.lib;DxErr8.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalOptions>/nodefaultlib:libci /SAFESEH:NO %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
@@ -121,8 +121,8 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
-      <AdditionalLibraryDirectories>Direct3D_8;GMAPI;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>legacy_stdio_definitions.lib;GMAPICore.lib;d3d8.lib;d3dx8.lib;DxErr8.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>Direct3D_8;Librarys\libunibreak;GMAPI;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>legacy_stdio_definitions.lib;GMAPICore.lib;unibreak.lib;d3d8.lib;d3dx8.lib;DxErr8.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalOptions>/nodefaultlib:libci /SAFESEH:NO %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
@@ -142,8 +142,8 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
-      <AdditionalLibraryDirectories>Direct3D_8;GMAPI;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>legacy_stdio_definitions.lib;GMAPICore.lib;d3d8.lib;d3dx8.lib;DxErr8.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>Direct3D_8;Librarys\libunibreak;GMAPI;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>legacy_stdio_definitions.lib;GMAPICore.lib;unibreak.lib;d3d8.lib;d3dx8.lib;DxErr8.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalOptions>/nodefaultlib:libci /SAFESEH:NO %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
@@ -165,8 +165,8 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
-      <AdditionalLibraryDirectories>Direct3D_8;GMAPI;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>legacy_stdio_definitions.lib;GMAPICore.lib;d3d8.lib;d3dx8.lib;DxErr8.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>Direct3D_8;Librarys\libunibreak;GMAPI;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>legacy_stdio_definitions.lib;GMAPICore.lib;unibreak.lib;d3d8.lib;d3dx8.lib;DxErr8.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalOptions>/nodefaultlib:libci /SAFESEH:NO %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
@@ -291,10 +291,22 @@
     <ClInclude Include="Functions\draw_atlas.h" />
     <ClInclude Include="Functions\draw_text.h" />
     <ClInclude Include="Librarys\buffer.h" />
+    <ClInclude Include="Librarys\libunibreak\eastasianwidthdef.h" />
+    <ClInclude Include="Librarys\libunibreak\emojidef.h" />
+    <ClInclude Include="Librarys\libunibreak\graphemebreak.h" />
+    <ClInclude Include="Librarys\libunibreak\graphemebreakdef.h" />
+    <ClInclude Include="Librarys\libunibreak\indicconjunctbreakdef.h" />
+    <ClInclude Include="Librarys\libunibreak\linebreak.h" />
+    <ClInclude Include="Librarys\libunibreak\linebreakdef.h" />
+    <ClInclude Include="Librarys\libunibreak\unibreakbase.h" />
+    <ClInclude Include="Librarys\libunibreak\unibreakdef.h" />
+    <ClInclude Include="Librarys\libunibreak\wordbreak.h" />
+    <ClInclude Include="Librarys\libunibreak\wordbreakdef.h" />
     <ClInclude Include="Librarys\load_resources.h" />
     <ClInclude Include="Librarys\lodepng.h" />
     <ClInclude Include="Librarys\math_s.h" />
     <ClInclude Include="Librarys\MaxRectsBinPack.h" />
+    <ClInclude Include="Librarys\parse_args.h" />
     <ClInclude Include="Librarys\Rect.h" />
     <ClInclude Include="Librarys\pixel_shader_defs.h" />
     <ClInclude Include="Librarys\structs.h" />
@@ -306,6 +318,7 @@
     <ClInclude Include="Librarys\utf8\cpp17.h" />
     <ClInclude Include="Librarys\utf8\cpp20.h" />
     <ClInclude Include="Librarys\utf8\unchecked.h" />
+    <ClInclude Include="Librarys\xxhash.hpp" />
     <ClInclude Include="main.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="GMAPI\Gmapi.h" />
@@ -385,6 +398,7 @@
     <Library Include="Direct3D_8\quartz.lib" />
     <Library Include="Direct3D_8\strmiids.lib" />
     <Library Include="GMAPI\GMAPICore.lib" />
+    <Library Include="Librarys\libunibreak\unibreak.lib" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Direct3D_8\d3dvec.inl" />

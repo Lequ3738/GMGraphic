@@ -20,9 +20,12 @@
 
 感谢以下项目提供的灵感和代码参考：
 - [**Shader Extension**](https://web.archive.org/web/20191126155011/http://gmc.yoyogames.com/index.php?showtopic=492876) by LSnK
+- [**Noisyfox Writing**](https://github.com/Noisyfox/FoxWriting) by Noisyfox
 
 感谢以下项目提供的技术支持：
 - [**GMAPI**](https://github.com/snakedeveloper/gmapi) by Snake
 - [**RectangleBinPack**](https://github.com/juj/RectangleBinPack) by Jukka Jylänki
 - [**LodePNG**](https://github.com/lvandeve/lodepng) by Lode Vandevenne
 - [**UTF8-CPP**](https://github.com/nemtrif/utfcpp) by Nemanja Trifunovic
+- [**libunibreak**](https://github.com/adah1972/libunibreak) by Wu Yongwei (吴咏炜)
+- [**xxhash_cpp**](https://github.com/redspah/xxhash_cpp) by Yann Collet & Red Gavin

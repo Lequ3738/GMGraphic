@@ -483,6 +483,45 @@
     <ClInclude Include="Librarys\pixel_shader_defs.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="Librarys\parse_args.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Librarys\libunibreak\eastasianwidthdef.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Librarys\libunibreak\emojidef.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Librarys\libunibreak\graphemebreak.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Librarys\libunibreak\graphemebreakdef.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Librarys\libunibreak\indicconjunctbreakdef.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Librarys\libunibreak\linebreak.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Librarys\libunibreak\linebreakdef.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Librarys\libunibreak\unibreakbase.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Librarys\libunibreak\unibreakdef.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Librarys\libunibreak\wordbreak.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Librarys\libunibreak\wordbreakdef.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Librarys\xxhash.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp">
@@ -586,6 +625,7 @@
     <Library Include="Direct3D_8\quartz.lib" />
     <Library Include="Direct3D_8\strmiids.lib" />
     <Library Include="GMAPI\GMAPICore.lib" />
+    <Library Include="Librarys\libunibreak\unibreak.lib" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Direct3D_8\d3dvec.inl">

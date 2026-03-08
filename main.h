@@ -91,3 +91,8 @@ namespace atlas
 }
 
 extern atlas::texture_info current_texture;
+
+namespace gm
+{
+	extern int argument_list;
+}

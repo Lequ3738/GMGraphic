@@ -77,18 +77,24 @@ void atlas::end_draw()
 		D3DCheck(device->SetTextureStageState(0, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP), 1);
 		D3DCheck(device->SetTextureStageState(0, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP), 2);
 
-		if (current_texture.format == D3DFMT_A8)
+		if (current_texture.format == D3DFMT_A8)  // 字体纹理
 		{
-			// 颜色 = 直接使用顶点颜色 (忽略纹理中不存在的RGB)
-			device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
-			device->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_DIFFUSE);
-
 			if (sdf::use_shader)
 			{
-				device->GetPixelShader(&prev_pixel_shader);
-				device->SetPixelShader(sdf::shader);
+				D3DCheck(device->GetPixelShader(&prev_pixel_shader), 3);
+				D3DCheck(device->SetPixelShader(sdf::shader), 4);
 
-				d3d_set_ps_const(0, sdf::font_sharpness / 32, sdf::font_thickness, 0, 0);
+				double deviation = std::abs(sdf::font_thickness - 0.5f);
+				double sharpness = sdf::font_sharpness * 0.007 *
+					sdf::game_font_size * (1.0 + deviation * 1.5);
+
+				d3d_set_ps_const(0, sharpness, sdf::font_thickness, 0, 0);
+			}
+			else
+			{
+				// 颜色 = 直接使用顶点颜色 (忽略纹理中不存在的RGB)
+				D3DCheck(device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1), 5);
+				D3DCheck(device->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_DIFFUSE), 6);
 			}
 		}
 		else if (current_texture.format != D3DFMT_A8R8G8B8)
@@ -98,12 +104,14 @@ void atlas::end_draw()
 		
 		if (current_texture.format == D3DFMT_A8)
 		{
-			device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE);
-			device->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
-			device->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
-
 			if (sdf::use_shader)
-				device->SetPixelShader(prev_pixel_shader);
+				D3DCheck(device->SetPixelShader(prev_pixel_shader), 7);
+			else
+			{
+				D3DCheck(device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE), 8);
+				D3DCheck(device->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE), 9);
+				D3DCheck(device->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE), 10);
+			}
 		}
 		
 		current_texture = { nullptr, D3DFMT_A8R8G8B8 };
