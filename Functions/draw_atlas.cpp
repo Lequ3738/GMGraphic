@@ -2,6 +2,7 @@
 #include "shader.h"
 #include "draw_atlas.h"
 #include "math_s.h"
+#include "parse_args.h"
 
 static void draw_image(atlas::draw_info& info)
 {
@@ -147,27 +148,29 @@ static void draw_image(atlas::draw_info& info)
 	transpond_catch("draw_image(atlas::draw_info&)")
 }
 
+#define GET_ATLAS																	\
+	texture_atlas::images* images_ptr = game_images.at(id);							\
+	texture_atlas* atlas_ptr = nullptr;												\
+	texture_atlas::images::sub_image* sub_image_ptr = nullptr;						\
+																					\
+	if (images_ptr != nullptr) {													\
+		atlas_ptr = game_texture_atlas.at(images_ptr->atlas_id).get();				\
+		sub_image_ptr = images_ptr->frames.at(subimg).get();						\
+	}																				\
+	else																			\
+		throw std::runtime_error("Cannot find the sprite.");						\
+																					\
+	if (atlas_ptr == nullptr)														\
+		throw std::runtime_error("Cannot find the texture atlas of this sprite.");	\
+																					\
+	if (sub_image_ptr == nullptr)													\
+		return;
+
 void atlas::draw_sprite(uint id, uint subimg, double x, double y)
 {
 	try
 	{
-		texture_atlas::images* images_ptr = game_images.at(id);
-		texture_atlas* atlas_ptr = nullptr;
-		texture_atlas::images::sub_image* sub_image_ptr = nullptr;
-
-		if (images_ptr != nullptr)
-		{
-			atlas_ptr = game_texture_atlas.at(images_ptr->atlas_id).get();
-			sub_image_ptr = images_ptr->frames.at(subimg).get();
-		}
-		else
-			throw std::runtime_error("Cannot find the sprite.");
-
-		if (atlas_ptr == nullptr)
-			throw std::runtime_error("Cannot find the texture atlas of this sprite.");
-
-		if (sub_image_ptr == nullptr)  // 如果该子图像不存在（可能是空白图），则不进行绘制
-			return;
+		GET_ATLAS
 
 		draw_info info = {
 			.atlas = *atlas_ptr, .images = *images_ptr, .sub_image = *sub_image_ptr,
@@ -178,28 +181,33 @@ void atlas::draw_sprite(uint id, uint subimg, double x, double y)
 	transpond_catch("atlas::draw_sprite(uint, uint, double, double)")
 }
 
+void atlas::draw_sprite_stretched(uint id, uint subimg, double x, double y, double w, 
+	double h)
+{
+	try
+	{
+		GET_ATLAS
+
+		draw_info info = {
+			.atlas = *atlas_ptr, .images = *images_ptr, .sub_image = *sub_image_ptr,
+			.trans = {
+				.x = x, .y = y,
+				.xscale = w / sub_image_ptr->texture_width,
+				.yscale = h / sub_image_ptr->texture_height
+			}
+		};
+		draw_image(info);
+	}
+	transpond_catch("atlas::draw_sprite_stretched(uint, uint, double, double, double, "
+		"double)")
+}
+
 void atlas::draw_sprite_part(uint id, uint subimg, int left, int top, int width,
 	int height, double x, double y)
 {
 	try
 	{
-		texture_atlas::images* images_ptr = game_images.at(id);
-		texture_atlas* atlas_ptr = nullptr;
-		texture_atlas::images::sub_image* sub_image_ptr = nullptr;
-
-		if (images_ptr != nullptr)
-		{
-			atlas_ptr = game_texture_atlas.at(images_ptr->atlas_id).get();
-			sub_image_ptr = images_ptr->frames.at(subimg).get();
-		}
-		else
-			throw std::runtime_error("Cannot find the sprite.");
-
-		if (atlas_ptr == nullptr)
-			throw std::runtime_error("Cannot find the texture atlas of this sprite.");
-
-		if (sub_image_ptr == nullptr)  // 如果该子图像不存在（可能是空白图），则不进行绘制
-			return;
+		GET_ATLAS
 
 		draw_info info = {
 			.atlas = *atlas_ptr, .images = *images_ptr, .sub_image = *sub_image_ptr,
@@ -216,23 +224,7 @@ void atlas::draw_sprite_ext(uint id, uint subimg, double x, double y, double xsc
 {
 	try
 	{
-		texture_atlas::images* images_ptr = game_images.at(id);
-		texture_atlas* atlas_ptr = nullptr;
-		texture_atlas::images::sub_image* sub_image_ptr = nullptr;
-
-		if (images_ptr != nullptr)
-		{
-			atlas_ptr = game_texture_atlas.at(images_ptr->atlas_id).get();
-			sub_image_ptr = images_ptr->frames.at(subimg).get();
-		}
-		else
-			throw std::runtime_error("Cannot find the sprite.");
-
-		if (atlas_ptr == nullptr)
-			throw std::runtime_error("Cannot find the texture atlas of this sprite.");
-
-		if (sub_image_ptr == nullptr)  // 如果该子图像不存在（可能是空白图），则不进行绘制
-			return;
+		GET_ATLAS
 
 		draw_info info = {
 			.atlas = *atlas_ptr, .images = *images_ptr, .sub_image = *sub_image_ptr,
@@ -244,6 +236,70 @@ void atlas::draw_sprite_ext(uint id, uint subimg, double x, double y, double xsc
 	transpond_catch("atlas::draw_sprite_ext(uint, uint, double, double, double, "
 		"double, double, d3dcolor)")
 }
+
+void atlas::draw_sprite_stretched_ext(uint id, uint subimg, double x, double y, double w,
+	double h, d3dcolor color)
+{
+	try
+	{
+		GET_ATLAS
+
+		draw_info info = {
+			.atlas = *atlas_ptr, .images = *images_ptr, .sub_image = *sub_image_ptr,
+			.trans = {
+				.x = x, .y = y,
+				.xscale = w / sub_image_ptr->texture_width,
+				.yscale = h / sub_image_ptr->texture_height
+			},
+			.color_lt = color, .color_rt = color, .color_rb = color, .color_lb = color
+		};
+		draw_image(info);
+	}
+	transpond_catch("atlas::draw_sprite_stretched_ext(uint, uint, double, double, "
+		"double, double, d3dcolor)")
+}
+
+void atlas::draw_sprite_part_ext(uint id, uint subimg, int left, int top, int width,
+	int height, double x, double y, double xscale, double yscale, d3dcolor color)
+{
+	try
+	{
+		GET_ATLAS
+
+		draw_info info = {
+			.atlas = *atlas_ptr, .images = *images_ptr, .sub_image = *sub_image_ptr,
+			.trans = {.x = x, .y = y},
+			.region = {.x = left, .y = top, .width = width, .height = height},
+			.color_lt = color, .color_rt = color, .color_rb = color, .color_lb = color
+		};
+		draw_image(info);
+	}
+	transpond_catch("atlas::draw_sprite_part_ext(uint, uint, int, int, int, int, "
+		"double, double, double, double, d3dcolor)")
+}
+
+void atlas::draw_sprite_general(uint id, uint subimg, int left, int top, int width,
+	int height, double x, double y, double xscale, double yscale, double rot,
+	d3dcolor c1, d3dcolor c2, d3dcolor c3, d3dcolor c4)
+{
+	try
+	{
+		GET_ATLAS
+
+		draw_info info = {
+			.atlas = *atlas_ptr, .images = *images_ptr, .sub_image = *sub_image_ptr,
+			.trans = {.x = x, .y = y, .xscale = xscale, .yscale = yscale, .rot = rot},
+			.region = {.x = left, .y = top, .width = width, .height = height},
+			.color_lt = c1, .color_rt = c2, .color_rb = c3, .color_lb = c4
+		};
+		draw_image(info);
+	}
+	transpond_catch("atlas::draw_sprite_general(uint, uint, int, int, int, int, "
+		"double, double, double, double, double, d3dcolor, d3dcolor, d3dcolor, "
+		"d3dcolor)")
+}
+
+#undef GET_ATLAS
 
 void atlas::force_draw_to_screen()
 {
@@ -269,6 +325,24 @@ exp_real atlas_draw_sprite(gm_real id, gm_real subimg, gm_real x, gm_real y)
 		return gtrue;
 	}
 	simple_catch("atlas_draw_sprite", gfalse)
+}
+
+exp_real atlas_draw_sprite_stretched(gm_real id, gm_real subimg, gm_real x, gm_real y,
+	gm_real width, gm_real height)
+{
+	try
+	{
+		if (id < IMAGE_START_POSITION)
+		{
+			atlas::force_draw_to_screen();
+			gm::draw_sprite_stretched((int)id, (int)subimg, x, y, width, height);
+			return gtrue;
+		}
+
+		atlas::draw_sprite_stretched((uint)id, (uint)subimg, x, y, width, height);
+		return gtrue;
+	}
+	simple_catch("atlas_draw_sprite_stretched", gfalse)
 }
 
 exp_real atlas_draw_sprite_part(gm_real id, gm_real subimg, gm_real left, gm_real top,
@@ -311,6 +385,88 @@ exp_real atlas_draw_sprite_ext(gm_real id, gm_real subimg, gm_real x, gm_real y,
 	simple_catch("atlas_draw_sprite_ext", gfalse)
 }
 
+exp_real atlas_draw_sprite_stretched_ext(gm_real id, gm_real subimg, gm_real x, gm_real y,
+	gm_real width, gm_real height, gm_real color, gm_real alpha)
+{
+	try
+	{
+		if (id < IMAGE_START_POSITION)
+		{
+			atlas::force_draw_to_screen();
+			gm::draw_sprite_stretched_ext((int)id, (int)subimg, x, y, width, height,
+				(int)color, alpha);
+			return gtrue;
+		}
+
+		atlas::draw_sprite_stretched_ext((uint)id, (uint)subimg, x, y, width, height,
+			col_d3d((int)color, alpha));
+		return gtrue;
+	}
+	simple_catch("atlas_draw_sprite_stretched_ext", gfalse)
+}
+
+exp_real atlas_draw_sprite_part_ext(gm_real id, gm_real subimg, gm_real left, gm_real top,
+	gm_real width, gm_real height, gm_real x, gm_real y, gm_real xscale, gm_real yscale,
+	gm_real color)
+{
+	try
+	{
+		constexpr int argnum = 1;
+		gm_real args[argnum]{};
+		if (parse_args(args) < argnum)
+			return gfalse;
+
+		gm_real alpha = args[0];
+
+		if (id < IMAGE_START_POSITION)
+		{
+			atlas::force_draw_to_screen();
+			gm::draw_sprite_part_ext((int)id, (int)subimg, (int)left, (int)top,
+				(int)width, (int)height, x, y, xscale, yscale, (int)color, alpha);
+			return gtrue;
+		}
+
+		atlas::draw_sprite_part_ext((uint)id, (uint)subimg, (int)left, (int)top,
+			(int)width, (int)height, x, y, xscale, yscale, col_d3d((int)color, alpha));
+		return gtrue;
+	}
+	simple_catch("atlas_draw_sprite_part_ext", gfalse)
+}
+
+exp_real atlas_draw_sprite_general(gm_real id, gm_real subimg, gm_real left, gm_real top,
+	gm_real width, gm_real height, gm_real x, gm_real y, gm_real xscale, gm_real yscale,
+	gm_real rot)
+{
+	try
+	{
+		constexpr int argnum = 5;
+		gm_real args[argnum]{};
+		if (parse_args(args) < argnum)
+			return gfalse;
+
+		gm_real c1 = args[0];
+		gm_real c2 = args[1];
+		gm_real c3 = args[2];
+		gm_real c4 = args[3];
+		gm_real alpha = args[4];
+
+		if (id < IMAGE_START_POSITION)
+		{
+			atlas::force_draw_to_screen();
+			gm::draw_sprite_general((int)id, (int)subimg, (int)left, (int)top, (int)width, 
+				(int)height, x, y, xscale, yscale, rot, (int)c1, (int)c2, (int)c3, (int)c4, alpha);
+			return gtrue;
+		}
+
+		atlas::draw_sprite_general((uint)id, (uint)subimg, (int)left, (int)top,
+			(int)width, (int)height, x, y, xscale, yscale, rot * pi / 180,
+			col_d3d((int)c1, alpha), col_d3d((int)c2, alpha), col_d3d((int)c3, alpha),
+			col_d3d((int)c4, alpha));
+		return gtrue;
+	}
+	simple_catch("atlas_draw_sprite_general", gfalse)
+}
+
 exp_real atlas_draw_background(gm_real id, gm_real x, gm_real y)
 {
 	try
@@ -326,6 +482,24 @@ exp_real atlas_draw_background(gm_real id, gm_real x, gm_real y)
 		return gtrue;
 	}
 	simple_catch("atlas_draw_background", gfalse)
+}
+
+exp_real atlas_draw_background_stretched(gm_real id, gm_real x, gm_real y, gm_real width,
+	gm_real height)
+{
+	try
+	{
+		if (id < IMAGE_START_POSITION)
+		{
+			atlas::force_draw_to_screen();
+			gm::draw_background_stretched((int)id, x, y, width, height);
+			return gtrue;
+		}
+
+		atlas::draw_sprite_stretched((uint)id, 0, x, y, width, height);
+		return gtrue;
+	}
+	simple_catch("atlas_draw_background_stretched", gfalse)
 }
 
 exp_real atlas_draw_background_part(gm_real id, gm_real left, gm_real top, gm_real width,
@@ -365,6 +539,81 @@ exp_real atlas_draw_background_ext(gm_real id, gm_real x, gm_real y, gm_real xsc
 		return gtrue;
 	}
 	simple_catch("atlas_draw_background_ext", gfalse)
+}
+
+exp_real atlas_draw_background_stretched_ext(gm_real id, gm_real x, gm_real y, 
+	gm_real width, gm_real height, gm_real color, gm_real alpha)
+{
+	try
+	{
+		if (id < IMAGE_START_POSITION)
+		{
+			atlas::force_draw_to_screen();
+			gm::draw_background_stretched_ext((int)id, x, y, width, height,
+				(int)color, alpha);
+			return gtrue;
+		}
+
+		atlas::draw_sprite_stretched_ext((uint)id, 0, x, y, width, height,
+			col_d3d((int)color, alpha));
+		return gtrue;
+	}
+	simple_catch("atlas_draw_background_stretched_ext", gfalse)
+}
+
+exp_real atlas_draw_background_part_ext(gm_real id, gm_real left, gm_real top, 
+	gm_real width, gm_real height, gm_real x, gm_real y, gm_real xscale, gm_real yscale, 
+	gm_real color, gm_real alpha)
+{
+	try
+	{
+		if (id < IMAGE_START_POSITION)
+		{
+			atlas::force_draw_to_screen();
+			gm::draw_background_part_ext((int)id, (int)left, (int)top, (int)width,
+				(int)height, x, y, xscale, yscale, (int)color, alpha);
+			return gtrue;
+		}
+
+		atlas::draw_sprite_part_ext((uint)id, 0, (int)left, (int)top, (int)width,
+			(int)height, x, y, xscale, yscale, col_d3d((int)color, alpha));
+		return gtrue;
+	}
+	simple_catch("atlas_draw_background_part_ext", gfalse)
+}
+
+exp_real atlas_draw_background_general(gm_real id, gm_real left, gm_real top, 
+	gm_real width, gm_real height, gm_real x, gm_real y, gm_real xscale, gm_real yscale, 
+	gm_real rot, gm_real c1)
+{
+	try
+	{
+		constexpr int argnum = 4;
+		gm_real args[argnum]{};
+		if (parse_args(args) < argnum)
+			return gfalse;
+
+		gm_real c2 = args[0];
+		gm_real c3 = args[1];
+		gm_real c4 = args[2];
+		gm_real alpha = args[3];
+
+		if (id < IMAGE_START_POSITION)
+		{
+			atlas::force_draw_to_screen();
+			gm::draw_background_general((int)id, (int)left, (int)top, (int)width,
+				(int)height, x, y, xscale, yscale, rot, (int)c1, (int)c2,
+				(int)c3, (int)c4, alpha);
+			return gtrue;
+		}
+
+		atlas::draw_sprite_general((uint)id, 0, (int)left, (int)top,
+			(int)width, (int)height, x, y, xscale, yscale, rot * pi / 180,
+			col_d3d((int)c1, alpha), col_d3d((int)c2, alpha), col_d3d((int)c3, alpha),
+			col_d3d((int)c4, alpha));
+		return gtrue;
+	}
+	simple_catch("atlas_draw_background_general", gfalse)
 }
 
 exp_real force_draw_to_screen()
