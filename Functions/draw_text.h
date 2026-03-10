@@ -19,17 +19,17 @@ namespace sdf
 		{
 			struct rect
 			{
-				double left = 0;
-				double top = 0;
-				double right = 0;
-				double bottom = 0;
+				float left = 0.0f;
+				float top = 0.0f;
+				float right = 0.0f;
+				float bottom = 0.0f;
 			};
 
 			uint unicode = 0;  // 字符的十进制 Unicode 编码
 
 			// 水平步进。表示绘制完该字符后，光标应向右移动的距离。
 			// 如果字体大小为 24px，实际像素步进为 advance * 24。
-			double advance = 0.0;
+			float advance = 0.0f;
 
 			// 字形在“虚拟排版平面”上的几何形状。它们的数值是相对于基线和原点的偏移量。
 			// 单位：标准化字体单位（通常以字号为 1.0 进行缩放）。
@@ -46,6 +46,12 @@ namespace sdf
 		IDirect3DTexture8* texture = nullptr;		// 该图集对应的 GPU 纹理
 
 		uint id = 0;								// 纹理图集 ID
+
+		// (可选)字体的偏移值
+		float xoffset = 0;
+		float yoffset = 0;
+
+		float max_glyph_height = 0;
 
 		glyphs(std::string& image_path, std::string& csv_path);
 
@@ -81,9 +87,9 @@ namespace sdf
 	/// </summary>
 	struct draw_info
 	{
-		double x = 0, y = 0;
-		double xscale = 1, yscale = 1;
-		double rot = 0;
+		float x = 0, y = 0;
+		float xscale = 1, yscale = 1;
+		float rot = 0;
 
 		d3dcolor col_lt = *game_d3dcolor;
 		d3dcolor col_rt = *game_d3dcolor;
@@ -91,14 +97,14 @@ namespace sdf
 		d3dcolor col_lb = *game_d3dcolor;
 	};
 
-	extern double game_font_size;		// 字体大小（单位：pt）
-	extern double line_spacing;			// 行距（单位：像素）。默认值为 1
+	extern float game_font_size;		// 字体大小（单位：pt）
+	extern float line_spacing;			// 行距（单位：像素）。默认值为 1
 	extern bool per_line_halign;		// 是否逐行对齐。默认值为 false，即整段文本作为一个整体进行水平对齐
 	extern bool use_shader;				// 是否使用着色器进行 SDF 字体的绘制。默认值为 true
 	extern dword shader;				// 当前使用的着色器。默认为 ps_sdf_comp
 
-	extern double font_sharpness;		// 字体的锐度。在 0 - 1 之间。默认值为 0.75
-	extern double font_thickness;		// 字体的粗细度。在 0 - 1 之间。默认值为 0.5
+	extern float font_sharpness;		// 字体的锐度。在 0 - 1 之间。默认值为 0.75
+	extern float font_thickness;		// 字体的粗细度。在 0 - 1 之间。默认值为 0.5
 
 	typedef std::unique_ptr<glyphs> glyphs_ptr;
 
@@ -111,7 +117,7 @@ namespace sdf
 		{
 			std::vector<uint> str_unicode;
 			float x = 0;
-			float width = 0, height = 0;
+			float width = 0;
 		};
 
 		std::vector<line> lines;
@@ -126,10 +132,10 @@ namespace sdf
 	struct font_info
 	{
 		glyphs* font = nullptr;
-		double size = 16;
-		double line_spacing = 1;
-		double sharpness = 24;
-		double thickness = 0.5;
+		float size = 16.0f;
+		float line_spacing = 1.0f;
+		float sharpness = 24.0f;
+		float thickness = 0.5f;
 	};
 }
 
@@ -162,11 +168,13 @@ exp_real sdf_draw_set_font_sharpness(gm_real sharpness);
 exp_real sdf_draw_get_font_sharpness();
 exp_real sdf_draw_set_font_thickness(gm_real thickness);
 exp_real sdf_draw_get_font_thickness();
+exp_real sdf_set_font_offset(gm_real id, gm_real xoffset, gm_real yoffset);
 
 exp_real sdf_draw_set_conf(gm_real font, gm_real size, gm_real line_spacing,
 	gm_real sharpness, gm_real thickness);
 exp_real sdf_apply_conf(gm_real conf_id);
 exp_real sdf_delete_conf(gm_real conf_id);
+exp_real sdf_delete_all_conf();
 
 exp_real sdf_string_width(gm_string str);
 exp_real sdf_string_height(gm_string str);
