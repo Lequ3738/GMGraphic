@@ -49,9 +49,6 @@ exp_real init(gm_real arg_list)
     d3dint->GetAdapterIdentifier(D3DADAPTER_DEFAULT, D3DENUM_NO_WHQL_LEVEL, &d3daid);
     d3ddev->GetDeviceCaps(&d3dcaps);
 
-    d3ddev->CreateVertexBuffer(vb_bytes, D3DUSAGE_WRITEONLY, fvf_ext, D3DPOOL_MANAGED, 
-        &vbuff_d3d);
-
     gm::argument_list = (int)arg_list;
 
     ps_sdf_comp = (dword)d3d_ps_create(ps_sdf);
@@ -904,9 +901,7 @@ void vertex::end()
         if (count < 1)
             return;
 
-        BYTE* bytep;
-        uint  size = vbuff_c * sizeof(vert_ext);
-        uint  prims;
+        uint prims = 0;
 
         switch (vbuff_prim)
         {
@@ -920,18 +915,12 @@ void vertex::end()
         }
 
         if (prims < 1)
-            throw std::runtime_error("The number of vertices is too small.");
-
-        D3DCheck(vbuff_d3d->Lock(0, size, &bytep, 0), 0);
-        memcpy(bytep, vbuff_int, size); // Copy only used part to conserve bandwidth
-        D3DCheck(vbuff_d3d->Unlock(), 1);
-
-        D3DCheck(d3ddev->SetStreamSource(0, vbuff_d3d, sizeof(vert_ext)), 2);
+            return;
 
         if (!vbuff_usevs)
             D3DCheck(d3ddev->SetVertexShader(fvf_ext), 3);
 
-        D3DCheck(d3ddev->DrawPrimitive(vbuff_prim, 0, prims), 4);
+        D3DCheck(d3ddev->DrawPrimitiveUP(vbuff_prim, prims, vbuff_int, sizeof(vert_ext)), 4);
     }
     transpond_catch("vertex::end()")
 }

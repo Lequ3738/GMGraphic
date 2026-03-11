@@ -229,7 +229,8 @@ static sdf::composed_string composing_string(std::string& str)
 			result.lines.push_back(std::move(line_glyphs));
 		}
 
-		height -= sdf::line_spacing;
+		if (!line_str.empty())
+			height -= sdf::line_spacing;
 
 		result.width = max_width;
 		result.height = height;
@@ -449,7 +450,7 @@ static std::string string_get_ext(gm_string str, gm_real w, gm_string lang)
 		size_t chr_len = tokens[i].length();
 		if (chr_len == 0)
 		{
-			return "In function gui_get_string_ext():"
+			return "In function string_get_ext():"
 				"An Error has occurred in function StringToken().";
 		}
 
@@ -461,7 +462,7 @@ static std::string string_get_ext(gm_string str, gm_real w, gm_string lang)
 		// 遇到库标记出错（断在字符内部）
 		if (br == LINEBREAK_INSIDEACHAR)
 		{
-			return "In function gui_get_string_ext(): "
+			return "In function string_get_ext(): "
 				"An Error has occurred in character position ("
 				+ std::to_string(i) + " - " + std::to_string(i + 1) + ").";
 		}
@@ -545,7 +546,7 @@ static std::string string_get_ext(gm_string str, gm_real w, gm_string lang)
 	return result;
 }
 
-static sdf::composed_string hash_get_composed_string(std::string& str, double w)
+static sdf::composed_string& hash_get_composed_string(std::string& str, double w)
 {
 	xxh::hash64_t hash = string_hash(str, w);
 
@@ -581,23 +582,23 @@ static sdf::composed_string hash_get_composed_string(std::string& str, double w)
 
 float sdf::string_width(std::string& str)
 {
-	auto comp = hash_get_composed_string(str, 0);
+	auto& comp = hash_get_composed_string(str, 0);
 	return comp.width;
 }
 float sdf::string_height(std::string& str)
 {
-	auto comp = hash_get_composed_string(str, 0);
+	auto& comp = hash_get_composed_string(str, 0);
 	return comp.height;
 }
 
 float sdf::string_width_ext(std::string& str, double w)
 {
-	auto comp = hash_get_composed_string(str, w);
+	auto& comp = hash_get_composed_string(str, w);
 	return comp.width;
 }
 float sdf::string_height_ext(std::string& str, double w)
 {
-	auto comp = hash_get_composed_string(str, w);
+	auto& comp = hash_get_composed_string(str, w);
 	return comp.height;
 }
 
@@ -605,7 +606,7 @@ void sdf::draw_text(double x, double y, std::string& str)
 {
 	try
 	{
-		auto composing = hash_get_composed_string(str, 0);
+		auto& composing = hash_get_composed_string(str, 0);
 		sdf::draw_info info = { .x = (float)x, .y = (float)y };
 		inner_draw_text(composing, info);
 	}
@@ -616,7 +617,7 @@ void sdf::draw_text_ext(double x, double y, std::string& str, double w)
 {
 	try
 	{
-		auto composing = hash_get_composed_string(str, w);
+		auto& composing = hash_get_composed_string(str, w);
 		sdf::draw_info info = { .x = (float)x, .y = (float)y };
 		inner_draw_text(composing, info);
 	}
@@ -628,7 +629,7 @@ void sdf::draw_text_transformed(double x, double y, std::string& str, double xsc
 {
 	try
 	{
-		auto composing = hash_get_composed_string(str, 0);
+		auto& composing = hash_get_composed_string(str, 0);
 		sdf::draw_info info = {
 			.x = (float)x, .y = (float)y,
 			.xscale = (float)xscale, .yscale = (float)yscale, 
@@ -645,7 +646,7 @@ void sdf::draw_text_ext_transformed(double x, double y, std::string& str, double
 {
 	try
 	{
-		auto composing = hash_get_composed_string(str, w);
+		auto& composing = hash_get_composed_string(str, w);
 		sdf::draw_info info = {
 			.x = (float)x, .y = (float)y, 
 			.xscale = (float)xscale, .yscale = (float)yscale, 
@@ -667,7 +668,7 @@ void sdf::draw_text_color(double x, double y, std::string& str, int c1, int c2, 
 		d3dcolor col3 = col_d3d(c3, alpha);
 		d3dcolor col4 = col_d3d(c4, alpha);
 
-		auto composing = hash_get_composed_string(str, 0);
+		auto& composing = hash_get_composed_string(str, 0);
 		sdf::draw_info info = {
 			.x = (float)x, .y = (float)y,
 			.col_lt = col1, .col_rt = col2, .col_rb = col3, .col_lb = col4
@@ -688,7 +689,7 @@ void sdf::draw_text_ext_color(double x, double y, std::string& str, double w, in
 		d3dcolor col3 = col_d3d(c3, alpha);
 		d3dcolor col4 = col_d3d(c4, alpha);
 
-		auto composing = hash_get_composed_string(str, w);
+		auto& composing = hash_get_composed_string(str, w);
 		sdf::draw_info info = {
 			.x = (float)x, .y = (float)y,
 			.col_lt = col1, .col_rt = col2, .col_rb = col3, .col_lb = col4
@@ -710,7 +711,7 @@ void sdf::draw_text_transformed_color(double x, double y, std::string& str, doub
 		d3dcolor col3 = col_d3d(c3, alpha);
 		d3dcolor col4 = col_d3d(c4, alpha);
 
-		auto composing = hash_get_composed_string(str, 0);
+		auto& composing = hash_get_composed_string(str, 0);
 		sdf::draw_info info = {
 			.x = (float)x, .y = (float)y, 
 			.xscale = (float)xscale, .yscale = (float)yscale, 
@@ -734,7 +735,7 @@ void sdf::draw_text_ext_transformed_color(double x, double y, std::string& str, 
 		d3dcolor col3 = col_d3d(c3, alpha);
 		d3dcolor col4 = col_d3d(c4, alpha);
 
-		auto composing = hash_get_composed_string(str, w);
+		auto& composing = hash_get_composed_string(str, w);
 		sdf::draw_info info = {
 			.x = (float)x, .y = (float)y,
 			.xscale = (float)xscale, .yscale = (float)yscale,
