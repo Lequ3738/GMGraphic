@@ -44,11 +44,10 @@ struct tex_conf
 	dword    ywrap[8];  // 
 };
 
-// GM's default D3D type, 36 bytes.
+// GM's default D3D type, 24 bytes.
 struct vert_default
 {
 	float x, y, z;
-	float nx, ny, nz;
 	dword c;
 	float uv[2];
 };

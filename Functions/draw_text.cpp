@@ -320,6 +320,12 @@ static void inner_draw_text(sdf::composed_string& str, sdf::draw_info& info)
 
 			for (uint i = 0; i < line.str_unicode.size(); ++i)
 			{
+				if (vbuff_c + 6 >= vb_count)
+				{
+					atlas::end_draw();
+					atlas::start_draw(current_sdf_glyphs->texture, D3DFMT_A8);
+				}
+
 				uint unicode = line.str_unicode[i];
 				auto glyph_it = glyphs.glaph_map.find(unicode);
 				sdf::glyphs::glyph& glyph = glyph_it->second;
@@ -362,30 +368,14 @@ static void inner_draw_text(sdf::composed_string& str, sdf::draw_info& info)
 				}
 
 				// 三角形 1
-				vert_ext* vert = vertex::get_struct();
-				vert->x = x_lt; vert->y = y_lt; vert->c = info.col_lt;
-				vert->uv[0] = u0; vert->uv[1] = v0;
-
-				vert = vertex::get_struct();
-				vert->x = x_rt; vert->y = y_rt; vert->c = info.col_rt;
-				vert->uv[0] = u1; vert->uv[1] = v0;
-
-				vert = vertex::get_struct();
-				vert->x = x_rb; vert->y = y_rb; vert->c = info.col_rb;
-				vert->uv[0] = u1; vert->uv[1] = v1;
+				vertex::push_vertex_2d(x_lt, y_lt, u0, v0, info.col_lt);
+				vertex::push_vertex_2d(x_rt, y_rt, u1, v0, info.col_rt);
+				vertex::push_vertex_2d(x_rb, y_rb, u1, v1, info.col_rb);
 
 				// 三角形 2
-				vert = vertex::get_struct();
-				vert->x = x_lt; vert->y = y_lt; vert->c = info.col_lt;
-				vert->uv[0] = u0; vert->uv[1] = v0;
-
-				vert = vertex::get_struct();
-				vert->x = x_rb; vert->y = y_rb; vert->c = info.col_rb;
-				vert->uv[0] = u1; vert->uv[1] = v1;
-
-				vert = vertex::get_struct();
-				vert->x = x_lb; vert->y = y_lb; vert->c = info.col_lb;
-				vert->uv[0] = u0; vert->uv[1] = v1;
+				vertex::push_vertex_2d(x_lt, y_lt, u0, v0, info.col_lt);
+				vertex::push_vertex_2d(x_rb, y_rb, u1, v1, info.col_rb);
+				vertex::push_vertex_2d(x_lb, y_lb, u0, v1, info.col_lb);
 
 				// 根据字形的水平步进调整绘制位置
 				cursor_x += glyph.advance * info.xscale * font_size;
@@ -568,15 +558,15 @@ static sdf::composed_string& hash_get_composed_string(std::string& str, double w
 	if (w <= 0)
 	{
 		auto comp = composing_string(str);
-		composed_string_map[hash].push_back(comp);
-		return comp;
+		composed_string_map[hash].push_back(std::move(comp));
+		return composed_string_map[hash].back();
 	}
 	else
 	{
 		std::string str_w = string_get_ext(str.c_str(), w, nullptr);
 		auto comp = composing_string(str_w);
-		composed_string_map[hash].push_back(comp);
-		return comp;
+		composed_string_map[hash].push_back(std::move(comp));
+		return composed_string_map[hash].back();
 	}
 }
 

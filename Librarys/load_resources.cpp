@@ -184,6 +184,9 @@ gm::sprite gm::decode_gmspr(const std::string& file)
 		}
 
 		// 构建结果
+		std::string filename(gm::filename_name(file));
+		std::string name = filename.substr(0, filename.rfind('.'));
+
 		return gm::sprite {
 			.width = width, .height = height,
 			.xorig = xorig, .yorig = yorig,
@@ -200,7 +203,9 @@ gm::sprite gm::decode_gmspr(const std::string& file)
 			.bounding_top = bounding_top,
 			.bounding_bottom = bounding_bottom,
 
-			.cropped_rects = std::move(cropped_rects)
+			.cropped_rects = std::move(cropped_rects),
+
+			.name = std::move(name)
 		};
 	}
 	transpond_catch("gm::decode_gmspr(std::string&)")
@@ -249,11 +254,16 @@ gm::sprite gm::decode_png(const std::string& file)
 		std::vector<std::vector<uchar>> images;
 		images.push_back(std::move(d3dimage));
 
+		std::string filename(gm::filename_name(file));
+		std::string name = filename.substr(0, filename.rfind('.'));
+
 		return gm::sprite {
 			.width = width, .height = height,
 			.data = std::move(images),
 
-			.cropped_rects = std::move(cropped_rects)
+			.cropped_rects = std::move(cropped_rects),
+
+			.name = std::move(name)
 		};
 	}
 	transpond_catch("gm::decode_png(std::string&)")

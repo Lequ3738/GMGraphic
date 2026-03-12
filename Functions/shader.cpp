@@ -17,13 +17,15 @@ static IDirect3D8*             d3dint;	// D3D interface pointer
 static D3DCAPS8                d3dcaps; // GPU capability struct
 static D3DADAPTER_IDENTIFIER8  d3daid;  // GPU identification struct
 
-LPDIRECT3DVERTEXBUFFER8 vbuff_d3d;            // Pointer to D3D vertex buffer
-vert_ext                vbuff_int[vb_count];  // Internal vertex buffer
-uint                    vbuff_c;              // Internal counter
-D3DPRIMITIVETYPE        vbuff_prim;           // Primitive to draw
-bool                    vbuff_usevs;          // Use vertex shader?
-bool                    vbuff_autoinc;        // Automatic increment?
-bool					vbuff_use_struct;     // Use struct vertices instead of raw data?
+LPDIRECT3DVERTEXBUFFER8 vbuff_d3d;          // Pointer to D3D vertex buffer
+vert_ext vbuff_ext_int[vb_count];           // Internal vertex buffer (ext)
+vert_default vbuff_default_int[vb_count];   // Internal vertex buffer (default)
+uint vbuff_c;                               // Internal counter
+D3DPRIMITIVETYPE vbuff_prim;                // Primitive to draw
+bool vbuff_usevs;                           // Use vertex shader?
+bool vbuff_autoinc;                         // Automatic increment?
+bool vbuff_use_struct;                      // Use struct vertices instead of raw data?
+bool vbuff_use_ext = false;                 // Use ext vertex buffer?
 
 static std::vector<ps_conf>    conf_vec_ps;			 // Dynamic arrays for configs
 static std::vector<vs_conf>    conf_vec_vs;          // 
@@ -791,7 +793,10 @@ void vertex::begin(D3DPRIMITIVETYPE primitive, bool textured)
     vbuff_use_struct = false;
 
     // Zero the buffer.
-	std::memset(vbuff_int, 0, vb_bytes);
+    if (vbuff_use_ext)
+	    std::memset(vbuff_ext_int, 0, vb_ext_bytes);
+    else
+        std::memset(vbuff_default_int, 0, vb_default_bytes);
 
     if (!textured)
         d3d_set_tex_all(-1);
@@ -811,33 +816,33 @@ exp_real d3d_primitive_begin_ext(double primitive, double textured)
         default: { return gerror; } break;
     }
     
+    vbuff_use_ext = true;
     vertex::begin(prim, textured < 0.5);
     return gtrue;
 }
 
-vert_ext* vertex::get_struct()
+exp_real d3d_use_ext_vertex_format(gm_real use)
 {
-    vbuff_use_struct = true;
-    return &vbuff_int[vbuff_c++];
-}
-
-vert_ext* vertex::get_struct(uint pos)
-{
-    vbuff_use_struct = true;
-    return &vbuff_int[pos];
+    bool use_ext = use > 0.5;
+    if (vbuff_use_ext != use_ext)
+    {
+        atlas::end_draw();
+        vbuff_use_ext = use_ext;
+    }
+    return gtrue;
 }
 
 // Position, normal, diffuse/specular colour and alpha.
 void vertex::add(float x, float y, float z, float nx, float ny, float nz, uint col, uint speccol)
 {
-    vbuff_int[vbuff_c].x = x;
-    vbuff_int[vbuff_c].y = y;
-    vbuff_int[vbuff_c].z = z;
-    vbuff_int[vbuff_c].nx = nx;
-    vbuff_int[vbuff_c].ny = ny;
-    vbuff_int[vbuff_c].nz = nz;
-    vbuff_int[vbuff_c].c = col;
-    vbuff_int[vbuff_c].s = speccol;
+    vbuff_ext_int[vbuff_c].x = x;
+    vbuff_ext_int[vbuff_c].y = y;
+    vbuff_ext_int[vbuff_c].z = z;
+    vbuff_ext_int[vbuff_c].nx = nx;
+    vbuff_ext_int[vbuff_c].ny = ny;
+    vbuff_ext_int[vbuff_c].nz = nz;
+    vbuff_ext_int[vbuff_c].c = col;
+    vbuff_ext_int[vbuff_c].s = speccol;
 
     if (vbuff_autoinc)
         vbuff_c++;
@@ -861,8 +866,8 @@ void vertex::add_tex(uint stage, float xtex, float ytex)
 
     uint ind = (uint)(stage * 2);
 
-    vbuff_int[vbuff_c].uv[ind] = xtex;
-    vbuff_int[vbuff_c].uv[ind + 1] = ytex;
+    vbuff_ext_int[vbuff_c].uv[ind] = xtex;
+    vbuff_ext_int[vbuff_c].uv[ind + 1] = ytex;
 }
 
 exp_real d3d_vertex_ext_tex(double stage, double xtex, double ytex)
@@ -918,9 +923,20 @@ void vertex::end()
             return;
 
         if (!vbuff_usevs)
-            D3DCheck(d3ddev->SetVertexShader(fvf_ext), 3);
+            D3DCheck(d3ddev->SetVertexShader(vbuff_use_ext ? fvf_ext : fvf_default), 3);
 
-        D3DCheck(d3ddev->DrawPrimitiveUP(vbuff_prim, prims, vbuff_int, sizeof(vert_ext)), 4);
+        if (vbuff_use_ext)
+        {
+            D3DCheck(d3ddev->DrawPrimitiveUP(vbuff_prim, prims, vbuff_ext_int,
+                sizeof(vert_ext)), 4);
+        }
+        else
+        {
+            D3DCheck(d3ddev->DrawPrimitiveUP(vbuff_prim, prims, vbuff_default_int,
+                sizeof(vert_default)), 4);
+        }
+
+        vbuff_c = 0;
     }
     transpond_catch("vertex::end()")
 }
@@ -930,6 +946,7 @@ exp_real d3d_primitive_end_ext()
     try
     {
         vertex::end();
+        vbuff_use_ext = false;
         return gtrue;
     }
     simple_catch("d3d_primitive_end_ext", gerror)
@@ -946,11 +963,11 @@ exp_real draw_primitive_begin_ext(double primitive, double textured)
 exp_real draw_vertex_ext(double x, double y, double col, double alpha, 
     double speccol, double specalpha)
 {
-    vbuff_int[vbuff_c].x = (float)x;
-    vbuff_int[vbuff_c].y = (float)y;
+    vbuff_ext_int[vbuff_c].x = (float)x;
+    vbuff_ext_int[vbuff_c].y = (float)y;
 
-    vbuff_int[vbuff_c].c = col_d3d((int)col, alpha);
-    vbuff_int[vbuff_c].s = col_d3d((int)speccol, specalpha);
+    vbuff_ext_int[vbuff_c].c = col_d3d((int)col, alpha);
+    vbuff_ext_int[vbuff_c].s = col_d3d((int)speccol, specalpha);
 
     if (vbuff_autoinc)
         vbuff_c++;

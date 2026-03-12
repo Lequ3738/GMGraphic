@@ -194,6 +194,7 @@ int texture_atlas::add_image(gm::sprite& spr)
 		uint image_id = atlas_image_id++;
 		images_ptr atlas_images = std::make_unique<images>(spr.width, spr.height,
 			std::vector<images::sub_image_ptr>(spr.frame_count()), image_id, id);
+		atlas_images->name = spr.name;
 
 		for (uint i = 0; i < spr.frame_count(); ++i)
 		{
@@ -236,7 +237,7 @@ int texture_atlas::add_image(gm::sprite& spr)
 		}
 
 		game_images[image_id] = atlas_images.get();
-		images_list.emplace_back(std::move(atlas_images));
+		images_list.push_back(std::move(atlas_images));
 
 		return (int)image_id;
 	}
@@ -327,6 +328,32 @@ bool texture_atlas::burn(bool del_memdata)
 	transpond_catch("texture_atlas::burn(bool)")
 }
 
+template <typename T>
+static void file_write(std::ofstream& ofs, T value)
+{
+	if constexpr (std::is_same_v<T, std::string>)
+	{
+		file_write(ofs, (uint)value.size());
+		ofs.write(value.data(), std::streamsize(value.size()));
+	}
+	else
+		ofs.write(reinterpret_cast<const char*>(&value), sizeof(T));
+}
+
+template <typename T>
+static void file_read(std::ifstream& ifs, T& value)
+{
+	if constexpr (std::is_same_v<T, std::string>)
+	{
+		uint size = 0;
+		file_read(ifs, size);
+		value.resize(size);
+		ifs.read(value.data(), std::streamsize(size));
+	}
+	else
+		ifs.read(reinterpret_cast<char*>(&value), sizeof(T));
+}
+
 void texture_atlas::save(path& file_path) const
 {
 	try
@@ -337,6 +364,7 @@ void texture_atlas::save(path& file_path) const
 				"Path: " + file_path.string());
 		}
 
+		// 保存纹理图集图像文件
 		auto [d3dimage, w, h] = gm::get_image_data(texture);
 		std::vector<uchar> image(d3dimage.size());
 
@@ -348,9 +376,159 @@ void texture_atlas::save(path& file_path) const
 			image[i + 3] = d3dimage[i + 3]; // A
 		}
 
-		lodepng::encode(file_path.string(), image.data(), w, h);
+		lodepng::encode(file_path.string() + ".png", image.data(), w, h);
+
+		// 保存纹理图集位置信息文件
+		std::ofstream ofs(file_path.string() + ".bin", std::ios::binary | std::ios::trunc);
+		if (!ofs)
+			throw std::runtime_error("Fail to open the file " + file_path.string() + ".bin.");
+
+		ofs.exceptions(std::ios::badbit | std::ios::failbit);
+
+		file_write(ofs, size);
+		file_write(ofs, (uint)images_list.size());
+
+		for (auto& pimages : images_list)
+		{
+			texture_atlas::images& images = *pimages;
+
+			file_write(ofs, images.name);
+
+			file_write(ofs, images.image_width);
+			file_write(ofs, images.image_height);
+
+			file_write(ofs, (uint)images.frames.size());
+
+			for (auto& psub_image : images.frames)
+			{
+				auto& sub_image = *psub_image;
+
+				file_write(ofs, sub_image.texture_left);
+				file_write(ofs, sub_image.texture_top);
+				file_write(ofs, sub_image.texture_width);
+				file_write(ofs, sub_image.texture_height);
+
+				file_write(ofs, sub_image.orig_x);
+				file_write(ofs, sub_image.orig_y);
+
+				file_write(ofs, sub_image.is_rotated);
+			}
+		}
 	}
 	transpond_catch("texture_atlas::save(path&)")
+}
+
+std::vector<texture_atlas::images*> texture_atlas::load(path& file_path)
+{
+	try
+	{
+		std::vector<images*> result;
+
+		// 加载纹理图集位置信息文件
+		std::ifstream ifs(file_path.string() + ".bin", std::ios::binary);
+		if (!ifs)
+			throw std::runtime_error("Fail to open the file " + file_path.string() + ".bin.");
+
+		ifs.exceptions(std::ios::badbit | std::ios::failbit);
+
+		file_read(ifs, size);
+
+		uint images_list_size;
+		file_read(ifs, images_list_size);
+		images_list.resize(images_list_size);
+
+		for (uint i = 0; i < images_list_size; ++i)
+		{
+			uint image_width, image_height, frames_size;
+			std::string name;
+
+			file_read(ifs, name);
+
+			file_read(ifs, image_width);
+			file_read(ifs, image_height);
+
+			file_read(ifs, frames_size);
+
+			uint image_id = atlas_image_id++;
+			images_list[i] = std::make_unique<images>(image_width, image_height,
+				std::vector<images::sub_image_ptr>(frames_size), image_id, id);
+			images_list[i]->name = name;
+
+			game_images[image_id] = images_list[i].get();
+			result.push_back(images_list[i].get());
+
+			images_list[i]->frames.resize(frames_size);
+
+			for (uint j = 0; j < frames_size; ++j)
+			{
+				uint texture_left, texture_top, texture_width, texture_height;
+				int orig_x, orig_y;
+				bool is_rotated;
+
+				file_read(ifs, texture_left);
+				file_read(ifs, texture_top);
+				file_read(ifs, texture_width);
+				file_read(ifs, texture_height);
+
+				file_read(ifs, orig_x);
+				file_read(ifs, orig_y);
+
+				file_read(ifs, is_rotated);
+
+				images_list[i]->frames[j] = std::make_unique<images::sub_image>(
+					texture_left, texture_top, texture_width, texture_height, 
+					orig_x, orig_y, is_rotated, atlas_texture_id, image_id);
+
+				game_textures[atlas_texture_id] = images_list[i]->frames[j].get();
+				atlas_texture_id++;
+			}
+		}
+
+		// 加载纹理图集图像文件
+		std::vector<uchar> image, d3dimage;
+		uint width, height;
+		uint error = lodepng::decode(image, width, height, file_path.string() + ".png");
+		if (error)
+			throw std::runtime_error(lodepng_error_text(error));
+
+		// 将 RGBA 格式的数据转换为 D3D8 所需的 ARGB 格式
+		d3dimage.resize(image.size());
+		for (size_t i = 0; i < image.size(); i += 4)
+		{
+			d3dimage[i] = image[i + 2];     // R -> B
+			d3dimage[i + 1] = image[i + 1]; // G
+			d3dimage[i + 2] = image[i];     // B -> R
+			d3dimage[i + 3] = image[i + 3]; // A
+		}
+
+		if (read_only())
+			throw std::runtime_error("The atlas is read only.");
+
+		IDirect3DDevice8* device = gmapi->GetDirect3DDevice();
+		IDirect3DTexture8* texture = nullptr;
+
+		if (texture == nullptr)
+		{
+			D3DCheck(device->CreateTexture(width, height, 1, 0, D3DFMT_A8R8G8B8,
+				D3DPOOL_DEFAULT, &texture), 0);
+			texture_atlas::texture = texture;
+		}
+		else
+			texture = texture_atlas::texture;
+
+		IDirect3DSurface8* surface = nullptr;
+		D3DCheck(texture->GetSurfaceLevel(0, &surface), 1);
+
+		RECT pos_rect = { .left = 0, .top = 0, .right = (long)width, .bottom = (long)height };
+		D3DCheck(D3DXLoadSurfaceFromMemory(surface, nullptr, &pos_rect, d3dimage.data(),
+			D3DFMT_A8R8G8B8, width * 4, nullptr, &pos_rect, D3DX_FILTER_NONE, 0), 2);
+
+		D3DCheck(texture->AddDirtyRect(&pos_rect), 3);
+		surface->Release();
+
+		return result;
+	}
+	transpond_catch("texture_atlas::load(path&)")
 }
 
 // ============================================================================
@@ -435,6 +613,26 @@ exp_real texture_atlas_save(gm_real id, gm_string file_path)
 		return gtrue;
 	}
 	simple_catch("texture_atlas_save", gfalse)
+}
+
+exp_real texture_atlas_load(gm_string file_path)
+{
+	try
+	{
+		uint id = texture_atlas_id_position++;
+		path p(file_path);
+
+		game_texture_atlas[id] = std::make_unique<texture_atlas>(1024, id);
+		auto images = game_texture_atlas[id]->load(p);
+
+		int result = gm::ds_map_create();
+		gm::ds_map_add(result, "/Result/", (gm_real)id);
+		for (auto& i : images)
+			gm::ds_map_add(result, i->name, (gm_real)i->image_id);
+
+		return (gm_real)result;
+	}
+	simple_catch("texture_atlas_load", -1)
 }
 
 exp_real texture_atlas_auto_add_file(gm_string file)

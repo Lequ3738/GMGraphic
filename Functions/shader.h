@@ -2,12 +2,15 @@
 #include "../main.h"
 #include "structs.h"
 
-extern LPDIRECT3DVERTEXBUFFER8 vbuff_d3d;            // Pointer to D3D vertex buffer
-extern vert_ext                vbuff_int[vb_count];  // Internal vertex buffer
-extern uint                    vbuff_c;              // Internal counter
-extern D3DPRIMITIVETYPE        vbuff_prim;           // Primitive to draw
-extern bool                    vbuff_usevs;          // Use vertex shader?
-extern bool                    vbuff_autoinc;        // Automatic increment?
+extern LPDIRECT3DVERTEXBUFFER8 vbuff_d3d;
+extern vert_ext vbuff_ext_int[vb_count];
+extern vert_default vbuff_default_int[vb_count];
+extern uint vbuff_c;
+extern D3DPRIMITIVETYPE vbuff_prim;
+extern bool vbuff_usevs;
+extern bool vbuff_autoinc;
+extern bool vbuff_use_struct;
+extern bool vbuff_use_ext;
 
 extern dword ps_sdf_comp;
 extern dword ps_sdf_premul_comp;
@@ -80,6 +83,7 @@ exp_real d3d_set_ztest(double mode);
 exp_real d3d_set_zbias(double bias);
 exp_real d3d_set_fillmode(double mode);
 exp_real d3d_set_normal_auto(double state);
+exp_real d3d_use_ext_vertex_format(gm_real use);
 
 exp_real d3d_primitive_begin_ext(double primitive, double textured);
 exp_real d3d_vertex_ext(double x, double y, double z, double nx, double ny, double nz, double col, double alpha, double speccol, double specalpha);
@@ -101,6 +105,18 @@ namespace vertex
 	void next();
 	void end();
 
-	vert_ext* get_struct();
-	vert_ext* get_struct(uint pos);
+	inline void push_vertex_2d(float x, float y, float u, float v, dword c)
+    {
+        vbuff_use_struct = true;
+        if (vbuff_use_ext)
+        {
+            vert_ext* vert = &vbuff_ext_int[vbuff_c++];
+            vert->x = x; vert->y = y; vert->c = c; vert->uv[0] = u; vert->uv[1] = v;
+        }
+        else
+        {
+            vert_default* vert = &vbuff_default_int[vbuff_c++];
+            vert->x = x; vert->y = y; vert->c = c; vert->uv[0] = u; vert->uv[1] = v;
+        }
+    }
 }

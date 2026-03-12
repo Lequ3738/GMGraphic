@@ -41,6 +41,8 @@ namespace gm
 
 		std::vector<image_rect> cropped_rects;  // 裁剪后的图像区域，供图集打包使用
 
+		std::string name;
+
 		inline uint frame_count() const { return data.size(); }
 	};
 

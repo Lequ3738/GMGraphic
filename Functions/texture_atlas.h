@@ -70,6 +70,7 @@ struct texture_atlas
 		// 为了和 GM8 内部的 Sprite 和 Background ID 区分，从 100,000 开始计数。
 		uint image_id = 0;
 		uint atlas_id = 0;  // 该图像所在的纹理图集 ID
+		std::string name;
 
 		images(uint width, uint height, std::vector<sub_image_ptr> frames, 
 			uint image_id, uint atlas_id) : image_width(width), image_height(height), 
@@ -149,8 +150,15 @@ struct texture_atlas
 	/// <summary>
 	/// 将纹理图集保存至一个 png 文件中，该纹理图集必须使用过 burn 方法。
 	/// </summary>
-	/// <param name="file_path">要保存的文件路径。</param>
+	/// <param name="file_path">要保存的文件路径，不包含扩展名。</param>
 	void save(path& file_path) const;
+
+	/// <summary>
+	/// 从指定文件中加载纹理图集数据，加载后该纹理图集将变为只读状态。
+	/// </summary>
+	/// <param name="file_path">要载入的文件路径，不包含扩展名。</param>
+	/// <returns>包含所有载入图像指针的列表。</returns>
+	std::vector<images*> load(path& file_path);
 
 	/// <summary>
 	/// 指示该纹理图集是否为只读模式
@@ -183,6 +191,7 @@ exp_real texture_atlas_add_sprite(gm_real id, gm_real spr);
 exp_real texture_atlas_add_background(gm_real id, gm_real back);
 exp_real texture_atlas_burn(gm_real id, gm_real del_memdata);
 exp_real texture_atlas_save(gm_real id, gm_string file_path);
+exp_real texture_atlas_load(gm_string file_path);
 
 exp_real texture_atlas_count();
 exp_real texture_atlas_exists(gm_real id);

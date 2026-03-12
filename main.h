@@ -60,11 +60,12 @@ constexpr double epsilon = 0.00001;
 #define d3dtex              IDirect3DTexture8
 
 // Buffer parameters
-#define fvf_default  ( D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE | D3DFVF_TEX1 ) // GM's FVF for D3D.
+#define fvf_default  ( D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1 ) // GM's FVF for D3D.
 #define fvf_ext      ( D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE | D3DFVF_SPECULAR | D3DFVF_TEX8 )  // M-M-M-MEGA KILL
 
 constexpr int vb_count = 8192; // Max verts per prim; GM's limit of 1024 is excessively conservative.
-#define vb_bytes vb_count * sizeof(vert_ext)  // 768KB
+#define vb_ext_bytes vb_count * sizeof(vert_ext)  // 768KB
+#define vb_default_bytes vb_count * sizeof(vert_default)  // 192KB
 
 constexpr static double degtorad_mul = pi / 180.0;
 constexpr static double radtodeg_mul = 180.0 / pi;

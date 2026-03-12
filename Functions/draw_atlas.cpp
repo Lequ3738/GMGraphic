@@ -11,7 +11,7 @@ static void draw_image(atlas::draw_info& info)
 		if (info.atlas.texture == nullptr)
 			throw std::runtime_error("Cannot find the texture atlas of this sprite.");
 
-		if (current_texture.texture != info.atlas.texture)
+		if (current_texture.texture != info.atlas.texture || vbuff_c + 6 >= vb_count)
 		{
 			atlas::end_draw();
 			atlas::start_draw(info.atlas.texture, D3DFMT_A8R8G8B8);
@@ -126,24 +126,14 @@ static void draw_image(atlas::draw_info& info)
 		}
 		
 		// 三角形 1
-		vert_ext* vert = vertex::get_struct();
-		vert->x = x_lt; vert->y = y_lt; vert->c = info.color_lt; vert->uv[0] = u0; vert->uv[1] = v0;
-
-		vert = vertex::get_struct();
-		vert->x = x_rt; vert->y = y_rt; vert->c = info.color_rt; vert->uv[0] = u1; vert->uv[1] = v1;
-
-		vert = vertex::get_struct();
-		vert->x = x_rb; vert->y = y_rb; vert->c = info.color_rb; vert->uv[0] = u2; vert->uv[1] = v2;
+		vertex::push_vertex_2d(x_lt, y_lt, u0, v0, info.color_lt);
+		vertex::push_vertex_2d(x_rt, y_rt, u1, v1, info.color_rt);
+		vertex::push_vertex_2d(x_rb, y_rb, u2, v2, info.color_rb);
 
 		// 三角形 2
-		vert = vertex::get_struct();
-		vert->x = x_lt; vert->y = y_lt; vert->c = info.color_lt; vert->uv[0] = u0; vert->uv[1] = v0;
-
-		vert = vertex::get_struct();
-		vert->x = x_rb; vert->y = y_rb; vert->c = info.color_rb; vert->uv[0] = u2; vert->uv[1] = v2;
-
-		vert = vertex::get_struct();
-		vert->x = x_lb; vert->y = y_lb; vert->c = info.color_lb; vert->uv[0] = u3; vert->uv[1] = v3;
+		vertex::push_vertex_2d(x_lt, y_lt, u0, v0, info.color_lt);
+		vertex::push_vertex_2d(x_rb, y_rb, u2, v2, info.color_rb);
+		vertex::push_vertex_2d(x_lb, y_lb, u3, v3, info.color_lb);
 	}
 	transpond_catch("draw_image(atlas::draw_info&)")
 }
