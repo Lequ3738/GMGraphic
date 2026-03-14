@@ -522,6 +522,9 @@
     <ClInclude Include="Librarys\xxhash.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="Librarys\string_make.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp">
@@ -597,6 +600,12 @@
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="Functions\draw_text.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Functions\rich_text.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Librarys\string_make.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>

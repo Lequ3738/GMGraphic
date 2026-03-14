@@ -5,6 +5,8 @@ extern int* game_text_halign;		// GM8 中被 draw_set_halign 修改的全局变�
 extern int* game_text_valign;		// GM8 中被 draw_set_valign 修改的全局变量地址
 extern d3dcolor* game_d3dcolor;		// GM8 中被 draw_set_color 和 draw_set_alpha 修改的全局变量地址
 
+constexpr uint absence_character_unicode = '?';
+
 namespace sdf
 {
 	/// <summary>
@@ -143,6 +145,8 @@ namespace sdf
 
 extern std::unordered_map<uint, sdf::glyphs_ptr> game_sdf_glyphs;
 extern std::unordered_map<uint, sdf::font_info> game_font_info;
+
+extern sdf::glyphs* current_sdf_glyphs;
 
 // ============================================================================
 // Export Functions

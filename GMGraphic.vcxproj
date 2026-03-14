@@ -309,6 +309,7 @@
     <ClInclude Include="Librarys\parse_args.h" />
     <ClInclude Include="Librarys\Rect.h" />
     <ClInclude Include="Librarys\pixel_shader_defs.h" />
+    <ClInclude Include="Librarys\string_make.h" />
     <ClInclude Include="Librarys\structs.h" />
     <ClInclude Include="Functions\texture_atlas.h" />
     <ClInclude Include="Librarys\utf8.h" />
@@ -344,6 +345,7 @@
   <ItemGroup>
     <ClCompile Include="Functions\draw_atlas.cpp" />
     <ClCompile Include="Functions\draw_text.cpp" />
+    <ClCompile Include="Functions\rich_text.cpp" />
     <ClCompile Include="GMAPI\Gmapi3DGraphics.cpp" />
     <ClCompile Include="GMAPI\GmapiConsts.cpp" />
     <ClCompile Include="GMAPI\GmapiDataStructures.cpp" />
@@ -364,6 +366,7 @@
     <ClCompile Include="Librarys\MaxRectsBinPack.cpp" />
     <ClCompile Include="Librarys\Rect.cpp" />
     <ClCompile Include="Functions\texture_atlas.cpp" />
+    <ClCompile Include="Librarys\string_make.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
