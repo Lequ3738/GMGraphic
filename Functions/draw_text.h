@@ -81,6 +81,7 @@ namespace sdf
 	void draw_text_ext_transformed_color(double x, double y, std::string& str, double w,
 		double xscale, double yscale, double angle, int c1, int c2, int c3,
 		int c4, double alpha);
+	void draw_text_rich(double x, double y, std::string& str, double xscale, double yscale);
 
 	/// <summary>
 	/// 传入 inner_draw_text 函数的结构体，包含所有绘制信息
@@ -105,6 +106,7 @@ namespace sdf
 
 	extern float font_sharpness;		// 字体的锐度。在 0 - 1 之间。默认值为 0.75
 	extern float font_thickness;		// 字体的粗细度。在 0 - 1 之间。默认值为 0.5
+	extern float font_gap;				// 字与字之间的间隔
 
 	typedef std::unique_ptr<glyphs> glyphs_ptr;
 
@@ -168,6 +170,8 @@ exp_real sdf_draw_set_font_sharpness(gm_real sharpness);
 exp_real sdf_draw_get_font_sharpness();
 exp_real sdf_draw_set_font_thickness(gm_real thickness);
 exp_real sdf_draw_get_font_thickness();
+exp_real sdf_draw_set_text_gap(gm_real gap);
+exp_real sdf_draw_get_text_gap();
 exp_real sdf_set_font_offset(gm_real id, gm_real xoffset, gm_real yoffset);
 
 exp_real sdf_draw_set_conf(gm_real font, gm_real size, gm_real line_spacing,
@@ -189,3 +193,4 @@ exp_real sdf_draw_text_color(gm_real x, gm_real y, gm_string str);
 exp_real sdf_draw_text_ext_color(gm_real x, gm_real y, gm_string str);
 exp_real sdf_draw_text_transformed_color(gm_real x, gm_real y, gm_string str);
 exp_real sdf_draw_text_ext_transformed_color(gm_real x, gm_real y, gm_string str);
+exp_real sdf_draw_text_rich(gm_real x, gm_real y, gm_string str);

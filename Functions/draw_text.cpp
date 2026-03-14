@@ -6,40 +6,78 @@
 #include "parse_args.h"
 #include "linebreak.h"
 #include "xxhash.hpp"
+#include <stack>
+#include <optional>
 #include "draw_text.h"
 
-float sdf::game_font_size = 16.0;
-float sdf::line_spacing = 1.0;
+float sdf::game_font_size = 16.0f;
+float sdf::line_spacing = 1.0f;
 bool sdf::per_line_halign = false;
 bool sdf::use_shader = true;
 dword sdf::shader = NULL;
 
-float sdf::font_sharpness = 0.75;		// 字体的锐度。在 0 - 1 之间
-float sdf::font_thickness = 0.5;		// 字体的粗细度。在 0 - 1 之间
+float sdf::font_sharpness = 0.75f;		// 字体的锐度。在 0 - 1 之间
+float sdf::font_thickness = 0.5f;		// 字体的粗细度。在 0 - 1 之间
+float sdf::font_gap = 0.0f;
 
 sdf::glyphs* current_sdf_glyphs = nullptr;
 
+/// <summary>
+/// 按照指定的分隔符分割字符串。
+/// </summary>
 static std::vector<std::string> string_token(std::string& str, std::string&& sep)
 {
-	std::vector<std::string> tokens;
-	size_t pos = 0, found = 0;
-	while ((found = str.find(",", pos)) != std::string::npos)
+	try
 	{
-		std::string token = str.substr(pos, found - pos);
-		pos = found + sep.length();
+		std::vector<std::string> tokens;
+		size_t pos = 0, found = 0;
+		while ((found = str.find(",", pos)) != std::string::npos)
+		{
+			std::string token = str.substr(pos, found - pos);
+			pos = found + sep.length();
 
-		if (!token.empty())
-			tokens.push_back(std::move(token));
+			if (!token.empty())
+				tokens.push_back(std::move(token));
+		}
+
+		if (pos <= str.length())
+		{
+			std::string token = str.substr(pos);
+			if (!token.empty())
+				tokens.push_back(std::move(token));
+		}
+
+		return tokens;
 	}
+	transpond_catch("string_token(std::string&, std::string&&)")
+}
 
-	if (pos <= str.length())
+/// <summary>
+/// 将字符串分割成一列 utf-8 字符
+/// </summary>
+static std::vector<std::string> string_token_utf8(std::string& str)
+{
+	try
 	{
-		std::string token = str.substr(pos);
-		if (!token.empty())
-			tokens.push_back(std::move(token));
-	}
+		std::vector<std::string> tokens;
+		auto end = str.end();
+		auto cur_it = str.begin();
+		auto prev_it = str.begin();
 
-	return tokens;
+		while (cur_it != end)
+		{
+			utf8::next(cur_it, end);  // 获取下一个字符
+
+			std::string character(prev_it, cur_it);
+			if (!character.empty())
+				tokens.push_back(std::move(character));
+
+			prev_it = cur_it;
+		}
+
+		return tokens;
+	}
+	transpond_catch("string_token_utf8(std::string&)")
 }
 
 sdf::glyphs::glyphs(std::string& image_path, std::string& csv_path)
@@ -218,8 +256,11 @@ static sdf::composed_string composing_string(std::string& str)
 				line_glyphs.str_unicode.push_back(unicode);
 
 				// 计算该行的宽
-				width += glyph.advance * font_size;
+				width += (glyph.advance + sdf::font_gap) * font_size;
 			}
+
+			if (!line_glyphs.str_unicode.empty())
+				width -= sdf::font_gap * font_size;
 
 			height += font_size + sdf::line_spacing;
 			if (width > max_width)
@@ -257,16 +298,22 @@ hash_map_composed composed_string_map;
 
 static xxh::hash64_t string_hash(std::string& str, double width)
 {
-	xxh::hash_state_t<64> hs;
+	try
+	{
+		xxh::hash_state_t<64> hs;
 
-	hs.update(str.data(), str.size());
-	hs.update(&width, sizeof(width));
+		hs.update(str.data(), str.size());
+		hs.update(&width, sizeof(width));
 
-	hs.update(&current_sdf_glyphs, sizeof(current_sdf_glyphs));
-	hs.update(&sdf::game_font_size, sizeof(sdf::game_font_size));
-	hs.update(&sdf::line_spacing, sizeof(sdf::line_spacing));
+		hs.update(&current_sdf_glyphs, sizeof(current_sdf_glyphs));
+		hs.update(&sdf::game_font_size, sizeof(sdf::game_font_size));
+		hs.update(&sdf::font_gap, sizeof(sdf::font_gap));
+		hs.update(&sdf::line_spacing, sizeof(sdf::line_spacing));
+		hs.update(&sdf::per_line_halign, sizeof(sdf::per_line_halign));
 
-	return hs.digest();
+		return hs.digest();
+	}
+	transpond_catch("string_hash(std::string&, double)")
 }
 
 static void inner_draw_text(sdf::composed_string& str, sdf::draw_info& info)
@@ -378,7 +425,7 @@ static void inner_draw_text(sdf::composed_string& str, sdf::draw_info& info)
 				vertex::push_vertex_2d(x_lb, y_lb, u0, v1, info.col_lb);
 
 				// 根据字形的水平步进调整绘制位置
-				cursor_x += glyph.advance * info.xscale * font_size;
+				cursor_x += (glyph.advance + sdf::font_gap) * info.xscale * font_size;
 			}
 
 			cursor_y += (font_size + sdf::line_spacing) * info.yscale;
@@ -389,151 +436,145 @@ static void inner_draw_text(sdf::composed_string& str, sdf::draw_info& info)
 
 static float string_width_nohash(std::string& str)
 {
-	auto comp = composing_string(str);
-	return comp.width;
+	try
+	{
+		auto comp = composing_string(str);
+		return comp.width;
+	}
+	transpond_catch("string_width_nohash(std::string&)")
 }
 
 static std::string string_get_ext(gm_string str, gm_real w, gm_string lang)
 {
-	if (w <= 0 || *str == '\0')
-		return "In function gui_get_string_ext(): The argument is valid.";
-
-	std::string text(str);
-
-	gm_string l = lang;
-	if (lang != nullptr && *lang == '\0')
-		l = nullptr;
-
-	// 获取指定字符串的“可合法断点”列表
-	size_t len = text.length() + 1;
-	std::vector<char> brks(len);
-	set_linebreaks_utf8((const utf8_t*)str, len, l, brks.data());
-
-	// 按 utf-8 字符分隔字符串
-	std::vector<std::string> tokens;
-	auto end = text.end();
-	auto cur_it = text.begin();
-	auto prev_it = text.begin();
-
-	while (cur_it != end)
+	try
 	{
-		utf8::next(cur_it, end);  // 获取下一个字符
+		if (w <= 0 || *str == '\0')
+			return "In function gui_get_string_ext(): The argument is valid.";
 
-		std::string character(prev_it, cur_it);
-		if (!character.empty())
-			tokens.push_back(std::move(character));
+		std::string text(str);
 
-		prev_it = cur_it;
-	}
+		gm_string l = lang;
+		if (lang != nullptr && *lang == '\0')
+			l = nullptr;
 
-	size_t num = tokens.size();
+		// 获取指定字符串的“可合法断点”列表
+		size_t len = text.length() + 1;
+		std::vector<char> brks(len);
+		set_linebreaks_utf8((const utf8_t*)str, len, l, brks.data());
 
-	std::string token,	// 从上一个合法断点到当前处理字符的字符串
-		line,			// 从当前行开始到上一个合法断点的字符串
-		result;			// 结果字符串
+		// 按 utf-8 字符分隔字符串
+		std::vector<std::string> tokens = string_token_utf8(text);
 
-	// 计算要绘制的字符宽度并自动断行
-	size_t brk_pos = 0;
-	for (size_t i = 0; i < num; i++)
-	{
-		// 将基于字节的“可合法断点”列表由基于字符的模式读取
-		size_t chr_len = tokens[i].length();
-		if (chr_len == 0)
+		size_t num = tokens.size();
+
+		std::string token,	// 从上一个合法断点到当前处理字符的字符串
+			line,			// 从当前行开始到上一个合法断点的字符串
+			result;			// 结果字符串
+
+		// 计算要绘制的字符宽度并自动断行
+		size_t brk_pos = 0;
+		for (size_t i = 0; i < num; i++)
 		{
-			return "In function string_get_ext():"
-				"An Error has occurred in function StringToken().";
-		}
-
-		brk_pos += chr_len;
-		char br = brks[brk_pos - 1];
-
-		token += tokens[i];
-
-		// 遇到库标记出错（断在字符内部）
-		if (br == LINEBREAK_INSIDEACHAR)
-		{
-			return "In function string_get_ext(): "
-				"An Error has occurred in character position ("
-				+ std::to_string(i) + " - " + std::to_string(i + 1) + ").";
-		}
-
-		// 当到达可断点、必须断点或字符串末尾时处理 token
-		if (br == LINEBREAK_ALLOWBREAK || br == LINEBREAK_MUSTBREAK || i == num - 1)
-		{
-			std::string candidate = line + token;
-			double width = (double)string_width_nohash(candidate);
-
-			if (width <= w)  // 放得下，直接合并
-				line = std::move(candidate);
-			else  // 放不下，需要换行
+			// 将基于字节的“可合法断点”列表由基于字符的模式读取
+			size_t chr_len = tokens[i].length();
+			if (chr_len == 0)
 			{
-				if (!line.empty())
+				return "In function string_get_ext():"
+					"An Error has occurred in function StringToken().";
+			}
+
+			brk_pos += chr_len;
+			char br = brks[brk_pos - 1];
+
+			token += tokens[i];
+
+			// 遇到库标记出错（断在字符内部）
+			if (br == LINEBREAK_INSIDEACHAR)
+			{
+				return "In function string_get_ext(): "
+					"An Error has occurred in character position ("
+					+ std::to_string(i) + " - " + std::to_string(i + 1) + ").";
+			}
+
+			// 当到达可断点、必须断点或字符串末尾时处理 token
+			if (br == LINEBREAK_ALLOWBREAK || br == LINEBREAK_MUSTBREAK || i == num - 1)
+			{
+				std::string candidate = line + token;
+				double width = (double)string_width_nohash(candidate);
+
+				if (width <= w)  // 放得下，直接合并
+					line = std::move(candidate);
+				else  // 放不下，需要换行
 				{
-					result += line + "\n";
-					line = token;
-				}
-
-				// 检查新起的这一行（原本的 token）是否依然超宽
-				// 如果 token 本身极长，这里需要强制拆分
-				if ((double)string_width_nohash(line) > w)
-				{
-					std::string remain_line = "";
-					std::string temp_token = line;
-					line.clear();
-
-					auto tok_end = temp_token.end();
-					auto tok_it = temp_token.begin();
-					auto tok_prev = tok_it;
-
-					while (tok_it != tok_end)
+					if (!line.empty())
 					{
-						utf8::next(tok_it, tok_end);
-						std::string character(tok_prev, tok_it);
-
-						if (!character.empty())
-						{
-							// 尝试加入字符
-							std::string line_plus_char = remain_line + character;
-							if ((double)string_width_nohash(line_plus_char) > w)
-							{
-								// 加上这个字就超了 -> 输出前面的 safe 部分
-								result += remain_line + "\n";
-								remain_line = character; // 当前字变为下一行开头
-							}
-							else
-							{
-								remain_line += character;
-							}
-						}
-						tok_prev = tok_it;
+						result += line + "\n";
+						line = token;
 					}
-					// 剩下的部分留在 line 中，等待后续处理
-					line = remain_line;
+
+					// 检查新起的这一行（原本的 token）是否依然超宽
+					// 如果 token 本身极长，这里需要强制拆分
+					if ((double)string_width_nohash(line) > w)
+					{
+						std::string remain_line = "";
+						std::string temp_token = line;
+						line.clear();
+
+						auto tok_end = temp_token.end();
+						auto tok_it = temp_token.begin();
+						auto tok_prev = tok_it;
+
+						while (tok_it != tok_end)
+						{
+							utf8::next(tok_it, tok_end);
+							std::string character(tok_prev, tok_it);
+
+							if (!character.empty())
+							{
+								// 尝试加入字符
+								std::string line_plus_char = remain_line + character;
+								if ((double)string_width_nohash(line_plus_char) > w)
+								{
+									// 加上这个字就超了 -> 输出前面的 safe 部分
+									result += remain_line + "\n";
+									remain_line = character; // 当前字变为下一行开头
+								}
+								else
+								{
+									remain_line += character;
+								}
+							}
+							tok_prev = tok_it;
+						}
+						// 剩下的部分留在 line 中，等待后续处理
+						line = remain_line;
+					}
+				}
+
+				token.clear();
+
+				if (br == LINEBREAK_MUSTBREAK)
+				{
+					result += line;
+
+					// 如果 line 结尾不是换行符，则手动添加
+					if (line.empty() || (line.back() != '\n' && line.back() != '\r'))
+						result += "\n";
+
+					line.clear();
 				}
 			}
-
-			token.clear();
-
-			if (br == LINEBREAK_MUSTBREAK)
-			{
-				result += line;
-
-				// 如果 line 结尾不是换行符，则手动添加
-				if (line.empty() || (line.back() != '\n' && line.back() != '\r'))
-					result += "\n";
-
-				line.clear();
-			}
 		}
+
+		// 将残余内容加入结果（如果有）
+		if (!line.empty())
+			result += line;
+		else if (!token.empty())
+			result += token;
+
+		return result;
 	}
-
-	// 将残余内容加入结果（如果有）
-	if (!line.empty())
-		result += line;
-	else if (!token.empty())
-		result += token;
-
-	return result;
+	transpond_catch("string_get_ext(gm_string, gm_real, gm_string)")
 }
 
 static sdf::composed_string& hash_get_composed_string(std::string& str, double w)
@@ -738,6 +779,448 @@ void sdf::draw_text_ext_transformed_color(double x, double y, std::string& str, 
 		"double, double, double, double, int, int, int, int, double)")
 }
 
+struct rich_string
+{
+	struct style
+	{
+		float offset_x = 0;
+		float offset_y = 0;
+
+		d3dcolor color = *game_d3dcolor;
+
+		float linespac = sdf::line_spacing;
+		float thickness = sdf::font_thickness;
+		float sharpness = sdf::font_sharpness;
+		float size = sdf::game_font_size;
+		float gap = sdf::font_gap;
+
+		void apply() const
+		{
+			gm::draw_set_color((int)d3dcol_to_col(color));
+			gm::draw_set_alpha(d3dcol_to_alpha(color));
+			sdf::line_spacing = linespac;
+			sdf::font_thickness = thickness;
+			sdf::font_sharpness = sharpness;
+			sdf::game_font_size = size;
+			sdf::font_gap = gap;
+		}
+	};
+
+	std::string str;
+	style str_style;
+};
+
+// 去除字符串首尾空白符
+static std::string trim_spaces(const std::string& str)
+{
+	auto start = std::find_if_not(str.begin(), str.end(), 
+		[](uchar c) { return std::isspace(c); }
+	);
+	auto end = std::find_if_not(str.rbegin(), str.rend(), 
+		[](uchar c) { return std::isspace(c); }
+	).base();
+
+	return (start < end ? std::string(start, end) : std::string());
+}
+
+template<typename T>
+static std::optional<T> parse_attr(std::string& attr)
+{
+	if constexpr (std::is_same_v<T, std::string>)  // 去除双引号
+	{
+		auto start = std::find_if_not(attr.begin(), attr.end(),
+			[](uchar c) { return c == '"'; }
+		);
+		auto end = std::find_if_not(attr.rbegin(), attr.rend(),
+			[](uchar c) { return c == '"'; }
+		).base();
+
+		std::string a = (start < end ? std::string(start, end) : std::string());
+		a = trim_spaces(a);
+		return a.empty() ? std::nullopt : std::optional(a);
+	}
+	else if constexpr (std::is_same_v<T, float>)  // 返回普通浮点数
+	{
+		try
+		{
+			return std::stof(attr);
+		}
+		catch (...)
+		{
+			return std::nullopt;
+		}
+	}
+	else if constexpr (std::is_same_v<T, d3dcolor>)  // 颜色值
+	{
+		if (attr.empty())
+			return std::nullopt;
+
+		if (attr[0] == '#' || attr[0] == '$')  // 从十六进制值转换
+		{
+			std::string col_str = attr.substr(1);
+
+			try
+			{
+				uint col = std::clamp((uint)std::stol("0x" + col_str), 0U, 0xFFFFFFFF);
+				if (attr.length() <= 2)
+					return col_d3d((int)d3dcol_to_col(*game_d3dcolor), (double)col / 256.0);
+				else if (attr.length() <= 6)
+				{
+					if (attr[0] == '#')  // css 格式：#RRGGBB
+					{
+						int r = (col >> 16);
+						int g = ((col >> 8) % 256);
+						int b = (col % 256);
+
+						return col_d3d(col_make(r, g, b), d3dcol_to_alpha(*game_d3dcolor));
+					}
+					else  // GM 格式：$BBGGRR
+						return col_d3d((int)col, d3dcol_to_alpha(*game_d3dcolor));
+				}
+				else
+				{
+					if (attr[0] == '#')  // css 格式：#RRGGBBAA
+					{
+						int r = (col >> 24);
+						int g = ((col >> 16) % 256);
+						int b = ((col >> 8) % 256);
+						double a = double(col % 256) / 256.0;
+
+						return col_d3d(col_make(r, g, b), a);
+					}
+					else  // GM 格式：$AABBGGRR
+					{
+						int r = (col % 256);
+						int g = ((col >> 8) % 256);
+						int b = ((col >> 16) % 256);
+						double a = double(col >> 24) / 256.0;
+
+						return col_d3d(col_make(r, g, b), a);
+					}
+				}
+			}
+			catch (...)
+			{
+				return std::nullopt;
+			}
+		}
+		else if (attr.length() > 1 && attr[0] == 'a')  // 从 a 函数转换
+		{
+			std::vector<std::string> tokens = string_token(attr, " ");
+			if (tokens.size() < 2)
+				return std::nullopt;
+
+			double a = clamp(std::stof(tokens[1]), 0.0, 1.0);
+			return col_d3d((int)d3dcol_to_col(*game_d3dcolor), a);
+		}
+		else if (attr.length() > 3 && attr.substr(0, 3) == "rgb")  // 从 rgb 函数转换
+		{
+			std::vector<std::string> tokens = string_token(attr, " ");
+			if (tokens.size() < 4)
+				return std::nullopt;
+
+			int r = std::clamp(std::stoi(tokens[1]), 0, 255);
+			int g = std::clamp(std::stoi(tokens[2]), 0, 255);
+			int b = std::clamp(std::stoi(tokens[3]), 0, 255);
+			int a = uint(clamp(d3dcol_to_alpha(*game_d3dcolor), 0.0, 1.0) * 255.0);
+
+			return (a << 24) + (r << 16) + (g << 8) + b;
+		}
+		else if (attr.length() > 4 && attr.substr(0, 4) == "rgba")  // 从 rgba 函数转换
+		{
+			std::vector<std::string> tokens = string_token(attr, " ");
+			if (tokens.size() < 5)
+				return std::nullopt;
+
+			int r = std::clamp(std::stoi(tokens[1]), 0, 255);
+			int g = std::clamp(std::stoi(tokens[2]), 0, 255);
+			int b = std::clamp(std::stoi(tokens[3]), 0, 255);
+			int a = uint(clamp(std::stof(tokens[4]), 0.0, 1.0) * 255.0);
+
+			return (a << 24) + (r << 16) + (g << 8) + b;
+		}
+		else if (attr.length() > 2 && attr.substr(0, 2) == "c_")  // 从颜色常量转换
+		{
+			int col = (int)d3dcol_to_col(*game_d3dcolor);
+
+			if (attr == "c_aqua")			col = gm::c_aqua;
+			else if (attr == "c_black")		col = gm::c_black;
+			else if (attr == "c_blue")		col = gm::c_blue;
+			else if (attr == "c_dkgray")	col = gm::c_dkgray;
+			else if (attr == "c_fuchsia")	col = gm::c_fuchsia;
+			else if (attr == "c_gray")		col = gm::c_gray;
+			else if (attr == "c_green")		col = gm::c_green;
+			else if (attr == "c_lime")		col = gm::c_lime;
+			else if (attr == "c_ltgray")	col = gm::c_ltgray;
+			else if (attr == "c_maroon")	col = gm::c_maroon;
+			else if (attr == "c_navy")		col = gm::c_navy;
+			else if (attr == "c_olive")		col = gm::c_olive;
+			else if (attr == "c_orange")	col = gm::c_orange;
+			else if (attr == "c_purple")	col = gm::c_purple;
+			else if (attr == "c_red")		col = gm::c_red;
+			else if (attr == "c_silver")	col = gm::c_silver;
+			else if (attr == "c_teal")		col = gm::c_teal;
+			else if (attr == "c_white")		col = gm::c_white;
+			else if (attr == "c_yellow")	col = gm::c_yellow;
+
+			return col_d3d((int)col, d3dcol_to_alpha(*game_d3dcolor));
+		}
+	}
+
+	return std::nullopt;
+}
+
+static void parse_tag(rich_string::style& cur_style, std::string& tag_name, 
+	bool has_attr, std::string& attr_value)
+{
+	try
+	{
+		if (tag_name == "b")  // 加粗文字
+		{
+			if (has_attr)
+			{
+				auto value = parse_attr<float>(attr_value);
+				if (value != std::nullopt)
+					cur_style.thickness = value.value();
+				else
+					cur_style.thickness = sdf::font_thickness - 0.5f;
+			}
+			else
+				cur_style.thickness = sdf::font_thickness - 0.5f;
+		}
+		else if (tag_name == "i")  // 斜体
+		{
+			if (has_attr)
+			{
+				
+			}
+		}
+		else if (tag_name == "color")  // 设置字体颜色 / 颜色+Alpha
+		{
+			if (has_attr)
+			{
+				auto value = parse_attr<d3dcolor>(attr_value);
+				if (value != std::nullopt)
+					cur_style.color = value.value();
+			}
+		}
+		else if (tag_name == "gap")  // 设置段落间隔
+		{
+			if (has_attr)
+			{
+				auto value = parse_attr<float>(attr_value);
+				if (value != std::nullopt)
+					cur_style.offset_x = value.value();
+			}
+		}
+		else if (tag_name == "cgap")  // 设置文字间隔
+		{
+			if (has_attr)
+			{
+				auto value = parse_attr<float>(attr_value);
+				if (value != std::nullopt)
+					cur_style.gap = value.value();
+			}
+		}
+	}
+	transpond_catch("parse_tag(rich_string::style&, std::string&, bool, std::string&)")
+}
+
+static std::vector<rich_string> parse_rich_text(std::string& str)
+{
+	try
+	{
+		bool is_noparse = false;	// 是否在不进行解析的块内部
+
+		std::vector<rich_string> result;
+		std::string cur_string;
+
+		std::stack<rich_string::style> state_stack;
+		std::stack<std::string> tag_stack;
+		rich_string::style cur_style;
+		
+		auto it = str.begin();
+		auto end = str.end();
+
+		while (it != end)
+		{
+			if (is_noparse)  // 不解析标签的状态
+			{
+				// 严格向前看是否匹配 "</noparse>"
+				if (std::distance(it, end) >= 10 && std::string(it, it + 10) == "</noparse>")
+				{
+					is_noparse = false;
+					it += 10;
+					continue;
+				}
+
+				auto prev = it;
+				utf8::next(it, end);
+				cur_string += std::string(prev, it);
+
+				continue;
+			}
+
+			if (*it == '<')  // 标签开始块
+			{
+				auto tag_start = it;  // 记录起点，如果解析失败可以回退
+				it++;
+
+				// '< ' 是非法的，必须紧跟字母或 '/'
+				if (it == end || std::isspace(*it))
+				{
+					it = tag_start;  // 解析失败，把 '<' 当作普通字符
+
+					auto prev = it;
+					utf8::next(it, end);
+					cur_string += std::string(prev, it);
+
+					continue;
+				}
+
+				bool is_closing = false;
+
+				if (it != end && *it == '/')  // 判断是否是结束标签 '</'
+				{
+					is_closing = true;
+					it++;
+				}
+
+				// 提取标签内容
+				std::string tag_name;
+				while (it != end && !std::isspace((uchar)*it) && 
+					*it != '=' && *it != '>')
+				{
+					tag_name += *it;
+					it++;
+				}
+
+				if (tag_name.empty())
+				{
+					it = tag_start;
+
+					auto prev = it;
+					utf8::next(it, end);
+					cur_string += std::string(prev, it);
+
+					continue;
+				}
+
+				while (it != end && std::isspace((uchar)*it))  // 跳过标签名后的空白符
+					it++;
+
+				// 提取属性值
+				bool has_attr = false;
+				std::string attr_value;
+				if (it != end && *it == '=')
+				{
+					has_attr = true;
+					it++;
+
+					while (it != end && *it != '>')
+					{
+						attr_value += *it;
+						it++;
+					}
+					attr_value = trim_spaces(attr_value);  // 删除属性值前后空格
+				}
+				else  // 若无属性值，继续跳过空白符直到遇到 '>'
+				{
+					while (it != end && std::isspace((uchar)*it))
+						it++;
+				}
+
+				// 判断标签是否完美闭合
+				if (it != end && *it == '>')
+				{
+					it++;
+
+					// 处理标签逻辑
+					if (!is_closing && tag_name == "noparse")  // 拦截特殊标签 noparse
+					{
+						is_noparse = true;
+						continue;
+					}
+
+					if (tag_name == "br")  // 处理单标签换行 <br>
+					{
+						result.push_back({ cur_string, cur_style });
+						cur_string.clear();
+
+						cur_style.offset_x = 0;
+						cur_style.offset_y += pt_to_px(sdf::game_font_size) + sdf::line_spacing;
+
+						continue;
+					}
+
+					if (is_closing)  // 该标签是闭合标签
+					{
+						if (!tag_stack.empty() && tag_stack.top() == tag_name && 
+							!state_stack.empty())
+						{
+							float width = string_width_nohash(cur_string);
+
+							result.push_back({ cur_string, cur_style });
+							cur_string.clear();
+
+							cur_style.offset_x += width;
+
+							cur_style = state_stack.top();
+							state_stack.pop();
+						}
+					}
+					else  // 该标签是开始标签
+					{
+						state_stack.push(cur_style);	// 将当前状态压栈备份
+						tag_stack.push(tag_name);		// 将当前标签名称压栈
+
+						result.push_back({ cur_string, cur_style });
+						cur_string.clear();
+
+						parse_tag(cur_style, tag_name, has_attr, attr_value);  // 应用标签
+					}
+				}
+				else  // 解析失败，按普通字符处理
+				{
+					it = tag_start;
+
+					auto prev = it;
+					utf8::next(it, end);
+					cur_string += std::string(prev, it);
+				}
+			}
+			else  // 普通字符直接读取
+			{
+				auto prev = it;
+				utf8::next(it, end);
+				cur_string += std::string(prev, it);
+			}
+		}
+
+		return result;
+	}
+	transpond_catch("parse_rich_text(std::string&)")
+}
+
+void sdf::draw_text_rich(double x, double y, std::string& str, double xscale, double yscale)
+{
+	try
+	{
+		rich_string::style cur_style;
+
+		std::vector<rich_string> richs = parse_rich_text(str);
+		for (auto& r : richs)
+		{
+			r.str_style.apply();
+			sdf::draw_text_transformed(x + r.str_style.offset_x * xscale, 
+				y + r.str_style.offset_y * yscale, r.str, xscale, yscale, 0);
+		}
+
+		cur_style.apply();
+	}
+	transpond_catch("sdf::draw_text_rich(double, double, std::string&, double, double)")
+}
+
 // ============================================================================
 // Export Functions
 // ============================================================================
@@ -850,6 +1333,13 @@ exp_real sdf_draw_set_font_thickness(gm_real thickness)
 	return gtrue;
 }
 exp_real sdf_draw_get_font_thickness() { return sdf::font_thickness; }
+
+exp_real sdf_draw_set_text_gap(gm_real gap)
+{
+	sdf::font_gap = (float)gap;
+	return gtrue;
+}
+exp_real sdf_draw_get_text_gap() { return sdf::font_gap; }
 
 exp_real sdf_set_font_offset(gm_real id, gm_real xoffset, gm_real yoffset)
 {
@@ -1069,7 +1559,7 @@ exp_real sdf_draw_text_transformed_color(gm_real x, gm_real y, gm_string str)
 {
 	try
 	{
-		gm_real args[9]{};
+		gm_real args[8]{};
 		if (parse_args(args) < 8)
 			return gfalse;
 
@@ -1094,7 +1584,7 @@ exp_real sdf_draw_text_ext_transformed_color(gm_real x, gm_real y, gm_string str
 {
 	try
 	{
-		gm_real args[10]{};
+		gm_real args[9]{};
 		if (parse_args(args) < 9)
 			return gfalse;
 
@@ -1114,4 +1604,22 @@ exp_real sdf_draw_text_ext_transformed_color(gm_real x, gm_real y, gm_string str
 		return gtrue;
 	}
 	simple_catch("sdf_draw_text_ext_transformed_color", gfalse)
+}
+
+exp_real sdf_draw_text_rich(gm_real x, gm_real y, gm_string str)
+{
+	try
+	{
+		gm_real args[2]{};
+		if (parse_args(args) < 2)
+			return gfalse;
+
+		gm_real xscale = args[0];
+		gm_real yscale = args[1];
+
+		std::string text(str);
+		sdf::draw_text_rich(x, y, text, xscale, yscale);
+		return gtrue;
+	}
+	simple_catch("sdf_draw_text_rich", gfalse)
 }

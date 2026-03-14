@@ -410,6 +410,9 @@
     <None Include="cpp.hint" />
     <None Include="README.md" />
   </ItemGroup>
+  <ItemGroup>
+    <Text Include="RechText.txt" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
