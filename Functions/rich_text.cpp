@@ -286,26 +286,6 @@ static void parse_tag(rich_char::style& cur_style, std::string& tag_name,
 		{
 			cur_style.nobr = true;
 		}
-		else if (tag_name == "align")  // 文本对齐
-		{
-			if (has_attr)
-			{
-				auto value = parse_attr<std::string>(attr_value);
-				if (value != std::nullopt)
-				{
-					if (*value == "left")
-						cur_style.halign = text_halign::default_value;
-					else if (*value == "center" || *value == "middle")
-						cur_style.halign = text_halign::middle;
-					else if (*value == "right")
-						cur_style.halign = text_halign::right;
-					else if (*value == "justified")
-						cur_style.halign = text_halign::justified;
-					else if (*value == "flush")
-						cur_style.halign = text_halign::flush;
-				}
-			}
-		}
 		else if (tag_name == "font")  // 字体
 		{
 			if (has_attr)
@@ -349,6 +329,8 @@ static void parse_tag(rich_char::style& cur_style, std::string& tag_name,
 				if (value != std::nullopt)
 					cur_style.advance_y = value.value();
 			}
+			else
+				cur_style.advance_y = 0;
 		}
 	}
 	transpond_catch("parse_tag(rich_string::style&, std::string&, bool, std::string&)")
@@ -519,6 +501,29 @@ static std::vector<rich_char> parse_rich_text(std::string& str)
 						push_char('\0');
 						continue;
 					}
+					else if (tag_name == "align")  // 文本对齐
+					{
+						if (has_attr)
+						{
+							auto value = parse_attr<std::string>(attr_value);
+							if (value != std::nullopt)
+							{
+								if (*value == "left")
+									cur_style.halign = text_halign::default_value;
+								else if (*value == "center" || *value == "middle")
+									cur_style.halign = text_halign::middle;
+								else if (*value == "right")
+									cur_style.halign = text_halign::right;
+								else if (*value == "justified")
+									cur_style.halign = text_halign::justified;
+								else if (*value == "flush")
+									cur_style.halign = text_halign::flush;
+							}
+						}
+
+						push_char('\0');
+						continue;
+					}
 
 					// 闭合标签
 					if (is_closing)  // 该标签是闭合标签
@@ -565,7 +570,8 @@ struct composed_rich_string
 	{
 		std::vector<rich_char> chars;
 		float width = 0;
-		float max_ascender = 0;   // 该行最大的升部（用于基线对齐）
+		float max_ascender = 0;   // 该行最大的升部（基线上方高度）
+		float max_descender = 0;  // 该行最大的降部（基线下方高度）
 		float line_height = 0;    // 该行实际占用的垂直高度
 		float x = 0;
 	};
@@ -587,7 +593,12 @@ static composed_rich_string composing_rich_string(const std::vector<rich_char>& 
 	auto commit_line = [&](bool is_last_paragraph_line)
 	{
 		if (current_line.chars.empty())
+		{
+			total_height += current_line.line_height + sdf::line_spacing;
+			result.lines.push_back(std::move(current_line));
+			current_line = composed_rich_string::line();
 			return;
+		}
 
 		auto& first_style = current_line.chars.front().char_style;
 		float l_width = first_style.line_width;
@@ -662,7 +673,14 @@ static composed_rich_string composing_rich_string(const std::vector<rich_char>& 
 				++i;
 
 			if (current_line.line_height == 0)
-				current_line.line_height = pt_to_px(rc.char_style.size);
+			{
+				float font_size_px = pt_to_px(rc.char_style.size);
+				current_line.line_height = font_size_px;
+
+				// 为空行赋予标准的升部和降部，防止基线塌陷导致连续换行重叠
+				current_line.max_ascender = current_sdf_glyphs->max_glyph_height * font_size_px;
+				current_line.max_descender = font_size_px - current_line.max_ascender;
+			}
 
 			commit_line(true); // 明确是段落末尾行
 			last_safe_break = -1;
@@ -744,6 +762,32 @@ static composed_rich_string composing_rich_string(const std::vector<rich_char>& 
 				// 计算继承字符带来的新宽度
 				current_line.width = 0;
 				current_line.max_ascender = 0;
+				current_line.max_descender = 0;
+				current_line.line_height = 0;
+
+				for (auto& c : current_line.chars)
+				{
+					sdf::glyphs* cg = current_sdf_glyphs;
+					if (c.char_style.font_id != 0) {
+						auto fit = game_sdf_glyphs.find(c.char_style.font_id);
+						if (fit != game_sdf_glyphs.end()) cg = fit->second.get();
+					}
+					float f_size = pt_to_px(c.char_style.size);
+					current_line.width += (cg->glaph_map[c.unicode].advance +
+						c.char_style.advance_x + c.char_style.gap) * f_size;
+
+					// 核心修复：yoffset 向上偏移增加升部，向下偏移增加降部
+					float a = cg->max_glyph_height * f_size - c.char_style.advance_y;
+					float d = f_size - cg->max_glyph_height * f_size + c.char_style.advance_y;
+
+					if (a > current_line.max_ascender) current_line.max_ascender = a;
+					if (d > current_line.max_descender) current_line.max_descender = d;
+
+					current_line.line_height = current_line.max_ascender + current_line.max_descender;
+				}
+
+				/*current_line.width = 0;
+				current_line.max_ascender = 0;
 				current_line.line_height = 0;
 
 				for (auto& c : current_line.chars)
@@ -758,7 +802,7 @@ static composed_rich_string composing_rich_string(const std::vector<rich_char>& 
 
 					if (pt_to_px(c.char_style.size) > current_line.line_height)
 						current_line.line_height = pt_to_px(c.char_style.size);
-				}
+				}*/
 			}
 
 			// 标记安全换行点 (空格，且不被 <nobr> 包含)
@@ -771,15 +815,30 @@ static composed_rich_string composing_rich_string(const std::vector<rich_char>& 
 			current_line.chars.back().unicode = glyph_it->first;
 			current_line.width += char_w;
 
+			// yoffset 会动态改变文字向上或向下的升部与降部边界
+			float ascender = target_glyphs->max_glyph_height * font_size_px - 
+				rc.char_style.advance_y;
+			float descender = font_size_px - target_glyphs->max_glyph_height * 
+				font_size_px + rc.char_style.advance_y;
+
+			if (ascender > current_line.max_ascender)
+				current_line.max_ascender = ascender;
+
+			if (descender > current_line.max_descender)
+				current_line.max_descender = descender;
+
+			current_line.line_height = current_line.max_ascender + current_line.max_descender;
+			/*
 			// yoffset 会动态改变文字向上或向下的升部
 			float ascender = target_glyphs->max_glyph_height * font_size_px + 
-				rc.char_style.offset_y;
+				rc.char_style.advance_y;
 
 			if (ascender > current_line.max_ascender)
 				current_line.max_ascender = ascender;
 
 			if (font_size_px > current_line.line_height)
 				current_line.line_height = font_size_px;
+			*/
 		}
 	}
 
@@ -791,9 +850,6 @@ static composed_rich_string composing_rich_string(const std::vector<rich_char>& 
 	return result;
 }
 
-// ----------------------------------------------------------------------------
-// 富文本渲染引擎
-// ----------------------------------------------------------------------------
 static void inner_draw_text_rich(composed_rich_string& str, float draw_x, float draw_y, 
 	float xscale, float yscale)
 {
@@ -810,7 +866,7 @@ static void inner_draw_text_rich(composed_rich_string& str, float draw_x, float 
 			atlas::start_draw(glyphs.texture, D3DFMT_A8);
 		}
 
-		// 1. 计算全局偏移 (受 fa_left, fa_top 等影响)
+		// 计算全局偏移
 		float offset_x = glyphs.xoffset * pt_to_px(sdf::game_font_size) * xscale;
 		float offset_y = glyphs.yoffset * pt_to_px(sdf::game_font_size) * yscale;
 
@@ -832,12 +888,12 @@ static void inner_draw_text_rich(composed_rich_string& str, float draw_x, float 
 		float active_thickness = base_thickness;
 		float active_sharpness = base_sharpness;
 
-		// 2. 迭代绘制每一行
+		// 迭代绘制每一行
 		for (const auto& line : str.lines)
 		{
 			float cursor_x = offset_x + line.x * xscale;
 
-			// 核心：基于该行最大的升部确定物理基线位置
+			// 基于该行最大的升部确定物理基线位置
 			float baseline_y = cursor_y + line.max_ascender * yscale;
 
 			for (const auto& rc : line.chars)
@@ -850,30 +906,30 @@ static void inner_draw_text_rich(composed_rich_string& str, float draw_x, float 
 						target_glyphs = fit->second.get();
 				}
 
-				// --- 批次打断逻辑 ---
 				// 由于粗细度和锐度是通过 Shader 常量控制的，如果遇到不同配置的字符，
 				// 我们必须先渲染之前的顶点，更新常量，再开启新的批次。
 				if (std::abs(rc.char_style.thickness - active_thickness) > 0.001f ||
 					std::abs(rc.char_style.sharpness - active_sharpness) > 0.001f ||
 					current_texture.texture != target_glyphs->texture)
 				{
-					atlas::end_draw(); // 提交当前批次
+					atlas::end_draw();
 
-					// 更新全局常量供下次提交使用
 					sdf::font_thickness = rc.char_style.thickness;
 					sdf::font_sharpness = rc.char_style.sharpness;
 					active_thickness = rc.char_style.thickness;
 					active_sharpness = rc.char_style.sharpness;
 
-					atlas::start_draw(target_glyphs->texture, D3DFMT_A8); // 开启新批次
+					atlas::start_draw(target_glyphs->texture, D3DFMT_A8);
 				}
 
-				// 处理缓冲区溢出
 				if (vbuff_c + 6 >= vb_count)
 				{
 					atlas::end_draw();
 					atlas::start_draw(target_glyphs->texture, D3DFMT_A8);
 				}
+
+				if (rc.unicode == 0)
+					continue;
 
 				auto glyph_it = target_glyphs->glaph_map.find(rc.unicode);
 				sdf::glyphs::glyph& glyph = glyph_it->second;
@@ -886,7 +942,7 @@ static void inner_draw_text_rich(composed_rich_string& str, float draw_x, float 
 				float u1 = glyph.atlas_bound.right / (float)target_glyphs->width;
 				float v1 = glyph.atlas_bound.bottom / (float)target_glyphs->height;
 
-				float draw_baseline_y = baseline_y - rc.char_style.advance_y * yscale;
+				float draw_baseline_y = baseline_y + rc.char_style.advance_y * yscale;
 
 				// 局部包围盒 (基线对齐)
 				float left = glyph.plane_bound.left * font_size_px * xscale + cursor_x - 0.5f;
@@ -917,7 +973,6 @@ static void inner_draw_text_rich(composed_rich_string& str, float draw_x, float 
 				vertex::push_vertex_2d(x_rb, y_rb, u1, v1, col);
 				vertex::push_vertex_2d(x_lb, y_lb, u0, v1, col);
 
-
 				// 推进 X 光标
 				cursor_x += (glyph.advance + rc.char_style.advance_x + rc.char_style.gap) * 
 					xscale * font_size_px;
@@ -931,7 +986,7 @@ static void inner_draw_text_rich(composed_rich_string& str, float draw_x, float 
 			cursor_y += (line.line_height + linespac) * yscale;
 		}
 
-		// 3. 恢复全局着色器状态
+		// 恢复全局着色器状态
 		if (active_thickness != base_thickness || active_sharpness != base_sharpness)
 		{
 			atlas::end_draw();
