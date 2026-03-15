@@ -100,6 +100,9 @@ sdf::glyphs::glyphs(std::string& image_path, std::string& csv_path)
 
 			glaph_map[unicode] = std::move(charset);
 		}
+
+		// Add char '\0'
+		glaph_map[0] = glyphs::glyph();
 	}
 	transpond_catch("sdf::glyphs::glyphs(std::string&, std::string&)")
 }
