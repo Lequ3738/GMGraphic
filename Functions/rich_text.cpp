@@ -238,32 +238,28 @@ static void parse_tag(rich_char::style& cur_style, std::string& tag_name,
 {
 	try
 	{
+		auto get_float = [&]() {
+			return has_attr ? parse_attr<float>(attr_value) : std::nullopt;
+		};
+
 		if (tag_name == "b")  // 加粗文字
-		{
-			if (has_attr)
-			{
-				auto value = parse_attr<float>(attr_value);
-				if (value != std::nullopt)
-					cur_style.thickness = value.value();
-				else
-					cur_style.thickness = sdf::font_thickness + 70.0f;
-			}
-			else
-				cur_style.thickness = sdf::font_thickness + 70.0f;
-		}
+			cur_style.thickness = get_float().value_or(sdf::font_thickness + 70.0f);
 		else if (tag_name == "i")  // 斜体
-		{
-			if (has_attr)
-			{
-				auto value = parse_attr<float>(attr_value);
-				if (value != std::nullopt)
-					cur_style.italic = value.value();
-				else
-					cur_style.italic = 0.3f;
-			}
-			else
-				cur_style.italic = 0.3f;
-		}
+			cur_style.italic = get_float().value_or(0.3f);
+		else if (tag_name == "cgap")  // 设置文字间隔
+			cur_style.gap = get_float().value_or(cur_style.gap);
+		else if (tag_name == "nobr")  // 使被该标签包裹的文本避免因换行而被分割开来
+			cur_style.nobr = true;
+		else if (tag_name == "indent")
+			cur_style.indent = get_float().value_or(cur_style.indent);
+		else if (tag_name == "lowercase")
+			cur_style.casing = text_casing::lower;
+		else if (tag_name == "uppercase")
+			cur_style.casing = text_casing::upper;
+		else if (tag_name == "size")
+			cur_style.size = get_float().value_or(cur_style.size);
+		else if (tag_name == "yoffset")
+			cur_style.advance_y = get_float().value_or(0.0f);
 		else if (tag_name == "color")  // 设置字体颜色 / 颜色+Alpha
 		{
 			if (has_attr)
@@ -273,19 +269,6 @@ static void parse_tag(rich_char::style& cur_style, std::string& tag_name,
 					cur_style.color = value.value();
 			}
 		}
-		else if (tag_name == "cgap")  // 设置文字间隔
-		{
-			if (has_attr)
-			{
-				auto value = parse_attr<float>(attr_value);
-				if (value != std::nullopt)
-					cur_style.gap = value.value();
-			}
-		}
-		else if (tag_name == "nobr")  // 使被该标签包裹的文本避免因换行而被分割开来
-		{
-			cur_style.nobr = true;
-		} 
 		else if (tag_name == "font")  // 字体
 		{
 			if (has_attr)
@@ -294,43 +277,6 @@ static void parse_tag(rich_char::style& cur_style, std::string& tag_name,
 				if (value != std::nullopt)
 					cur_style.font_id = value.value();
 			}
-		}
-		else if (tag_name == "indent")
-		{
-			if (has_attr)
-			{
-				auto value = parse_attr<float>(attr_value);
-				if (value != std::nullopt)
-					cur_style.indent = value.value();
-			}
-		}
-		else if (tag_name == "lowercase")
-		{
-			cur_style.casing = text_casing::lower;
-		}
-		else if (tag_name == "uppercase")
-		{
-			cur_style.casing = text_casing::upper;
-		}
-		else if (tag_name == "size")
-		{
-			if (has_attr)
-			{
-				auto value = parse_attr<float>(attr_value);
-				if (value != std::nullopt)
-					cur_style.size = value.value();
-			}
-		}
-		else if (tag_name == "yoffset")
-		{
-			if (has_attr)
-			{
-				auto value = parse_attr<float>(attr_value);
-				if (value != std::nullopt)
-					cur_style.advance_y = value.value();
-			}
-			else
-				cur_style.advance_y = 0;
 		}
 	}
 	transpond_catch("parse_tag(rich_string::style&, std::string&, bool, std::string&)")
@@ -367,16 +313,14 @@ static std::vector<rich_char> parse_rich_text(std::string& str)
 			if (is_noparse)  // 不解析标签的状态
 			{
 				// 严格向前看是否匹配 "</noparse>"
-				if (std::distance(it, end) >= 10 && std::string(it, it + 10) == "</noparse>")
+				if (std::distance(it, end) >= 10 && std::equal(it, it + 10, "</noparse>"))
 				{
 					is_noparse = false;
 					it += 10;
 					continue;
 				}
 
-				uint unicode = utf8::next(it, end);
-				push_char(unicode);
-
+				push_char(utf8::next(it, end));
 				continue;
 			}
 
@@ -389,10 +333,7 @@ static std::vector<rich_char> parse_rich_text(std::string& str)
 				if (it == end || std::isspace(*it))
 				{
 					it = tag_start;  // 解析失败，把 '<' 当作普通字符
-
-					uint unicode = utf8::next(it, end);
-					push_char(unicode);
-
+					push_char(utf8::next(it, end));
 					continue;
 				}
 
@@ -416,10 +357,7 @@ static std::vector<rich_char> parse_rich_text(std::string& str)
 				if (tag_name.empty())
 				{
 					it = tag_start;
-
-					uint unicode = utf8::next(it, end);
-					push_char(unicode);
-
+					push_char(utf8::next(it, end));
 					continue;
 				}
 
@@ -550,15 +488,11 @@ static std::vector<rich_char> parse_rich_text(std::string& str)
 				else  // 解析失败，按普通字符处理
 				{
 					it = tag_start;
-					uint unicode = utf8::next(it, end);
-					push_char(unicode);
+					push_char(utf8::next(it, end));
 				}
 			}
 			else  // 普通字符直接读取
-			{
-				uint unicode = utf8::next(it, end);
-				push_char(unicode);
-			}
+				push_char(utf8::next(it, end));
 		}
 
 		return result;
@@ -587,7 +521,8 @@ struct composed_rich_string
 static composed_rich_string composing_rich_string(const std::vector<rich_char>& rich_chars)
 {
 	composed_rich_string result;
-	if (current_sdf_glyphs == nullptr) return result;
+	if (current_sdf_glyphs == nullptr)
+		return result;
 
 	composed_rich_string::line current_line;
 	float max_width = 0, total_height = 0;
@@ -664,6 +599,31 @@ static composed_rich_string composing_rich_string(const std::vector<rich_char>& 
 		current_line = composed_rich_string::line();
 	};
 
+	auto recalc_line_metrics = [&]()
+	{
+		current_line.width = current_line.max_ascender = current_line.max_descender = 0;
+		for (auto& c : current_line.chars)
+		{
+			sdf::glyphs* cg = current_sdf_glyphs;
+			if (c.char_style.font_id != 0)
+			{
+				auto fit = game_sdf_glyphs.find(c.char_style.font_id);
+				if (fit != game_sdf_glyphs.end())
+					cg = fit->second.get();
+			}
+
+			float f_size = pt_to_px(c.char_style.size);
+			current_line.width += (cg->glaph_map[c.unicode].advance + c.char_style.advance_x + 
+				c.char_style.gap) * f_size;
+
+			float a = cg->max_glyph_height * f_size - c.char_style.advance_y;
+			float d = f_size - cg->max_glyph_height * f_size + c.char_style.advance_y;
+			current_line.max_ascender = std::max(current_line.max_ascender, a);
+			current_line.max_descender = std::max(current_line.max_descender, d);
+		}
+		current_line.line_height = current_line.max_ascender + current_line.max_descender;
+	};
+	
 	int last_safe_break = -1; // 上一个安全换行点
 
 	for (uint i = 0; i < rich_chars.size(); ++i)
@@ -733,24 +693,7 @@ static composed_rich_string composing_rich_string(const std::vector<rich_char>& 
 					current_line.chars.erase(current_line.chars.begin() + last_safe_break, 
 						current_line.chars.end());
 
-					// 重新计算行宽与行高
-					current_line.width = 0;
-					current_line.max_ascender = 0;
-					current_line.line_height = 0;
-
-					for (auto& c : current_line.chars)
-					{
-						current_line.width += (target_glyphs->glaph_map[c.unicode].advance + 
-							c.char_style.advance_x + c.char_style.gap) * pt_to_px(c.char_style.size);
-						float a = target_glyphs->max_glyph_height * pt_to_px(c.char_style.size) + 
-							c.char_style.advance_y;
-
-						if (a > current_line.max_ascender)
-							current_line.max_ascender = a;
-
-						if (pt_to_px(c.char_style.size) > current_line.line_height)
-							current_line.line_height = pt_to_px(c.char_style.size);
-					}
+					recalc_line_metrics();
 
 					commit_line(false); // 非段落末尾
 					current_line.chars = carry; // 继承
@@ -760,34 +703,9 @@ static composed_rich_string composing_rich_string(const std::vector<rich_char>& 
 					// 找不到安全点，强制直接折行
 					commit_line(false);
 				}
+
 				last_safe_break = -1;
-
-				// 计算继承字符带来的新宽度
-				current_line.width = 0;
-				current_line.max_ascender = 0;
-				current_line.max_descender = 0;
-				current_line.line_height = 0;
-
-				for (auto& c : current_line.chars)
-				{
-					sdf::glyphs* cg = current_sdf_glyphs;
-					if (c.char_style.font_id != 0) {
-						auto fit = game_sdf_glyphs.find(c.char_style.font_id);
-						if (fit != game_sdf_glyphs.end()) cg = fit->second.get();
-					}
-					float f_size = pt_to_px(c.char_style.size);
-					current_line.width += (cg->glaph_map[c.unicode].advance +
-						c.char_style.advance_x + c.char_style.gap) * f_size;
-
-					// 核心修复：yoffset 向上偏移增加升部，向下偏移增加降部
-					float a = cg->max_glyph_height * f_size - c.char_style.advance_y;
-					float d = f_size - cg->max_glyph_height * f_size + c.char_style.advance_y;
-
-					if (a > current_line.max_ascender) current_line.max_ascender = a;
-					if (d > current_line.max_descender) current_line.max_descender = d;
-
-					current_line.line_height = current_line.max_ascender + current_line.max_descender;
-				}
+				recalc_line_metrics();
 			}
 
 			// 标记安全换行点 (空格，且不被 <nobr> 包含)
