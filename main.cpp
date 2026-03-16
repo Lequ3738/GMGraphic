@@ -84,11 +84,11 @@ void atlas::end_draw()
 				D3DCheck(device->GetPixelShader(&prev_pixel_shader), 3);
 				D3DCheck(device->SetPixelShader(sdf::shader), 4);
 
-				double deviation = std::abs(sdf::font_thickness - 0.5f);
-				double sharpness = sdf::font_sharpness * 0.007 *
-					sdf::game_font_size * (1.0 + deviation * 1.5);
+				double sharpness = sdf::font_sharpness * sdf::game_font_size * 0.005;
+				double thickness = std::clamp((-(sdf::font_thickness - 500.0f) + 
+					500.0f) / 1000.0f, 0.1f, 0.9f);
 
-				d3d_set_ps_const(0, sharpness, sdf::font_thickness, 0, 0);
+				d3d_set_ps_const(0, sharpness, thickness, 0, 0);
 			}
 			else
 			{

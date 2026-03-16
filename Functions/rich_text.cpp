@@ -246,10 +246,10 @@ static void parse_tag(rich_char::style& cur_style, std::string& tag_name,
 				if (value != std::nullopt)
 					cur_style.thickness = value.value();
 				else
-					cur_style.thickness = sdf::font_thickness - 0.05f;
+					cur_style.thickness = sdf::font_thickness + 70.0f;
 			}
 			else
-				cur_style.thickness = sdf::font_thickness - 0.05f;
+				cur_style.thickness = sdf::font_thickness + 70.0f;
 		}
 		else if (tag_name == "i")  // 斜体
 		{
@@ -285,7 +285,7 @@ static void parse_tag(rich_char::style& cur_style, std::string& tag_name,
 		else if (tag_name == "nobr")  // 使被该标签包裹的文本避免因换行而被分割开来
 		{
 			cur_style.nobr = true;
-		}
+		} 
 		else if (tag_name == "font")  // 字体
 		{
 			if (has_attr)
@@ -538,8 +538,11 @@ static std::vector<rich_char> parse_rich_text(std::string& str)
 					}
 					else  // 该标签是开始标签
 					{
-						state_stack.push(cur_style);	// 将当前状态压栈备份
-						tag_stack.push(tag_name);		// 将当前标签名称压栈
+						if (tag_stack.empty() || tag_stack.top() != tag_name)
+						{
+							state_stack.push(cur_style);	// 将当前状态压栈备份
+							tag_stack.push(tag_name);	// 将当前标签名称压栈
+						}
 
 						parse_tag(cur_style, tag_name, has_attr, attr_value);  // 应用标签
 					}
@@ -785,24 +788,6 @@ static composed_rich_string composing_rich_string(const std::vector<rich_char>& 
 
 					current_line.line_height = current_line.max_ascender + current_line.max_descender;
 				}
-
-				/*current_line.width = 0;
-				current_line.max_ascender = 0;
-				current_line.line_height = 0;
-
-				for (auto& c : current_line.chars)
-				{
-					current_line.width += (target_glyphs->glaph_map[c.unicode].advance + 
-						c.char_style.advance_x + c.char_style.gap) * pt_to_px(c.char_style.size);
-					float a = target_glyphs->max_glyph_height * pt_to_px(c.char_style.size) + 
-						c.char_style.advance_y;
-
-					if (a > current_line.max_ascender)
-						current_line.max_ascender = a;
-
-					if (pt_to_px(c.char_style.size) > current_line.line_height)
-						current_line.line_height = pt_to_px(c.char_style.size);
-				}*/
 			}
 
 			// 标记安全换行点 (空格，且不被 <nobr> 包含)
@@ -828,17 +813,6 @@ static composed_rich_string composing_rich_string(const std::vector<rich_char>& 
 				current_line.max_descender = descender;
 
 			current_line.line_height = current_line.max_ascender + current_line.max_descender;
-			/*
-			// yoffset 会动态改变文字向上或向下的升部
-			float ascender = target_glyphs->max_glyph_height * font_size_px + 
-				rc.char_style.advance_y;
-
-			if (ascender > current_line.max_ascender)
-				current_line.max_ascender = ascender;
-
-			if (font_size_px > current_line.line_height)
-				current_line.line_height = font_size_px;
-			*/
 		}
 	}
 

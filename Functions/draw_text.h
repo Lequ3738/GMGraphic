@@ -106,8 +106,8 @@ namespace sdf
 	extern bool use_shader;				// 是否使用着色器进行 SDF 字体的绘制。默认值为 true
 	extern dword shader;				// 当前使用的着色器。默认为 ps_sdf_comp
 
-	extern float font_sharpness;		// 字体的锐度。在 0 - 1 之间。默认值为 0.75
-	extern float font_thickness;		// 字体的粗细度。在 0 - 1 之间。默认值为 0.5
+	extern float font_sharpness;		// 字体的锐度。最好与字形纹理大小相同
+	extern float font_thickness;		// 字体的粗细度。在 100 - 900 之间。默认值为 500
 	extern float font_gap;				// 字与字之间的间隔
 
 	typedef std::unique_ptr<glyphs> glyphs_ptr;

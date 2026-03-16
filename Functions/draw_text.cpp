@@ -19,8 +19,8 @@ bool sdf::per_line_halign = false;
 bool sdf::use_shader = true;
 dword sdf::shader = NULL;
 
-float sdf::font_sharpness = 0.75f;		// 字体的锐度。在 0 - 1 之间
-float sdf::font_thickness = 0.5f;		// 字体的粗细度。在 0 - 1 之间
+float sdf::font_sharpness = 24.0f;		// 字体的锐度。最好与字体纹理中单个字体大小相同
+float sdf::font_thickness = 500.0f;		// 字体的粗细度。100~900之间
 float sdf::font_gap = 0.0f;
 
 sdf::glyphs* current_sdf_glyphs = nullptr;
