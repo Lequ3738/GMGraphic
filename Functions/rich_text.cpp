@@ -4,6 +4,7 @@
 #include "utf8.h"
 #include "parse_args.h"
 #include "string_make.h"
+#include "linebreak.h"
 #include "shader.h"
 #include "draw_text.h"
 
@@ -524,6 +525,16 @@ static composed_rich_string composing_rich_string(const std::vector<rich_char>& 
 	if (current_sdf_glyphs == nullptr)
 		return result;
 
+	// 获取整个富文本序列的安全换行点
+	size_t len = rich_chars.size();
+	std::vector<utf32_t> utf32_chars(len);
+	for (size_t i = 0; i < len; ++i)
+		utf32_chars[i] = (utf32_t)rich_chars[i].unicode;
+
+	std::vector<char> brks(len, 0);
+	if (len > 0)
+		set_linebreaks_utf32(utf32_chars.data(), len, nullptr, brks.data());
+
 	composed_rich_string::line current_line;
 	float max_width = 0, total_height = 0;
 
@@ -629,6 +640,7 @@ static composed_rich_string composing_rich_string(const std::vector<rich_char>& 
 	for (uint i = 0; i < rich_chars.size(); ++i)
 	{
 		const auto& rc = rich_chars[i];
+		char br = brks[i];
 
 		if (rc.unicode == '\r' || rc.unicode == '\n')
 		{
@@ -681,9 +693,12 @@ static composed_rich_string composing_rich_string(const std::vector<rich_char>& 
 				current_line.chars.front().char_style.indent;
 			float target_content_w = l_width > 0 ? (l_width - indent - padding * 2) : -1;
 
+			// 判断是否为空白字符（普通空格、制表符、全角空格）
+			bool is_space = (rc.unicode == ' ' || rc.unicode == '\t' || rc.unicode == 0x3000);
+
 			// 自动换行逻辑
 			if (target_content_w > 0 && current_line.width + char_w > target_content_w && 
-				!current_line.chars.empty())
+				!current_line.chars.empty() && !is_space)
 			{
 				if (last_safe_break != -1)
 				{
@@ -708,10 +723,10 @@ static composed_rich_string composing_rich_string(const std::vector<rich_char>& 
 				recalc_line_metrics();
 			}
 
-			// 标记安全换行点 (空格，且不被 <nobr> 包含)
-			if ((unicode == ' ' || unicode >= 0x4E00) && !rc.char_style.nobr)
+			// 标记安全换行点 (不被 <nobr> 包含)
+			if ((br == LINEBREAK_ALLOWBREAK || br == LINEBREAK_MUSTBREAK) && !rc.char_style.nobr)
 			{
-				last_safe_break = current_line.chars.size() + 1; // 包含当前空格截断
+				last_safe_break = current_line.chars.size(); // 截断位置设为当前字符之后
 			}
 
 			current_line.chars.push_back(rc);
