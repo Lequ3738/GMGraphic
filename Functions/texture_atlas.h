@@ -179,6 +179,7 @@ extern std::unordered_map<uint, texture_atlas::images::sub_image*> game_textures
 // ============================================================================
 // Export Functions
 // ============================================================================
+exp_real texture_atlas_auto_start();
 exp_real texture_atlas_auto_add_file(gm_string file);
 exp_real texture_atlas_auto_add_sprite(gm_real spr);
 exp_real texture_atlas_auto_add_background(gm_real back);

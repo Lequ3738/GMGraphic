@@ -635,6 +635,48 @@ exp_real texture_atlas_load(gm_string file_path)
 	simple_catch("texture_atlas_load", -1)
 }
 
+static std::unordered_map<uint, texture_atlas*> update_atlas_map;
+static bool use_update_atlas = false;
+
+exp_real texture_atlas_auto_start()
+{
+	use_update_atlas = true;
+	return gtrue;
+}
+
+#define ADD_EXISTING_ATLAS													\
+{																			\
+	if (atlas->read_only())													\
+		continue;															\
+																			\
+	int image_id = atlas->add_image(sprite);								\
+	if (image_id != -1)														\
+		return (gm_real)image_id;											\
+}
+
+#define ADD_ATLAS															\
+	if (!use_update_atlas)													\
+	{																		\
+		for (auto& [atlas_id, atlas] : game_texture_atlas)					\
+			ADD_EXISTING_ATLAS												\
+	}																		\
+	else																	\
+	{																		\
+		for (auto& [atlas_id, atlas] : update_atlas_map)					\
+			ADD_EXISTING_ATLAS												\
+	}
+
+#define ADD_NEW_ATLAS														\
+	uint id = texture_atlas_id_position++;									\
+																			\
+	game_texture_atlas[id] = std::make_unique<texture_atlas>(1024, id);		\
+	texture_atlas& atlas = *game_texture_atlas[id];							\
+																			\
+	if (use_update_atlas)													\
+		update_atlas_map[id] = &atlas;										\
+																			\
+	return static_cast<gm_real>(atlas.add_image(sprite));
+
 exp_real texture_atlas_auto_add_file(gm_string file)
 {
 	try
@@ -642,22 +684,8 @@ exp_real texture_atlas_auto_add_file(gm_string file)
 		std::string f(file);
 		gm::sprite sprite = texture_atlas::decode_image(f);
 
-		for (auto& [atlas_id, atlas] : game_texture_atlas)
-		{
-			if (atlas->read_only())
-				continue;
-
-			int image_id = atlas->add_image(sprite);
-			if (image_id != -1)
-				return (gm_real)image_id;
-		}
-
-		uint id = texture_atlas_id_position++;
-
-		game_texture_atlas[id] = std::make_unique<texture_atlas>(1024, id);
-		texture_atlas& atlas = *game_texture_atlas[id];
-
-		return static_cast<gm_real>(atlas.add_image(sprite));
+		ADD_ATLAS;
+		ADD_NEW_ATLAS;
 	}
 	simple_catch("texture_atlas_auto_add_file", -1)
 }
@@ -668,22 +696,8 @@ exp_real texture_atlas_auto_add_sprite(gm_real spr)
 	{
 		gm::sprite sprite = texture_atlas::decode_sprite((uint)spr);
 
-		for (auto& [atlas_id, atlas] : game_texture_atlas)
-		{
-			if (atlas->read_only())
-				continue;
-
-			int image_id = atlas->add_image(sprite);
-			if (image_id != -1)
-				return (gm_real)image_id;
-		}
-
-		uint id = texture_atlas_id_position++;
-
-		game_texture_atlas[id] = std::make_unique<texture_atlas>(1024, id);
-		texture_atlas& atlas = *game_texture_atlas[id];
-
-		return static_cast<gm_real>(atlas.add_image(sprite));
+		ADD_ATLAS;
+		ADD_NEW_ATLAS;
 	}
 	simple_catch("texture_atlas_auto_add_sprite", -1)
 }
@@ -694,22 +708,8 @@ exp_real texture_atlas_auto_add_background(gm_real back)
 	{
 		gm::sprite sprite = texture_atlas::decode_background((uint)back);
 
-		for (auto& [atlas_id, atlas] : game_texture_atlas)
-		{
-			if (atlas->read_only())
-				continue;
-
-			int image_id = atlas->add_image(sprite);
-			if (image_id != -1)
-				return (gm_real)image_id;
-		}
-
-		uint id = texture_atlas_id_position++;
-
-		game_texture_atlas[id] = std::make_unique<texture_atlas>(1024, id);
-		texture_atlas& atlas = *game_texture_atlas[id];
-
-		return static_cast<gm_real>(atlas.add_image(sprite));
+		ADD_ATLAS;
+		ADD_NEW_ATLAS;
 	}
 	simple_catch("texture_atlas_auto_add_sprite", -1)
 }
@@ -718,16 +718,44 @@ exp_real texture_atlas_auto_finish(gm_real dont_twice)
 {
 	try
 	{
-		for (auto& [atlas_id, atlas] : game_texture_atlas)
+		if (!use_update_atlas)
 		{
-			if ((atlas->texture == nullptr && dont_twice) || !dont_twice)
-				atlas->burn();
+			for (auto& [atlas_id, atlas] : game_texture_atlas)
+			{
+				if ((atlas->texture == nullptr && dont_twice) || !dont_twice)
+					atlas->burn();
+			}
+
+			return -2;
+		}
+		else
+		{
+			int result = -2;
+			if (!update_atlas_map.empty())
+				result = gm::ds_list_create();
+
+			for (auto& [atlas_id, atlas] : update_atlas_map)
+			{
+				if ((atlas->texture == nullptr && dont_twice) || !dont_twice)
+					atlas->burn();
+
+				gm::ds_list_add(result, (int)atlas_id);
+			}
+
+			update_atlas_map.clear();
+			use_update_atlas = false;
+
+			return result;
 		}
 
 		return gtrue;
 	}
-	simple_catch("texture_atlas_auto_finish", gfalse)
+	simple_catch("texture_atlas_auto_finish", -1)
 }
+
+#undef ADD_NEW_ATLAS
+#undef ADD_ATLAS
+#undef ADD_EXISTING_ATLAS
 
 #pragma endregion
 
