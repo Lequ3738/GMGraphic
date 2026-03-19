@@ -51,7 +51,10 @@ texture_atlas::~texture_atlas()
 		game_images.erase(images->image_id);
 
 		for (auto& sub_image : images->frames)
-			game_textures.erase(sub_image->texture_id);
+		{
+			if (sub_image != nullptr)
+				game_textures.erase(sub_image->texture_id);
+		}
 	}
 
 	if (texture == nullptr)
@@ -401,17 +404,32 @@ void texture_atlas::save(path& file_path) const
 
 			for (auto& psub_image : images.frames)
 			{
-				auto& sub_image = *psub_image;
+				if (psub_image == nullptr)
+				{
+					file_write(ofs, 0U);
+					file_write(ofs, 0U);
+					file_write(ofs, 0U);
+					file_write(ofs, 0U);
 
-				file_write(ofs, sub_image.texture_left);
-				file_write(ofs, sub_image.texture_top);
-				file_write(ofs, sub_image.texture_width);
-				file_write(ofs, sub_image.texture_height);
+					file_write(ofs, 0);
+					file_write(ofs, 0);
 
-				file_write(ofs, sub_image.orig_x);
-				file_write(ofs, sub_image.orig_y);
+					file_write(ofs, false);
+				}
+				else
+				{
+					auto& sub_image = *psub_image;
 
-				file_write(ofs, sub_image.is_rotated);
+					file_write(ofs, sub_image.texture_left);
+					file_write(ofs, sub_image.texture_top);
+					file_write(ofs, sub_image.texture_width);
+					file_write(ofs, sub_image.texture_height);
+
+					file_write(ofs, sub_image.orig_x);
+					file_write(ofs, sub_image.orig_y);
+
+					file_write(ofs, sub_image.is_rotated);
+				}
 			}
 		}
 	}
@@ -475,11 +493,23 @@ std::vector<texture_atlas::images*> texture_atlas::load(path& file_path)
 
 				file_read(ifs, is_rotated);
 
-				images_list[i]->frames[j] = std::make_unique<images::sub_image>(
-					texture_left, texture_top, texture_width, texture_height, 
-					orig_x, orig_y, is_rotated, atlas_texture_id, image_id);
+				bool is_blank = (texture_left == 0U && texture_top == 0U && texture_width == 0U
+					&& texture_height == 0U && orig_x == 0 && orig_y == 0 && !is_rotated);
 
-				game_textures[atlas_texture_id] = images_list[i]->frames[j].get();
+				if (!is_blank)
+				{
+					images_list[i]->frames[j] = std::make_unique<images::sub_image>(
+						texture_left, texture_top, texture_width, texture_height,
+						orig_x, orig_y, is_rotated, atlas_texture_id, image_id);
+
+					game_textures[atlas_texture_id] = images_list[i]->frames[j].get();
+				}
+				else
+				{
+					images_list[i]->frames[j] = nullptr;
+					game_textures[atlas_texture_id] = nullptr;
+				}
+
 				atlas_texture_id++;
 			}
 		}
