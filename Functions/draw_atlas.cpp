@@ -300,6 +300,26 @@ void atlas::force_draw_to_screen()
 	transpond_catch("atlas::force_draw_to_screen()")
 }
 
+// ============================================================================
+// Export Functions
+// ============================================================================
+
+exp_real atlas_sprite_exists(gm_real id)
+{
+	if (id < IMAGE_START_POSITION)
+		return (gm_real)gm::sprite_exists((int)id);
+
+	return (gm_real)game_images.count((uint)id);
+}
+
+exp_real atlas_background_exists(gm_real id)
+{
+	if (id < IMAGE_START_POSITION)
+		return (gm_real)gm::background_exists((int)id);
+
+	return (gm_real)game_images.count((uint)id);
+}
+
 exp_real atlas_draw_sprite(gm_real id, gm_real subimg, gm_real x, gm_real y)
 {
 	try

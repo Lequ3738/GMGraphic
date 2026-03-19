@@ -54,6 +54,13 @@ namespace atlas
 	void force_draw_to_screen();
 }
 
+// ============================================================================
+// Export Functions
+// ============================================================================
+
+exp_real atlas_sprite_exists(gm_real id);
+exp_real atlas_background_exists(gm_real id);
+
 exp_real atlas_draw_sprite(gm_real id, gm_real subimg, gm_real x, gm_real y);
 exp_real atlas_draw_sprite_stretched(gm_real id, gm_real subimg, gm_real x, gm_real y,
 	gm_real width, gm_real height);
