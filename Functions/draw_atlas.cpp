@@ -143,6 +143,8 @@ static void draw_image(atlas::draw_info& info)
 	texture_atlas* atlas_ptr = nullptr;												\
 	texture_atlas::images::sub_image* sub_image_ptr = nullptr;						\
 																					\
+	subimg = subimg % images_ptr->frames.size();									\
+																					\
 	if (images_ptr != nullptr) {													\
 		atlas_ptr = game_texture_atlas.at(images_ptr->atlas_id).get();				\
 		sub_image_ptr = images_ptr->frames.at(subimg).get();						\
@@ -160,7 +162,7 @@ void atlas::draw_sprite(uint id, uint subimg, double x, double y)
 {
 	try
 	{
-		GET_ATLAS
+		GET_ATLAS;
 
 		draw_info info = {
 			.atlas = *atlas_ptr, .images = *images_ptr, .sub_image = *sub_image_ptr,
@@ -176,7 +178,7 @@ void atlas::draw_sprite_stretched(uint id, uint subimg, double x, double y, doub
 {
 	try
 	{
-		GET_ATLAS
+		GET_ATLAS;
 
 		draw_info info = {
 			.atlas = *atlas_ptr, .images = *images_ptr, .sub_image = *sub_image_ptr,
@@ -197,7 +199,7 @@ void atlas::draw_sprite_part(uint id, uint subimg, int left, int top, int width,
 {
 	try
 	{
-		GET_ATLAS
+		GET_ATLAS;
 
 		draw_info info = {
 			.atlas = *atlas_ptr, .images = *images_ptr, .sub_image = *sub_image_ptr,
@@ -214,7 +216,7 @@ void atlas::draw_sprite_ext(uint id, uint subimg, double x, double y, double xsc
 {
 	try
 	{
-		GET_ATLAS
+		GET_ATLAS;
 
 		draw_info info = {
 			.atlas = *atlas_ptr, .images = *images_ptr, .sub_image = *sub_image_ptr,
@@ -232,7 +234,7 @@ void atlas::draw_sprite_stretched_ext(uint id, uint subimg, double x, double y, 
 {
 	try
 	{
-		GET_ATLAS
+		GET_ATLAS;
 
 		draw_info info = {
 			.atlas = *atlas_ptr, .images = *images_ptr, .sub_image = *sub_image_ptr,
@@ -254,7 +256,7 @@ void atlas::draw_sprite_part_ext(uint id, uint subimg, int left, int top, int wi
 {
 	try
 	{
-		GET_ATLAS
+		GET_ATLAS;
 
 		draw_info info = {
 			.atlas = *atlas_ptr, .images = *images_ptr, .sub_image = *sub_image_ptr,
@@ -274,7 +276,7 @@ void atlas::draw_sprite_general(uint id, uint subimg, int left, int top, int wid
 {
 	try
 	{
-		GET_ATLAS
+		GET_ATLAS;
 
 		draw_info info = {
 			.atlas = *atlas_ptr, .images = *images_ptr, .sub_image = *sub_image_ptr,

@@ -19,6 +19,8 @@ texture_atlas::texture_atlas(uint size, uint id)
 	{
 		switch (size)
 		{
+			case 64:
+			case 128:
 			case 256:
 			case 512:
 			case 1024:
@@ -33,7 +35,7 @@ texture_atlas::texture_atlas(uint size, uint id)
 
 			default:
 				throw std::runtime_error("Invalid texture atlas size. "
-					"Supported sizes are 256, 512, 1024, and 2048.");
+					"Supported sizes are 64, 128, 256, 512, 1024, and 2048.");
 		}
 
 #ifdef _DEBUG
@@ -777,8 +779,6 @@ exp_real texture_atlas_auto_finish(gm_real dont_twice)
 
 			return result;
 		}
-
-		return gtrue;
 	}
 	simple_catch("texture_atlas_auto_finish", -1)
 }

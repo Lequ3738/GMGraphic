@@ -171,8 +171,8 @@ gm::sprite gm::decode_gmspr(const std::string& file)
 				gm::image_data image{ std::move(images[i]), width, height };
 				cropped_rects[i] = crop_blank_area(image);
 
-				if (cropped_rects[i].right <= cropped_rects[i].left ||
-					cropped_rects[i].bottom <= cropped_rects[i].top)
+				if (cropped_rects[i].right < cropped_rects[i].left ||
+					cropped_rects[i].bottom < cropped_rects[i].top)
 				{
 					cropped_rects[i] = { 0, 0, 0, 0 };
 				}
@@ -241,8 +241,8 @@ gm::sprite gm::decode_png(const std::string& file)
 			gm::image_data data{ std::move(image), width, height };
 			cropped_rects[0] = crop_blank_area(data);
 
-			if (cropped_rects[0].right <= cropped_rects[0].left ||
-				cropped_rects[0].bottom <= cropped_rects[0].top)
+			if (cropped_rects[0].right < cropped_rects[0].left ||
+				cropped_rects[0].bottom < cropped_rects[0].top)
 			{
 				cropped_rects[0] = { 0, 0, 0, 0 };
 			}
@@ -326,8 +326,8 @@ gm::sprite gm::get_sprite_data(uint id)
 			{
 				cropped_rects[i] = crop_blank_area(data);
 
-				if (cropped_rects[i].right <= cropped_rects[i].left ||
-					cropped_rects[i].bottom <= cropped_rects[i].top)
+				if (cropped_rects[i].right < cropped_rects[i].left ||
+					cropped_rects[i].bottom < cropped_rects[i].top)
 				{
 					cropped_rects[i] = { 0, 0, 0, 0 };
 				}
@@ -372,8 +372,8 @@ gm::sprite gm::get_background_data(uint id)
 		{
 			cropped_rects[0] = crop_blank_area(data);
 
-			if (cropped_rects[0].right <= cropped_rects[0].left ||
-				cropped_rects[0].bottom <= cropped_rects[0].top)
+			if (cropped_rects[0].right < cropped_rects[0].left ||
+				cropped_rects[0].bottom < cropped_rects[0].top)
 			{
 				cropped_rects[0] = { 0, 0, 0, 0 };
 			}
