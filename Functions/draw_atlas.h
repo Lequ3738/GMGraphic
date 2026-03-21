@@ -60,6 +60,11 @@ namespace atlas
 
 exp_real atlas_sprite_exists(gm_real id);
 exp_real atlas_background_exists(gm_real id);
+exp_real atlas_sprite_get_number(gm_real id);
+exp_str atlas_sprite_get_name(gm_real id);
+exp_str atlas_background_get_name(gm_real id);
+exp_real atlas_sprite_get_xoffset(gm_real id);
+exp_real atlas_sprite_get_yoffset(gm_real id);
 
 exp_real atlas_draw_sprite(gm_real id, gm_real subimg, gm_real x, gm_real y);
 exp_real atlas_draw_sprite_stretched(gm_real id, gm_real subimg, gm_real x, gm_real y,

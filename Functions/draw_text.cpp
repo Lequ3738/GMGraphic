@@ -178,6 +178,8 @@ static sdf::composed_string composing_string(std::string& str)
 
 		if (!line_str.empty())
 			height -= sdf::line_spacing;
+		else
+			height = font_size;
 
 		result.width = max_width;
 		result.height = height;

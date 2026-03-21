@@ -322,6 +322,68 @@ exp_real atlas_background_exists(gm_real id)
 	return (gm_real)game_images.count((uint)id);
 }
 
+exp_real atlas_sprite_get_number(gm_real id)
+{
+	try
+	{
+		if (id < IMAGE_START_POSITION)
+			return (gm_real)gm::sprite_get_number((int)id);
+
+		return (gm_real)game_images.at((uint)id)->frames.size();
+	}
+	simple_catch("atlas_sprite_get_number", -1)
+}
+
+exp_str atlas_sprite_get_name(gm_real id)
+{
+	try
+	{
+		if (id < IMAGE_START_POSITION)
+			return gm::sprite_get_name((int)id).c_str();
+
+		return game_images.at((uint)id)->name.c_str();
+	}
+	simple_catch("atlas_sprite_get_name", "invalid sprite")
+}
+
+exp_str atlas_background_get_name(gm_real id)
+{
+	try
+	{
+		if (id < IMAGE_START_POSITION)
+			return gm::background_get_name((int)id).c_str();
+
+		return game_images.at((uint)id)->name.c_str();
+	}
+	simple_catch("atlas_background_get_name", "invalid background")
+}
+
+exp_real atlas_sprite_get_xoffset(gm_real id)
+{
+	try
+	{
+		if (id < IMAGE_START_POSITION)
+			return (gm_real)gm::sprite_get_xoffset((int)id);
+
+		auto sub = game_images.at((uint)id)->frames.at(0).get();
+		return gm_real(sub->texture_left + sub->orig_x);
+	}
+	simple_catch("atlas_sprite_get_xoffset", 0)
+}
+
+exp_real atlas_sprite_get_yoffset(gm_real id)
+{
+	try
+	{
+		if (id < IMAGE_START_POSITION)
+			return (gm_real)gm::sprite_get_yoffset((int)id);
+
+		auto sub = game_images.at((uint)id)->frames.at(0).get();
+		return gm_real(sub->texture_top + sub->orig_y);
+	}
+	simple_catch("atlas_sprite_get_yoffset", 0)
+}
+
 exp_real atlas_draw_sprite(gm_real id, gm_real subimg, gm_real x, gm_real y)
 {
 	try
