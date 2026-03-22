@@ -36,13 +36,13 @@ static void draw_image(atlas::draw_info& info)
 			}
 			else
 			{
-				u0 = float(info.sub_image.texture_left + info.sub_image.texture_height - 
+				u0 = float(int(info.sub_image.texture_left + info.sub_image.texture_height) - 
 					info.region.y) / (float)info.atlas.size;
 				v0 = float(info.sub_image.texture_top + info.region.x) / (float)info.atlas.size;
 				u1 = u0;
 				v1 = float(info.sub_image.texture_top + info.region.x + info.region.width) /
 					(float)info.atlas.size;
-				u2 = float(info.sub_image.texture_left + info.sub_image.texture_height -
+				u2 = float(int(info.sub_image.texture_left + info.sub_image.texture_height) -
 					(info.region.y + info.region.height)) / (float)info.atlas.size;
 				v2 = v1;
 				u3 = u2;
@@ -92,9 +92,9 @@ static void draw_image(atlas::draw_info& info)
 		{
 			left = -info.sub_image.orig_x * info.trans.xscale - 0.5;
 			top = -info.sub_image.orig_y * info.trans.yscale - 0.5;
-			right = (info.sub_image.texture_width - info.sub_image.orig_x) *
+			right = ((int)info.sub_image.texture_width - info.sub_image.orig_x) *
 				info.trans.xscale - 0.5;
-			bottom = (info.sub_image.texture_height - info.sub_image.orig_y) *
+			bottom = ((int)info.sub_image.texture_height - info.sub_image.orig_y) *
 				info.trans.yscale - 0.5;
 		}
 
