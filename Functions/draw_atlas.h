@@ -81,6 +81,7 @@ exp_real atlas_draw_sprite_part_ext(gm_real id, gm_real subimg, gm_real left, gm
 exp_real atlas_draw_sprite_general(gm_real id, gm_real subimg, gm_real left, gm_real top,
 	gm_real width, gm_real height, gm_real x, gm_real y, gm_real xscale, gm_real yscale,
 	gm_real rot);
+
 exp_real atlas_draw_background(gm_real id, gm_real x, gm_real y);
 exp_real atlas_draw_background_stretched(gm_real id, gm_real x, gm_real y, gm_real width,
 	gm_real height);
@@ -96,4 +97,5 @@ exp_real atlas_draw_background_part_ext(gm_real id, gm_real left, gm_real top,
 exp_real atlas_draw_background_general(gm_real id, gm_real left, gm_real top,
 	gm_real width, gm_real height, gm_real x, gm_real y, gm_real xscale, gm_real yscale,
 	gm_real rot, gm_real c1);
+
 exp_real force_draw_to_screen();

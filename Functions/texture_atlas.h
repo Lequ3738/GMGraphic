@@ -4,7 +4,7 @@
 #include "../main.h"
 
 constexpr uint IMAGE_START_POSITION = 100000;
-constexpr uint TEXTURE_START_POSITION = 100000;
+constexpr uint TEXTURE_START_POSITION = 1000000;
 
 struct copy_image_rect
 {
