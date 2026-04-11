@@ -356,8 +356,11 @@ static std::string string_get_ext(gm_string str, gm_real w, gm_string lang)
 {
 	try
 	{
-		if (w <= 0 || *str == '\0')
+		if (w <= 0)
 			return "In function gui_get_string_ext(): The argument is valid.";
+
+		if (*str == '\0')
+			return "";
 
 		std::string text(str);
 
