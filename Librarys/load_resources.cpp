@@ -79,6 +79,76 @@ static gm::image_rect crop_blank_area(gm::image_data& image)
 }
 #pragma warning(default: 4102)  // unreferenced label
 
+// 应用边缘颜色膨胀，避免在平滑插值下图像出现黑边问题
+static void apply_color_bleeding(std::vector<uchar>& image_data, uint width, uint height,
+	const gm::image_rect& cropped_rect)
+{
+	if (cropped_rect.right < cropped_rect.left || cropped_rect.bottom < cropped_rect.top)
+		return;
+
+	std::vector<uchar> buffer = image_data;  // 复制一份原始数据作为只读源，防止级联污染
+
+	int process_left = cropped_rect.left - 1;
+	int process_top = cropped_rect.top - 1;
+	int process_right = cropped_rect.right + 1;
+	int process_bottom = cropped_rect.bottom + 1;
+
+	process_left = std::max(process_left, 0);
+	process_top = std::max(process_top, 0);
+	process_right = std::min(process_right, (int)width - 1);
+	process_bottom = std::min(process_bottom, (int)height - 1);
+
+	for (int y = process_top; y <= process_bottom; ++y)
+	{
+		for (int x = process_left; x <= process_right; ++x)
+		{
+			uint idx = (y * (int)width + x) * 4;
+			uchar a = buffer[idx + 3];
+
+			if (a == 0)
+			{
+				int b_sum = 0, g_sum = 0, r_sum = 0;
+				int count = 0;
+
+				// 采样周围 3x3 范围的 8 个邻居
+				for (int dy = -1; dy <= 1; ++dy)
+				{
+					for (int dx = -1; dx <= 1; ++dx)
+					{
+						if (dx == 0 && dy == 0) continue;
+
+						int nx = x + dx;
+						int ny = y + dy;
+
+						// 边界检查
+						if (nx >= 0 && nx < (int)width && ny >= 0 && ny < (int)height)
+						{
+							uint n_idx = (ny * (int)width + nx) * 4;
+							uchar n_a = buffer[n_idx + 3];
+
+							if (n_a > 0)
+							{
+								b_sum += buffer[n_idx];     // B
+								g_sum += buffer[n_idx + 1]; // G
+								r_sum += buffer[n_idx + 2]; // R
+								count++;
+							}
+						}
+					}
+				}
+
+				if (count > 0)
+				{
+					image_data[idx] = (uchar)(b_sum / count);
+					image_data[idx + 1] = (uchar)(g_sum / count);
+					image_data[idx + 2] = (uchar)(r_sum / count);
+					// Alpha 保持为 0，不修改
+				}
+			}
+		}
+	}
+}
+
 gm::sprite gm::decode_gmspr(const std::string& file)
 {
 	try
@@ -181,6 +251,8 @@ gm::sprite gm::decode_gmspr(const std::string& file)
 			}
 			else
 				cropped_rects[i] = { 0, 0, (int)width - 1, (int)height - 1 };
+
+			apply_color_bleeding(images[i], width, height, cropped_rects[i]);  // 进行边缘颜色膨胀
 		}
 
 		// 构建结果
@@ -249,6 +321,8 @@ gm::sprite gm::decode_png(const std::string& file)
 		}
 		else
 			cropped_rects[0] = { 0, 0, (int)width - 1, (int)height - 1 };
+
+		apply_color_bleeding(d3dimage, width, height, cropped_rects[0]);  // 进行边缘颜色膨胀
 
 		// 构建结果
 		std::vector<std::vector<uchar>> images;
