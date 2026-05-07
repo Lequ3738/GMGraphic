@@ -97,13 +97,28 @@ void texture_atlas::add_image_to_memory(std::vector<uchar>& image_data,
 				std::memcpy(dst_ptr, src_ptr, rect.texture_width * 4);
 
 				if (!texture_amplification)
-					continue;
+				{
+					uchar* edge_ptr = dst_ptr - 4;
+					edge_ptr[0] = src_ptr[0]; // B
+					edge_ptr[1] = src_ptr[1]; // G
+					edge_ptr[2] = src_ptr[2]; // R
+					edge_ptr[3] = 0;          // A强制为0
 
-				*((uint32_t*)(dst_ptr - 4)) = *(uint32_t*)src_ptr;  // 处理左边缘重复
+					const uchar* right_ptr = src_ptr + (rect.texture_width - 1) * 4;
+					edge_ptr = dst_ptr + rect.texture_width * 4;
+					edge_ptr[0] = right_ptr[0]; // B
+					edge_ptr[1] = right_ptr[1]; // G
+					edge_ptr[2] = right_ptr[2]; // R
+					edge_ptr[3] = 0;            // A强制为0
+				}
+				else
+				{
+					*((uint32_t*)(dst_ptr - 4)) = *(uint32_t*)src_ptr;  // 处理左边缘重复
 
-				// 处理右边缘重复
-				uint32_t right_pixel = *(uint32_t*)(src_ptr + (rect.texture_width - 1) * 4);
-				*(uint32_t*)(dst_ptr + rect.texture_width * 4) = right_pixel;
+					// 处理右边缘重复
+					uint32_t right_pixel = *(uint32_t*)(src_ptr + (rect.texture_width - 1) * 4);
+					*(uint32_t*)(dst_ptr + rect.texture_width * 4) = right_pixel;
+				}
 			}
 		}
 		else
@@ -134,7 +149,16 @@ void texture_atlas::add_image_to_memory(std::vector<uchar>& image_data,
 					const uchar* src_pixel = image_data.data() + (src_y * 
 						rect.image_width + src_x) * 4;
 
-					*(uint32_t*)dst_pixel = *(uint32_t*)src_pixel;
+					bool is_edge = (u < 0 || u >= (int)dest_w || v < 0 || v >= (int)dest_h);
+					if (texture_amplification || !is_edge)
+						*(uint32_t*)dst_pixel = *(uint32_t*)src_pixel;
+					else
+					{
+						dst_pixel[0] = src_pixel[0]; // B
+						dst_pixel[1] = src_pixel[1]; // G
+						dst_pixel[2] = src_pixel[2]; // R
+						dst_pixel[3] = 0;            // A强制为0
+					}
 				}
 			}
 		}
