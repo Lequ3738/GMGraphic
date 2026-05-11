@@ -339,7 +339,9 @@ exp_str atlas_sprite_get_name(gm_real id)
 	try
 	{
 		if (id < IMAGE_START_POSITION)
-			return gm::sprite_get_name((int)id).c_str();
+		{
+			return_string(gm::sprite_get_name((int)id).c_str());
+		}
 
 		return game_images.at((uint)id)->name.c_str();
 	}
@@ -351,7 +353,9 @@ exp_str atlas_background_get_name(gm_real id)
 	try
 	{
 		if (id < IMAGE_START_POSITION)
-			return gm::background_get_name((int)id).c_str();
+		{
+			return_string(gm::background_get_name((int)id).c_str());
+		}
 
 		return game_images.at((uint)id)->name.c_str();
 	}
