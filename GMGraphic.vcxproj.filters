@@ -654,7 +654,4 @@
     <None Include="README.md" />
     <None Include="cpp.hint" />
   </ItemGroup>
-  <ItemGroup>
-    <Text Include="RechText.txt" />
-  </ItemGroup>
 </Project>
