@@ -9,7 +9,6 @@
 #include <filesystem>
 #include "gmapi.h"
 #include "d3d_adapter.h"
-#include "dxerr8.h"
 
 using path = std::filesystem::path;
 
@@ -75,7 +74,8 @@ inline void D3DCheck(HRESULT result, int pos = 0)
 	if (SUCCEEDED(result))
 		return;
 
-	throw std::runtime_error("Pos " + std::to_string(pos) + ": " + DXGetErrorDescription8A(result));
+	// 错误文本按后端分发: D3D8 用 DXGetErrorDescription8A, D3D9 用内置错误表。
+	throw std::runtime_error("Pos " + std::to_string(pos) + ": " + d3d::error_text(result));
 }
 
 namespace atlas

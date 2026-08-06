@@ -16,8 +16,9 @@
 //   因此 D3DX9 走运行时 LoadLibrary + GetProcAddress(与 GMDirectX9 自身一致);
 //   D3D8 分支保持静态链 d3dx8.lib(原样)。d3d9.h / d3dx9.h 仍完整引入供类型使用。
 #include <cstring>
+#include <cstdio>
 #include "d3d_adapter.h"
-#include "Direct3D_9/d3dx9.h"
+#include "../Direct3D_9/d3dx9.h"
 
 // 经典 d3d9.h 里的常量, 这份(GMDirectX9 拷贝的)现代头没带, 补上。
 #ifndef D3DENUM_NO_WHQL_LEVEL
@@ -231,6 +232,33 @@ namespace d3d
             if (surface_mem) surface_mem->Release();
             if (surface) surface->Release();
             return hr;
+        }
+
+        // ---- 错误文本(D3D9 精简表: 覆盖 GMGraphic 实际会遇到的错误码) ----
+        // 不引入 DX SDK 的 dxerr.cpp(3967 行, 依赖 d3d10/11 等头), 用 switch 表即可。
+        std::string error_text(HRESULT hr)
+        {
+            switch (hr)
+            {
+            case D3D_OK:                                return "D3D_OK";
+            case D3DERR_DEVICELOST:                     return "D3DERR_DEVICELOST";
+            case D3DERR_DEVICENOTRESET:                 return "D3DERR_DEVICENOTRESET";
+            case D3DERR_DEVICEREMOVED:                  return "D3DERR_DEVICEREMOVED";
+            case D3DERR_DRIVERINTERNALERROR:            return "D3DERR_DRIVERINTERNALERROR";
+            case D3DERR_INVALIDCALL:                    return "D3DERR_INVALIDCALL";
+            case D3DERR_NOTAVAILABLE:                   return "D3DERR_NOTAVAILABLE";
+            case D3DERR_NOTFOUND:                       return "D3DERR_NOTFOUND";
+            case D3DERR_OUTOFVIDEOMEMORY:               return "D3DERR_OUTOFVIDEOMEMORY";
+            case D3DERR_WASSTILLDRAWING:                return "D3DERR_WASSTILLDRAWING";
+            case E_FAIL:                                return "E_FAIL";
+            case E_INVALIDARG:                          return "E_INVALIDARG";
+            case E_OUTOFMEMORY:                         return "E_OUTOFMEMORY";
+            case E_NOTIMPL:                             return "E_NOTIMPL";
+            default:
+                char buf[32];
+                sprintf(buf, "0x%08X", (unsigned)hr);
+                return buf;
+            }
         }
 
         // ---- 设备能力 ----

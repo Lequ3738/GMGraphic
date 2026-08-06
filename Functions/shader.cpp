@@ -12,9 +12,8 @@
 // Variables
 // ============================================================================
 
-static d3d::Caps               d3dcaps; // GPU capability struct(经 d3d::get_caps 填充, 双后端统一字段)
+static d3d::Caps d3dcaps;                   // GPU capability struct(经 d3d::get_caps 填充, 双后端统一字段)
 
-LPDIRECT3DVERTEXBUFFER8 vbuff_d3d;          // Pointer to D3D vertex buffer
 vert_ext vbuff_ext_int[vb_count];           // Internal vertex buffer (ext)
 vert_default vbuff_default_int[vb_count];   // Internal vertex buffer (default)
 uint vbuff_c;                               // Internal counter

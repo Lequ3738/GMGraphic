@@ -2,7 +2,6 @@
 #include "../main.h"
 #include "structs.h"
 
-extern LPDIRECT3DVERTEXBUFFER8 vbuff_d3d;
 extern vert_ext vbuff_ext_int[vb_count];
 extern vert_default vbuff_default_int[vb_count];
 extern uint vbuff_c;

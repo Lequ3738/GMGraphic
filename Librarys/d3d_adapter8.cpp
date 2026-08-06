@@ -4,6 +4,7 @@
 #include <algorithm>
 #include "d3d_adapter.h"
 #include "d3dx8.h"
+#include "dxerr8.h"
 
 namespace d3d
 {
@@ -179,6 +180,13 @@ namespace d3d
             if (surface_mem) surface_mem->Release();
             if (surface) surface->Release();
             return hr;
+        }
+
+        // ---- 错误文本(D3D8 全表来自 DXGetErrorDescription8A) ----
+        std::string error_text(HRESULT hr)
+        {
+            const char* p = DXGetErrorDescription8A(hr);
+            return p ? p : "Unknown error";
         }
 
         // ---- 设备能力 ----

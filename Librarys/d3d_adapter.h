@@ -72,6 +72,7 @@ namespace d3d
         void    release(void*);
         HRESULT read_texture(void*, std::vector<BYTE>&, UINT&, UINT&);
 
+        std::string error_text(HRESULT);
         bool get_caps(Caps&);
     }
     namespace impl9
@@ -101,6 +102,7 @@ namespace d3d
         void    release(void*);
         HRESULT read_texture(void*, std::vector<BYTE>&, UINT&, UINT&);
 
+        std::string error_text(HRESULT);
         bool get_caps(Caps&);
     }
 
@@ -150,6 +152,10 @@ namespace d3d
     { if (version() == V9) impl9::release(com); else impl8::release(com); }
     inline HRESULT read_texture(void* tex, std::vector<BYTE>& dest, UINT& width, UINT& height)
     { return version() == V9 ? impl9::read_texture(tex, dest, width, height) : impl8::read_texture(tex, dest, width, height); }
+
+    // 错误码 → 可读文本(D3D8 用 DXGetErrorDescription8A, D3D9 用内置错误表)。
+    inline std::string error_text(HRESULT hr)
+    { return version() == V9 ? impl9::error_text(hr) : impl8::error_text(hr); }
 
     inline bool get_caps(Caps& out)
     { return version() == V9 ? impl9::get_caps(out) : impl8::get_caps(out); }
