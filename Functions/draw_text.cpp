@@ -43,20 +43,11 @@ sdf::glyphs::glyphs(std::string& image_path, std::string& csv_path)
 		for (size_t i = 0; i < image.size() / 4; i += 1)
 			alp_image[i] = image[i * 4];
 
-		IDirect3DDevice8* device = gmapi->GetDirect3DDevice();
-
-		D3DCheck(device->CreateTexture(width, height, 1, 0, D3DFMT_A8, D3DPOOL_DEFAULT, 
+		// 建纹理 + 上传像素(整链经适配器, 双后端通用)
+		D3DCheck(d3d::create_texture(width, height, 1, 0, D3DFMT_A8, D3DPOOL_DEFAULT,
 			&texture), 0);
-
-		IDirect3DSurface8* surface = nullptr;
-		D3DCheck(texture->GetSurfaceLevel(0, &surface), 1);
-
-		RECT pos_rect = { .left = 0, .top = 0, .right = (long)width, .bottom = (long)height };
-		D3DCheck(D3DXLoadSurfaceFromMemory(surface, nullptr, &pos_rect, alp_image.data(),
-			D3DFMT_A8, width, nullptr, &pos_rect, D3DX_FILTER_NONE, 0), 2);
-
-		D3DCheck(texture->AddDirtyRect(&pos_rect), 3);
-		surface->Release();
+		D3DCheck(d3d::upload_texture(texture, width, height, D3DFMT_A8,
+			alp_image.data(), width), 1);
 
 		// Load CSV
 		std::ifstream csv_stream(csv_path);
@@ -112,7 +103,7 @@ sdf::glyphs::~glyphs()
 	if (texture == nullptr)
 		return;
 
-	texture->Release();
+	d3d::release(texture);
 	texture = nullptr;
 
 	if (current_sdf_glyphs == this)

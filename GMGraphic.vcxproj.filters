@@ -24,6 +24,12 @@
     <ClInclude Include="main.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="d3d_adapter.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Direct3D_9\d3dx9.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
     <ClInclude Include="Direct3D_8\activecf.h">
       <Filter>头文件</Filter>
     </ClInclude>
@@ -531,6 +537,15 @@
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="main.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="d3d_adapter8.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="d3d_adapter9.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="d3d_version.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="GMAPI\Gmapi3DGraphics.cpp">

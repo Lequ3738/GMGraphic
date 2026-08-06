@@ -62,7 +62,7 @@ texture_atlas::~texture_atlas()
 	if (texture == nullptr)
 		return;
 
-	texture->Release();
+	d3d::release(texture);
 	texture = nullptr;
 
 #ifdef _DEBUG
@@ -327,27 +327,14 @@ bool texture_atlas::burn(bool del_memdata)
 		if (read_only())
 			return false;
 
-		IDirect3DDevice8* device = gmapi->GetDirect3DDevice();
-		IDirect3DTexture8* texture = nullptr;
-
+		// 首次调用时创建 GPU 纹理, 之后每次只做像素上传。
 		if (texture == nullptr)
 		{
-			D3DCheck(device->CreateTexture(size, size, 1, 0, D3DFMT_A8R8G8B8,
+			D3DCheck(d3d::create_texture(size, size, 1, 0, D3DFMT_A8R8G8B8,
 				D3DPOOL_DEFAULT, &texture), 0);
-			texture_atlas::texture = texture;
 		}
-		else
-			texture = texture_atlas::texture;
-
-		IDirect3DSurface8* surface = nullptr;
-		D3DCheck(texture->GetSurfaceLevel(0, &surface), 1);
-
-		RECT pos_rect = { .left = 0, .top = 0, .right = (long)size, .bottom = (long)size };
-		D3DCheck(D3DXLoadSurfaceFromMemory(surface, nullptr, &pos_rect, data.data(),
-			D3DFMT_A8R8G8B8, size * 4, nullptr, &pos_rect, D3DX_FILTER_NONE, 0), 2);
-
-		D3DCheck(texture->AddDirtyRect(&pos_rect), 3);
-		surface->Release();
+		D3DCheck(d3d::upload_texture(texture, size, size, D3DFMT_A8R8G8B8,
+			data.data(), size * 4), 1);
 
 		if (del_memdata)
 			data.clear();
@@ -560,27 +547,14 @@ std::vector<texture_atlas::images*> texture_atlas::load(path& file_path)
 		if (read_only())
 			throw std::runtime_error("The atlas is read only.");
 
-		IDirect3DDevice8* device = gmapi->GetDirect3DDevice();
-		IDirect3DTexture8* texture = nullptr;
-
+		// 首次加载时创建 GPU 纹理, 之后只做像素上传。
 		if (texture == nullptr)
 		{
-			D3DCheck(device->CreateTexture(width, height, 1, 0, D3DFMT_A8R8G8B8,
+			D3DCheck(d3d::create_texture(width, height, 1, 0, D3DFMT_A8R8G8B8,
 				D3DPOOL_DEFAULT, &texture), 0);
-			texture_atlas::texture = texture;
 		}
-		else
-			texture = texture_atlas::texture;
-
-		IDirect3DSurface8* surface = nullptr;
-		D3DCheck(texture->GetSurfaceLevel(0, &surface), 1);
-
-		RECT pos_rect = { .left = 0, .top = 0, .right = (long)width, .bottom = (long)height };
-		D3DCheck(D3DXLoadSurfaceFromMemory(surface, nullptr, &pos_rect, d3dimage.data(),
-			D3DFMT_A8R8G8B8, width * 4, nullptr, &pos_rect, D3DX_FILTER_NONE, 0), 2);
-
-		D3DCheck(texture->AddDirtyRect(&pos_rect), 3);
-		surface->Release();
+		D3DCheck(d3d::upload_texture(texture, width, height, D3DFMT_A8R8G8B8,
+			d3dimage.data(), width * 4), 1);
 
 		return result;
 	}

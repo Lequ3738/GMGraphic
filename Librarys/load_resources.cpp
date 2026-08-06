@@ -343,43 +343,19 @@ gm::sprite gm::decode_png(const std::string& file)
 	transpond_catch("gm::decode_png(std::string&)")
 }
 
-gm::image_data gm::get_image_data(IDirect3DTexture8* texture)
+gm::image_data gm::get_image_data(void* texture)
 {
 	try
 	{
-		IDirect3DDevice8* device = gmapi->GetDirect3DDevice();
-		IDirect3DSurface8* surface = nullptr, *surface_mem = nullptr;
-
-		D3DSURFACE_DESC desc{};
-		D3DCheck(texture->GetLevelDesc(0, &desc), 0);
-		D3DCheck(texture->GetSurfaceLevel(0, &surface), 1);
-
-		uint width = desc.Width, height = desc.Height;
-		D3DCheck(device->CreateImageSurface(width, height, D3DFMT_A8R8G8B8, &surface_mem), 2);
-		D3DCheck(D3DXLoadSurfaceFromSurface(surface_mem, nullptr, nullptr, surface, nullptr,
-			nullptr, D3DX_FILTER_NONE, 0), 3);
-
-		D3DLOCKED_RECT lock{};
-		surface_mem->LockRect(&lock, nullptr, 0);
-
-		uchar* data = (uchar*)lock.pBits;
-		std::vector<uchar> dest(width * height * 4);
-
-		uint src_pos = 0, dst_pos = 0, buffer_stride = width * 4;
-		for (uint i = 0; i < height; ++i)
-		{
-			std::memcpy(dest.data() + dst_pos, &data[src_pos], buffer_stride);
-			src_pos += lock.Pitch;
-			dst_pos += buffer_stride;
-		}
-
-		D3DCheck(surface_mem->UnlockRect(), 4);
-		surface_mem->Release();
-		surface->Release();
+		// 读回纹理像素: 取 level0 表面 → 拷到系统内存表面 → LockRect 复制。
+		// 整链经适配器, 双后端通用(内部处理 D3D8/9 的表面类型与 D3DX)。
+		std::vector<uchar> dest;
+		uint width = 0, height = 0;
+		D3DCheck(d3d::read_texture(texture, dest, width, height), 0);
 
 		return std::make_tuple(std::move(dest), width, height);
 	}
-	transpond_catch("get_image_data(IDirect3DTexture8*)")
+	transpond_catch("get_image_data(void*)")
 }
 
 gm::sprite gm::get_sprite_data(uint id)
@@ -392,7 +368,7 @@ gm::sprite gm::get_sprite_data(uint id)
 
 		for (uint i = 0; i < (uint)spr.Subimages.GetCount(); ++i)
 		{
-			IDirect3DTexture8* texture = spr.Subimages[id].GetTexture();
+			void* texture = (void*)spr.Subimages[id].GetTexture();   // 不透明: 只用于读回
 			gm::image_data data = get_image_data(texture);
 
 			// 进行空白裁剪计算
@@ -432,7 +408,7 @@ gm::sprite gm::get_background_data(uint id)
 {
 	try
 	{
-		IDirect3DTexture8* texture = gmapi->Backgrounds[id].GetTexture();
+		void* texture = (void*)gmapi->Backgrounds[id].GetTexture();   // 不透明: 只用于读回
 		gm::image_data data = get_image_data(texture);
 		
 		uint width = std::min((uint)gmapi->Backgrounds[id].GetWidth(), 

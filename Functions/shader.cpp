@@ -12,10 +12,7 @@
 // Variables
 // ============================================================================
 
-static IDirect3DDevice8*       d3ddev;	// D3D device pointer
-static IDirect3D8*             d3dint;	// D3D interface pointer
-static D3DCAPS8                d3dcaps; // GPU capability struct
-static D3DADAPTER_IDENTIFIER8  d3daid;  // GPU identification struct
+static d3d::Caps               d3dcaps; // GPU capability struct(经 d3d::get_caps 填充, 双后端统一字段)
 
 LPDIRECT3DVERTEXBUFFER8 vbuff_d3d;          // Pointer to D3D vertex buffer
 vert_ext vbuff_ext_int[vb_count];           // Internal vertex buffer (ext)
@@ -45,11 +42,9 @@ namespace gm
 // Initialises device pointer, GPU information, buffers, etc.
 exp_real init(gm_real arg_list)
 {
-    d3ddev = gmapi->GetDirect3DDevice();
-    d3dint = gmapi->GetDirect3DInterface();
-
-    d3dint->GetAdapterIdentifier(D3DADAPTER_DEFAULT, D3DENUM_NO_WHQL_LEVEL, &d3daid);
-    d3ddev->GetDeviceCaps(&d3dcaps);
+    // 检测后端(D3D8 / D3D9)并缓存; 之后所有 d3d:: 调用按此分发。
+    d3d::ensure_version((void*)gmapi->GetDirect3DDevice(), (void*)gmapi->GetDirect3DInterface());
+    d3d::get_caps(d3dcaps);
 
     gm::argument_list = (int)arg_list;
 
@@ -66,35 +61,35 @@ exp_real init(gm_real arg_list)
 // ============================================================================
 
 // GPU name.
-exp_str d3d_dev_get_name() { return_string(d3daid.Description); }
+exp_str d3d_dev_get_name() { return_string(d3dcaps.adapter_desc); }
 
 // Maximum size of point primitives.
-exp_real d3d_dev_get_point_max_size() { return (double)d3dcaps.MaxPointSize; }
+exp_real d3d_dev_get_point_max_size() { return (double)d3dcaps.max_point_size; }
 
 // GPU pixel shader version. 10 to 14.
 // Most modern GPUs support higher versions but they're not reported here.
 exp_real d3d_dev_get_ps_version()
 {
-    uint v = (uint)d3dcaps.PixelShaderVersion;
+    uint v = (uint)d3dcaps.pixel_shader_version;
     return (double)((((v >> 8) & 0xFF) * 10) + v & 0xFF);
 }
 
 // Maximum texture width. Applies to all graphical resources.
-exp_real d3d_dev_get_tex_max_width() { return (double)d3dcaps.MaxTextureWidth; }
+exp_real d3d_dev_get_tex_max_width() { return (double)d3dcaps.max_tex_w; }
 
 // Height.
-exp_real d3d_dev_get_tex_max_height() { return (double)d3dcaps.MaxTextureHeight; }
+exp_real d3d_dev_get_tex_max_height() { return (double)d3dcaps.max_tex_h; }
 
 // Maximum simultaneous textures. Limits how many texture stages you can use.
 exp_real d3d_dev_get_tex_max_stages()
 {
-    return (double)d3dcaps.MaxSimultaneousTextures;
+    return (double)d3dcaps.max_tex_stages;
 }
 
 // Free texture memory in bytes. Approximate. This ISN'T the VRAM size.
 exp_real d3d_dev_get_tex_mem()
 {
-    return (double)d3ddev->GetAvailableTextureMem();
+    return (double)d3d::get_available_tex_mem();
 }
 
 // ============================================================================
@@ -105,36 +100,27 @@ exp_real d3d_dev_get_tex_mem()
 exp_real d3d_ps_create(const char* src_asm)
 {
     using namespace std;
-    
-    string       str = src_asm;
-    string       err;
-    dword        shader;
-    LPD3DXBUFFER psc;
-    LPD3DXBUFFER errors;
 
-    if (d3dcaps.PixelShaderVersion < D3DPS_VERSION(1, 4))
+    string           str = src_asm;
+    string           err;
+    dword            shader;
+    vector<BYTE>     code;
+
+    if (d3dcaps.pixel_shader_version < D3DPS_VERSION(1, 4))
     {
         err = "PS 1.4 unsupported by GPU.";
         complain(err.c_str());
         return gfalse;
     }
 
-    if (D3D_OK != D3DXAssembleShader((LPCVOID)str.c_str(), str.length(), 0, nullptr, 
-        &psc, &errors))
+    if (FAILED(d3d::assemble_ps(str.c_str(), str.length(), code, &err)))
     {
-        err.append(crlf);
-        err.append("Shader assembly error:");
-        err.append(crlf);
-        err.append(crlf);
-        err.append((char*)errors->GetBufferPointer());
-        err.append(crlf);
-        err.append(crlf);
-        err.append(str);
+        err = "Shader assembly error:\r\n\r\n" + err + "\r\n\r\n" + str;
         complain(err.c_str());
         return gerror;
     }
 
-    if (D3D_OK != d3ddev->CreatePixelShader((dword*)psc->GetBufferPointer(), &shader))
+    if (FAILED(d3d::create_pixel_shader(code.data(), &shader)))
     {
         err = "Shader creation failed.  This should never happen.";
         complain(err.c_str());
@@ -147,14 +133,14 @@ exp_real d3d_ps_create(const char* src_asm)
 // Free shader.
 exp_real d3d_ps_destroy(double shader)
 {
-    d3dcheck(d3ddev->DeletePixelShader((dword)shader));
+    d3dcheck(d3d::delete_pixel_shader((dword)shader));
 }
 
 // Set active pixel shader, or -1 to disable.
 exp_real d3d_set_ps(double shader)
 {
-    if (shader < 0) { d3dcheck(d3ddev->SetPixelShader(NULL)); }
-    else { d3dcheck(d3ddev->SetPixelShader((dword)shader)); }
+    if (shader < 0) { d3dcheck(d3d::set_pixel_shader(0)); }
+    else { d3dcheck(d3d::set_pixel_shader((dword)shader)); }
 }
 
 // Set active pixel shader and configuration.
@@ -182,7 +168,7 @@ exp_real d3d_set_ps_const(double constant, double r, double g, double b, double 
         .a = (float)clamp(a, -1.0, 1.0)
     };
 
-    d3dcheck(d3ddev->SetPixelShaderConstant((dword)constant, &cx, 1));
+    d3dcheck(d3d::set_ps_const((dword)constant, (float*)&cx, 1));
 }
 
 // Set PS constant as colour. Handy shortcut.
@@ -196,7 +182,7 @@ exp_real d3d_set_ps_const_col(double constant, double col, double alpha)
         .a = (float)clamp(alpha, 0.0, 1.0)
     };
 
-    d3dcheck(d3ddev->SetPixelShaderConstant((dword)constant, (void*)&cx, 1));
+    d3dcheck(d3d::set_ps_const((dword)constant, (float*)&cx, 1));
 }
 
 // Set PS constant registers from a predefined configuration.
@@ -212,7 +198,7 @@ exp_real d3d_set_ps_conf(double conf)
     for (uint i = 0; i < 8; i++)
     {
         if (px->set[i])
-            d3ddev->SetPixelShaderConstant(i, &(px->c[i]), 1);
+            d3d::set_ps_const(i, (float*)&(px->c[i]), 1);
     }
 
     return gtrue;
@@ -224,62 +210,27 @@ exp_real d3d_set_ps_conf(double conf)
 
 // Assembles && creates vertex shader. Returns handle.
 // Whoever wrote the D3D API should be punched in the balls. Just for the record.
+// D3D8 用 D3DVSD 声明, D3D9 用 D3DVERTEXELEMENT9 —— 翻译在 d3d_adapter9.cpp 内。
 exp_real d3d_vs_create(const char* src_asm)
 {
     using namespace std;
-    
-    string       str = src_asm;
-    string       err;
-    DWORD        shader;
-    LPD3DXBUFFER vsc;
-    LPD3DXBUFFER constants;
-    LPD3DXBUFFER errors;
 
-    if (D3D_OK != D3DXAssembleShader((LPCVOID)str.c_str(), str.length(), 0, &constants, 
-        &vsc, &errors))
+    string           str = src_asm;
+    string           err;
+    DWORD            shader;
+    vector<BYTE>     code, constants;
+
+    if (FAILED(d3d::assemble_vs(str.c_str(), str.length(), code, constants, &err)))
     {
-        err.append(crlf);
-        err.append("Shader assembly error:");
-        err.append(crlf);
-        err.append(crlf);
-        err.append((char*)errors->GetBufferPointer());
-        err.append(crlf);
-        err.append(crlf);
-        err.append(str);
+        err = "Shader assembly error:\r\n\r\n" + err + "\r\n\r\n" + str;
         complain(err.c_str());
         return gerror;
     }
 
-
-    const uint o = (96 * 5); // 96 sets of [d3dvsd_const + 4 floats]
-    dword      vsdec[o + 32]{};
-
-    SecureZeroMemory((PVOID)vsdec, sizeof(vsdec));
-    memcpy(vsdec, constants->GetBufferPointer(), constants->GetBufferSize());
-
-    vsdec[o] = D3DVSD_STREAM(0);                                 // VSR     V-out    PSR
-    vsdec[o + 1] = D3DVSD_REG(D3DVSDE_POSITION, D3DVSDT_FLOAT3);  // v0  ->  oPos
-    vsdec[o + 2] = D3DVSD_REG(D3DVSDE_NORMAL, D3DVSDT_FLOAT3);  // v3
-    vsdec[o + 3] = D3DVSD_REG(D3DVSDE_DIFFUSE, D3DVSDT_D3DCOLOR);  // v5  ->  oD0   -> v0
-    vsdec[o + 4] = D3DVSD_REG(D3DVSDE_SPECULAR, D3DVSDT_D3DCOLOR);  // v6  ->  oD1   -> v1
-    vsdec[o + 5] = D3DVSD_REG(D3DVSDE_TEXCOORD0, D3DVSDT_FLOAT2);  // v7  ->  oT0   -> t0
-    vsdec[o + 6] = D3DVSD_REG(D3DVSDE_TEXCOORD1, D3DVSDT_FLOAT2);  // v8  ->  oT1   -> t1
-    vsdec[o + 7] = D3DVSD_REG(D3DVSDE_TEXCOORD2, D3DVSDT_FLOAT2);  // v9  ->  oT2   -> t2
-    vsdec[o + 8] = D3DVSD_REG(D3DVSDE_TEXCOORD3, D3DVSDT_FLOAT2);  // v10 ->  oT3   -> t3
-    vsdec[o + 9] = D3DVSD_REG(D3DVSDE_TEXCOORD4, D3DVSDT_FLOAT2);  // v11 ->  oT4   -> t4
-    vsdec[o + 10] = D3DVSD_REG(D3DVSDE_TEXCOORD5, D3DVSDT_FLOAT2);  // v12 ->  oT5   -> t5
-    vsdec[o + 11] = D3DVSD_REG(D3DVSDE_TEXCOORD6, D3DVSDT_FLOAT2);  // v13 ->  oT6
-    vsdec[o + 12] = D3DVSD_REG(D3DVSDE_TEXCOORD7, D3DVSDT_FLOAT2);  // v14 ->  oT7
-    vsdec[o + 13] = D3DVSD_END();
-
-    if (D3D_OK != d3ddev->CreateVertexShader(vsdec, (dword*)vsc->GetBufferPointer(), 
-        &shader, D3DUSAGE_SOFTWAREPROCESSING))
+    if (FAILED(d3d::create_vertex_shader(d3d::VERT_EXT, code.data(),
+        constants.data(), constants.size(), &shader)))
     {
-        err.append(crlf);
-        err.append("Vertex shader creation failed.");
-        err.append(crlf);
-        err.append(crlf);
-        err.append(str);
+        err = "Vertex shader creation failed.\r\n\r\n" + str;
         complain(err.c_str());
         return gerror;
     }
@@ -290,7 +241,7 @@ exp_real d3d_vs_create(const char* src_asm)
 // Free vertex shader.
 exp_real d3d_vs_destroy(double shader)
 {
-    d3dcheck(d3ddev->DeleteVertexShader((DWORD)shader));
+    d3dcheck(d3d::delete_vertex_shader((DWORD)shader));
 }
 
 // Set current vertex shader or -1 for none. GM's normal drawing functions are not affected.
@@ -299,11 +250,11 @@ exp_real d3d_set_vs(double shader)
     if (shader < 0)
     {
         vbuff_usevs = false;
-        d3dcheck(d3ddev->SetVertexShader(fvf_ext));
+        d3dcheck(d3d::set_vertex_shader(true, fvf_ext, 0));
     }
     else {
         vbuff_usevs = true;
-        d3dcheck(d3ddev->SetVertexShader((dword)shader));
+        d3dcheck(d3d::set_vertex_shader(false, 0, (dword)shader));
     }
 }
 
@@ -317,7 +268,7 @@ exp_real d3d_set_vs_const(double constant, double x, double y, double z, double 
         .w = (float)w
     };
 
-    d3dcheck(d3ddev->SetVertexShaderConstant((dword)clamp(constant, 0.0, 95.0), &vx, 1));
+    d3dcheck(d3d::set_vs_const((dword)clamp(constant, 0.0, 95.0), (float*)&vx, 1));
 }
 
 // Set VS constant as colour. Handy shortcut.
@@ -331,24 +282,44 @@ exp_real d3d_set_vs_const_col(double constant, double col, double alpha)
         .w = (float)clamp(alpha, 0.0, 1.0)
     };
 
-    d3dcheck(d3ddev->SetVertexShaderConstant((dword)clamp(constant, 0.0, 95.0), &vx, 1));
+    d3dcheck(d3d::set_vs_const((dword)clamp(constant, 0.0, 95.0), (float*)&vx, 1));
 }
 
 // Sets four constants as the transposed world*view*projection matrix.
 // You can then use [m4x4 oPos,v0,cn] in the shader to transform the vertices in
 // keeping with GM's normal behaviour.
 // Ex: 0 would set c0,c1,c2,c3; 4 would set c4,c5,c6,c7.
+// 纯 float 手写 4x4 乘 + 转置, 去掉 D3DX 数学依赖(双后端通用)。
+static void mat_mul(float* c, const float* a, const float* b)   // 行主序: c = a * b
+{
+    for (int r = 0; r < 4; r++)
+        for (int col = 0; col < 4; col++)
+        {
+            float s = 0.0f;
+            for (int k = 0; k < 4; k++)
+                s += a[r * 4 + k] * b[k * 4 + col];
+            c[r * 4 + col] = s;
+        }
+}
+static void mat_transpose(float* t, const float* m)
+{
+    for (int r = 0; r < 4; r++)
+        for (int col = 0; col < 4; col++)
+            t[r * 4 + col] = m[col * 4 + r];
+}
+
 exp_real d3d_set_vs_const_matrix(double constant)
 {
-    D3DXMATRIX world, proj, view, out, in;
-    d3ddev->GetTransform(D3DTS_WORLD, &world);
-    d3ddev->GetTransform(D3DTS_VIEW, &view);
-    d3ddev->GetTransform(D3DTS_PROJECTION, &proj);
+    float world[16], view[16], proj[16], in[16], out[16];
+    d3d::get_transform(D3DTS_WORLD, world);
+    d3d::get_transform(D3DTS_VIEW, view);
+    d3d::get_transform(D3DTS_PROJECTION, proj);
 
-    in = world * view * proj;
-    D3DXMatrixTranspose(&out, &in);
+    mat_mul(in, world, view);        // in = world * view
+    mat_mul(in, in, proj);           // in = (world*view) * proj
+    mat_transpose(out, in);
 
-    d3dcheck(d3ddev->SetVertexShaderConstant((dword)clamp(constant, 0.0, 92.0), out, 4));
+    d3dcheck(d3d::set_vs_const((dword)clamp(constant, 0.0, 92.0), out, 4));
 }
 
 // Set VS constant registers from a predefined configuration.
@@ -363,7 +334,7 @@ exp_real d3d_set_vs_conf(double conf)
     for (uint i = 0; i < 96; i++)
     {
         if (vx->set[i])
-            d3ddev->SetVertexShaderConstant(i, &(vx->c[i]), 1);
+            d3d::set_vs_const(i, (float*)&(vx->c[i]), 1);
     }
 
     return gtrue;
@@ -380,20 +351,20 @@ exp_real d3d_set_tex(double stage, double tex)
 {
     uint s = (uint)stage;
 
-    if (s < d3dcaps.MaxSimultaneousTextures)
+    if (s < d3dcaps.max_tex_stages)
     {
         if (tex < 0.0)
         {
-            d3dcheck(d3ddev->SetTexture(s, NULL));
+            d3dcheck(d3d::set_texture(s, nullptr));
         }
         else
         {
-            d3dtex* t = gmapi->GetDirect3DTexture((int)tex);
+            void* t = (void*)gmapi->GetDirect3DTexture((int)tex);   // 不透明: 不直接调它的方法
 
             if (t == nullptr)
                 return gerror;
 
-            d3dcheck(d3ddev->SetTexture(s, t));
+            d3dcheck(d3d::set_texture(s, t));
         }
     }
     else
@@ -405,7 +376,7 @@ exp_real d3d_set_tex(double stage, double tex)
 // Set all available texture stages. -1 for no texture.
 exp_real d3d_set_tex_all(double tex)
 {
-    for (uint i = 0; i < d3dcaps.MaxSimultaneousTextures; i++)
+    for (uint i = 0; i < d3dcaps.max_tex_stages; i++)
     {
         if (!d3d_set_tex(i, tex))
             return gerror;
@@ -421,11 +392,11 @@ exp_real d3d_set_tex_int(double stage, double mode)
 {
     dword s = (dword)stage;
 
-    if (stage >= d3dcaps.MaxSimultaneousTextures)
+    if (stage >= d3dcaps.max_tex_stages)
         return gerror;
 
-    if ((D3D_OK == d3ddev->SetTextureStageState(s, D3DTSS_MAGFILTER, (dword)mode))
-        && (D3D_OK == d3ddev->SetTextureStageState(s, D3DTSS_MINFILTER, (dword)mode)))
+    if ((D3D_OK == d3d::set_tex_stage_state(s, D3DTSS_MAGFILTER, (dword)mode))
+        && (D3D_OK == d3d::set_tex_stage_state(s, D3DTSS_MINFILTER, (dword)mode)))
     {
         return gtrue;
     }
@@ -438,11 +409,11 @@ exp_real d3d_set_tex_wrap(double stage, double xmode, double ymode)
 {
     dword s = (dword)stage;
 
-    if (stage >= d3dcaps.MaxSimultaneousTextures)
+    if (stage >= d3dcaps.max_tex_stages)
         return gerror;
 
-    if ((D3D_OK == d3ddev->SetTextureStageState(s, D3DTSS_ADDRESSU, (dword)xmode))
-        && (D3D_OK == d3ddev->SetTextureStageState(s, D3DTSS_ADDRESSV, (dword)ymode)))
+    if ((D3D_OK == d3d::set_tex_stage_state(s, D3DTSS_ADDRESSU, (dword)xmode))
+        && (D3D_OK == d3d::set_tex_stage_state(s, D3DTSS_ADDRESSV, (dword)ymode)))
     {
         return gtrue;
     }
@@ -455,10 +426,10 @@ exp_real d3d_set_tex_border(double stage, double col, double alpha)
 {
     dword s = (dword)stage;
 
-    if (s >= d3dcaps.MaxSimultaneousTextures)
+    if (s >= d3dcaps.max_tex_stages)
         return gerror;
 
-    d3dcheck(d3ddev->SetTextureStageState(s, D3DTSS_BORDERCOLOR, col_d3d((int)col, alpha)));
+    d3dcheck(d3d::set_tex_stage_state(s, D3DTSS_BORDERCOLOR, col_d3d((int)col, alpha)));
 }
 
 // Set anisotropic filtering level for tex_int_anisotropic.
@@ -467,11 +438,11 @@ exp_real d3d_set_tex_aniso(double stage, double anisotropy)
 {
     dword s = (dword)stage;
 
-    if (s >= d3dcaps.MaxSimultaneousTextures)
+    if (s >= d3dcaps.max_tex_stages)
         return gerror;
 
-    d3dcheck(d3ddev->SetTextureStageState(s, D3DTSS_MAXANISOTROPY, 
-        (dword)std::min((dword)anisotropy, d3dcaps.MaxAnisotropy)));
+    d3dcheck(d3d::set_tex_stage_state(s, D3DTSS_MAXANISOTROPY,
+        (dword)std::min((dword)anisotropy, d3dcaps.max_aniso)));
 }
 
 // Set mipmap filtering mode. tex_int_nearest or tex_int_bilinear.
@@ -481,10 +452,10 @@ exp_real d3d_set_tex_mip(double stage, double mode)
 {
     dword s = (dword)stage;
 
-    if (s >= d3dcaps.MaxSimultaneousTextures)
+    if (s >= d3dcaps.max_tex_stages)
         return gerror;
 
-    d3dcheck(d3ddev->SetTextureStageState(s, D3DTSS_MIPFILTER, (dword)mode));
+    d3dcheck(d3d::set_tex_stage_state(s, D3DTSS_MIPFILTER, (dword)mode));
 }
 
 // Set texture stage state from a predefined configuration.
@@ -495,11 +466,11 @@ exp_real d3d_set_tex_conf(double conf)
 
     uint vpos = (uint)floor(conf);
 
-    for (uint i = 0; i < (uint)std::min(8, (int)d3dcaps.MaxSimultaneousTextures); i++)
+    for (uint i = 0; i < (uint)std::min(8, (int)d3dcaps.max_tex_stages); i++)
     {
         if (conf_vec_tex[vpos].set[i])
         {
-            d3ddev->SetTexture(i, conf_vec_tex[vpos].tex[i]);
+            d3d::set_texture(i, conf_vec_tex[vpos].tex[i]);
             d3d_set_tex_int(i, conf_vec_tex[vpos].in[i]);
             d3d_set_tex_wrap(i, conf_vec_tex[vpos].xwrap[i],
                 conf_vec_tex[vpos].ywrap[i]);
@@ -592,10 +563,10 @@ exp_real d3d_conf_tex_set(double conf, double stage, double tex, double interp,
     uint vpos = (uint)floor(conf);
     uint s = (uint)stage;
 
-    if (s >= d3dcaps.MaxSimultaneousTextures)
+    if (s >= d3dcaps.max_tex_stages)
         return gerror;
 
-    d3dtex* t = gmapi->GetDirect3DTexture((int)tex);
+    void* t = (void*)gmapi->GetDirect3DTexture((int)tex);   // 不透明: 不直接调它的方法
 
     if (t != nullptr)
     {
@@ -657,21 +628,21 @@ exp_real d3d_set_fog_end(double dist)
 // Set drawing size for point primitives.
 exp_real d3d_set_point_size(double size)
 {
-    float x = (float)clamp(size, 1.0, d3dcaps.MaxPointSize);
+    float x = (float)clamp(size, 1.0, d3dcaps.max_point_size);
     d3dcrs(D3DRS_POINTSIZE, d3dvar(x));
 }
 
 // Set size clamp, useful for scaled points in 3D mode. Defaults to 1.
 exp_real d3d_set_point_size_min(double size)
 {
-    float x = (float)clamp(size, 1.0, d3dcaps.MaxPointSize);
+    float x = (float)clamp(size, 1.0, d3dcaps.max_point_size);
     d3dcrs(D3DRS_POINTSIZE_MIN, d3dvar(x));
 }
 
 // Set size clamp.  Defaults to 64.
 exp_real d3d_set_point_size_max(double size)
 {
-    float x = (float)clamp(size, 1.0, d3dcaps.MaxPointSize);
+    float x = (float)clamp(size, 1.0, d3dcaps.max_point_size);
     d3dcrs(D3DRS_POINTSIZE_MAX, d3dvar(x));
 }
 
@@ -713,7 +684,7 @@ exp_real d3d_set_point_sprite(double state)
 // You can enable/disable writing of each channel independently. All enabled by default.
 exp_real d3d_set_mask(double r, double g, double b, double a)
 {
-    if (!(d3dcaps.PrimitiveMiscCaps & D3DPMISCCAPS_COLORWRITEENABLE))
+    if (!(d3dcaps.prim_misc_caps & D3DPMISCCAPS_COLORWRITEENABLE))
         return gfalse;
 
     dword mask[4]{};
@@ -755,7 +726,7 @@ exp_real d3d_set_alphatest(double value, double mode)
 // Use the cmp_ constants. Defaults to <=. The other value is the current z-buffer value.
 exp_real d3d_set_ztest(double mode)
 {
-    if (!(d3dcaps.RasterCaps & D3DPRASTERCAPS_ZTEST))
+    if (!(d3dcaps.raster_caps & D3DPRASTERCAPS_ZTEST))
         return gfalse;
 
     d3dcrs(D3DRS_ZFUNC, (dword)mode);
@@ -923,16 +894,16 @@ void vertex::end()
             return;
 
         if (!vbuff_usevs)
-            D3DCheck(d3ddev->SetVertexShader(vbuff_use_ext ? fvf_ext : fvf_default), 3);
+            D3DCheck(d3d::set_vertex_shader(true, vbuff_use_ext ? fvf_ext : fvf_default, 0), 3);
 
         if (vbuff_use_ext)
         {
-            D3DCheck(d3ddev->DrawPrimitiveUP(vbuff_prim, prims, vbuff_ext_int,
+            D3DCheck(d3d::draw_primitive_up((DWORD)vbuff_prim, prims, vbuff_ext_int,
                 sizeof(vert_ext)), 4);
         }
         else
         {
-            D3DCheck(d3ddev->DrawPrimitiveUP(vbuff_prim, prims, vbuff_default_int,
+            D3DCheck(d3d::draw_primitive_up((DWORD)vbuff_prim, prims, vbuff_default_int,
                 sizeof(vert_default)), 4);
         }
 

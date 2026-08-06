@@ -51,5 +51,5 @@ namespace gm
 	sprite get_sprite_data(uint id);
 	sprite get_background_data(uint id);
 
-	image_data get_image_data(IDirect3DTexture8* texture);
+	image_data get_image_data(void* texture);   // texture 不透明: D3D8/9 纹理对象
 }

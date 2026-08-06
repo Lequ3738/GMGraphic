@@ -49,7 +49,7 @@ bool WINAPI DllMain(HINSTANCE aModuleHandle, int aReason, int aReserved)
 
 atlas::texture_info current_texture;
 
-void atlas::start_draw(IDirect3DTexture8* texture, D3DFORMAT format)
+void atlas::start_draw(void* texture, D3DFORMAT format)
 {
 	try
 	{
@@ -59,7 +59,7 @@ void atlas::start_draw(IDirect3DTexture8* texture, D3DFORMAT format)
 		vertex::begin(D3DPT_TRIANGLELIST, true);
 		current_texture = { texture, format };
 	}
-	transpond_catch("atlas::start_draw(IDirect3DTexture8*)")
+	transpond_catch("atlas::start_draw(void*)")
 }
 
 void atlas::end_draw()
@@ -69,23 +69,22 @@ void atlas::end_draw()
 		if (current_texture.texture == nullptr)
 			return;
 
-		IDirect3DDevice8* device = gmapi->GetDirect3DDevice();
 		dword prev_pixel_shader = 0;
 
 		d3d_set_tex_all(-1);
-		D3DCheck(device->SetTexture(0, current_texture.texture), 0);
-		D3DCheck(device->SetTextureStageState(0, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP), 1);
-		D3DCheck(device->SetTextureStageState(0, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP), 2);
+		D3DCheck(d3d::set_texture(0, current_texture.texture), 0);
+		D3DCheck(d3d::set_tex_stage_state(0, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP), 1);
+		D3DCheck(d3d::set_tex_stage_state(0, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP), 2);
 
 		if (current_texture.format == D3DFMT_A8)  // 字体纹理
 		{
 			if (sdf::use_shader)
 			{
-				D3DCheck(device->GetPixelShader(&prev_pixel_shader), 3);
-				D3DCheck(device->SetPixelShader(sdf::shader), 4);
+				D3DCheck(d3d::get_pixel_shader(&prev_pixel_shader), 3);
+				D3DCheck(d3d::set_pixel_shader(sdf::shader), 4);
 
 				double sharpness = sdf::font_sharpness * sdf::game_font_size * 0.005;
-				double thickness = std::clamp((-(sdf::font_thickness - 500.0f) + 
+				double thickness = std::clamp((-(sdf::font_thickness - 500.0f) +
 					500.0f) / 1000.0f, 0.1f, 0.9f);
 
 				d3d_set_ps_const(0, sharpness, thickness, 0, 0);
@@ -93,27 +92,27 @@ void atlas::end_draw()
 			else
 			{
 				// 颜色 = 直接使用顶点颜色 (忽略纹理中不存在的RGB)
-				D3DCheck(device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1), 5);
-				D3DCheck(device->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_DIFFUSE), 6);
+				D3DCheck(d3d::set_tex_stage_state(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1), 5);
+				D3DCheck(d3d::set_tex_stage_state(0, D3DTSS_COLORARG1, D3DTA_DIFFUSE), 6);
 			}
 		}
 		else if (current_texture.format != D3DFMT_A8R8G8B8)
 			throw std::runtime_error("Unsupported texture format.");
 
 		vertex::end();
-		
+
 		if (current_texture.format == D3DFMT_A8)
 		{
 			if (sdf::use_shader)
-				D3DCheck(device->SetPixelShader(prev_pixel_shader), 7);
+				D3DCheck(d3d::set_pixel_shader(prev_pixel_shader), 7);
 			else
 			{
-				D3DCheck(device->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_MODULATE), 8);
-				D3DCheck(device->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_TEXTURE), 9);
-				D3DCheck(device->SetTextureStageState(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE), 10);
+				D3DCheck(d3d::set_tex_stage_state(0, D3DTSS_COLOROP, D3DTOP_MODULATE), 8);
+				D3DCheck(d3d::set_tex_stage_state(0, D3DTSS_COLORARG1, D3DTA_TEXTURE), 9);
+				D3DCheck(d3d::set_tex_stage_state(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE), 10);
 			}
 		}
-		
+
 		current_texture = { nullptr, D3DFMT_A8R8G8B8 };
 	}
 	transpond_catch("atlas::end_draw()")

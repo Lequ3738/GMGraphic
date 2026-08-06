@@ -8,7 +8,7 @@
 #include <math.h>
 #include <filesystem>
 #include "gmapi.h"
-#include "d3dx8.h"
+#include "d3d_adapter.h"
 #include "dxerr8.h"
 
 using path = std::filesystem::path;
@@ -55,9 +55,8 @@ constexpr double epsilon = 0.00001;
 #define d3dvar(x)           *((DWORD*)&x)                       // Float as dword pointer for D3D's more shitastic functions.
 #define d3dcheck(f)         return (double) (D3D_OK == (f))     // Returns status immediately.
 #define d3dfail(v,f)        if (D3D_OK != (f)) { return v; }    // Returns status only on fail.
-#define d3drs(state,value)  d3ddev->SetRenderState(state,value) // Guess.
+#define d3drs(state,value)  d3d::set_render_state((state),(value))  // 经适配器按后端分发
 #define d3dcrs(state,value) d3dcheck(d3drs(state,value))        // Set RS && return status immediately.
-#define d3dtex              IDirect3DTexture8
 
 // Buffer parameters
 #define fvf_default  ( D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1 ) // GM's FVF for D3D.
@@ -81,12 +80,14 @@ inline void D3DCheck(HRESULT result, int pos = 0)
 
 namespace atlas
 {
-	void start_draw(IDirect3DTexture8* texture, D3DFORMAT format);
+	// 纹理一律不透明 void*: D3D8/9 后端下它分别是 IDirect3DTexture8/9 对象,
+	// 共享代码绝不直接调它的方法, 只经 d3d:: 适配器。
+	void start_draw(void* texture, D3DFORMAT format);
 	void end_draw();
 
 	struct texture_info
 	{
-		IDirect3DTexture8* texture = nullptr;
+		void* texture = nullptr;
 		D3DFORMAT format = D3DFMT_A8R8G8B8;
 	};
 }

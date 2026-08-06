@@ -38,10 +38,10 @@ struct vs_conf
 struct tex_conf
 {
 	bool     set[8];  // Is this tex stage set?
-	d3dtex* tex[8];  // Texture pointer
+	void*    tex[8];  // Texture pointer(不透明: D3D8/9 纹理对象, 经 d3d:: 适配器使用)
 	dword    in[8];  // Texture interpolation mode
 	dword    xwrap[8];  // Texture wrapping modes
-	dword    ywrap[8];  // 
+	dword    ywrap[8];  //
 };
 
 // GM's default D3D type, 24 bytes.

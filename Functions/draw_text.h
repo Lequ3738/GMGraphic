@@ -45,7 +45,7 @@ namespace sdf
 		uint height = 0;							// 该图集的高
 
 		std::unordered_map<uint, glyph> glaph_map;	// 该图集含有的字形
-		IDirect3DTexture8* texture = nullptr;		// 该图集对应的 GPU 纹理
+		void* texture = nullptr;					// 该图集对应的 GPU 纹理(不透明: D3D8/9 纹理对象)
 
 		uint id = 0;								// 纹理图集 ID
 

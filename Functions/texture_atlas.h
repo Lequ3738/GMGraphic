@@ -86,7 +86,7 @@ struct texture_atlas
 	std::vector<images_ptr> images_list;	// 该纹理图集包含的图片
 	rbp::MaxRectsBinPack bin;				// 用于计算打包位置的矩形打包器
 
-	IDirect3DTexture8* texture = nullptr;	// 该图集对应的 GPU 纹理
+	void* texture = nullptr;				// 该图集对应的 GPU 纹理(不透明: D3D8/9 纹理对象)
 
 	uint id = 0;							// 纹理图集 ID
 
