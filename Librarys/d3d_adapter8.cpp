@@ -67,8 +67,9 @@ namespace d3d
         HRESULT delete_pixel_shader(DWORD handle) { return dev()->DeletePixelShader(handle); }
         HRESULT set_pixel_shader(DWORD handle)    { return dev()->SetPixelShader(handle); }
         HRESULT get_pixel_shader(DWORD* handle)   { return dev()->GetPixelShader(handle); }
-        HRESULT set_ps_const(DWORD reg, const float* v, DWORD count)
-        { return dev()->SetPixelShaderConstant(reg, v, count); }
+        // D3D8 无独立 int/bool 寄存器(SM1.x), 所有常量都是 4 分量 float 寄存器。
+        HRESULT set_ps_const_typed(DWORD reg, ConstKind /*kind*/, const float* v, DWORD count)
+        { return dev()->SetPixelShaderConstant(reg, (const DWORD*)v, count); }
 
         // ---- 顶点着色器: 声明 = [D3DX 常量表][D3DVSD 流] ----
         // 与旧 shader.cpp 逐字节一致: 常量表区固定 96*5 DWORD, D3DVSD 从其后开始。
@@ -116,15 +117,15 @@ namespace d3d
         // D3D8: FVF 与着色器是同一个入口, 用哪个由调用方语义决定。
         HRESULT set_vertex_shader(bool fvf_mode, DWORD fvf, DWORD handle)
         { return dev()->SetVertexShader(fvf_mode ? fvf : handle); }
-        HRESULT set_vs_const(DWORD reg, const float* v, DWORD count)
-        { return dev()->SetVertexShaderConstant(reg, v, count); }
+        HRESULT set_vs_const_typed(DWORD reg, ConstKind /*kind*/, const float* v, DWORD count)
+        { return dev()->SetVertexShaderConstant(reg, (const DWORD*)v, count); }
 
         // ---- HLSL(D3D8 不支持, 桩) ----
         HRESULT compile_hlsl(const char*, size_t, const char*, const char*,
                              std::vector<BYTE>&, void**, std::string*) { return E_NOTIMPL; }
         HRESULT constant_table_set_defaults(void*) { return E_NOTIMPL; }
         void*   constant_table_get_constant_by_name(void*, const char*) { return nullptr; }
-        int     constant_table_get_register(void*, void*) { return -1; }
+        UniformLoc constant_table_get_uniform(void*, void*) { return UniformLoc{}; }
         int     constant_table_get_sampler_register(void*, void*) { return -1; }
 
         // ---- 纹理桥(纹理一律不透明 void*) ----

@@ -104,8 +104,28 @@ namespace d3d
         { return dev()->SetPixelShader((IDirect3DPixelShader9*)handle); }
         HRESULT get_pixel_shader(DWORD* handle)
         { return dev()->GetPixelShader((IDirect3DPixelShader9**)handle); }
-        HRESULT set_ps_const(DWORD reg, const float* v, DWORD count)
-        { return dev()->SetPixelShaderConstantF(reg, v, count); }
+        // ---- 常量寄存器写入: 按类型分发(SM3.0 的 int/bool 寄存器组, SM2.0 恒 float) ----
+        HRESULT set_ps_const_typed(DWORD reg, ConstKind kind, const float* v, DWORD count)
+        {
+            switch (kind)
+            {
+            case CK_INT:
+            {
+                std::vector<int> iv((size_t)count * 4);   // count 个 int4 寄存器
+                for (size_t i = 0; i < iv.size(); ++i) iv[i] = (int)v[i];
+                return dev()->SetPixelShaderConstantI(reg, iv.data(), count);
+            }
+            case CK_BOOL:
+            {
+                std::vector<BOOL> bv((size_t)count * 4);
+                for (size_t i = 0; i < bv.size(); ++i) bv[i] = (v[i] >= 0.5f) ? TRUE : FALSE;
+                return dev()->SetPixelShaderConstantB(reg, bv.data(), count);
+            }
+            case CK_FLOAT:
+            default:
+                return dev()->SetPixelShaderConstantF(reg, v, count);
+            }
+        }
 
         // ---- 顶点着色器: D3D8 的 D3DVSD 声明 -> D3D9 的 D3DVERTEXELEMENT9 ----
         // 偏移必须与 vert_default(24B)/vert_ext(96B) 逐字节对上。
@@ -168,8 +188,27 @@ namespace d3d
             if (FAILED(hr)) return hr;
             return dev()->SetVertexShader((IDirect3DVertexShader9*)handle);
         }
-        HRESULT set_vs_const(DWORD reg, const float* v, DWORD count)
-        { return dev()->SetVertexShaderConstantF(reg, v, count); }
+        HRESULT set_vs_const_typed(DWORD reg, ConstKind kind, const float* v, DWORD count)
+        {
+            switch (kind)
+            {
+            case CK_INT:
+            {
+                std::vector<int> iv((size_t)count * 4);
+                for (size_t i = 0; i < iv.size(); ++i) iv[i] = (int)v[i];
+                return dev()->SetVertexShaderConstantI(reg, iv.data(), count);
+            }
+            case CK_BOOL:
+            {
+                std::vector<BOOL> bv((size_t)count * 4);
+                for (size_t i = 0; i < bv.size(); ++i) bv[i] = (v[i] >= 0.5f) ? TRUE : FALSE;
+                return dev()->SetVertexShaderConstantB(reg, bv.data(), count);
+            }
+            case CK_FLOAT:
+            default:
+                return dev()->SetVertexShaderConstantF(reg, v, count);
+            }
+        }
 
         // ---- HLSL(D3D9 专属): D3DXCompileShader + ID3DXConstantTable ----
         // 编译单文件单入口; 常量表随第 10 个出参返回(HLSL 专属, asm 走 D3DXAssembleShader)。
@@ -207,14 +246,25 @@ namespace d3d
             return (void*)((ID3DXConstantTable*)table)->GetConstantByName(nullptr, name);
         }
 
-        int constant_table_get_register(void* table, void* handle)
+        UniformLoc constant_table_get_uniform(void* table, void* handle)
         {
-            if (!table || !handle) return -1;
+            UniformLoc loc;
+            if (!table || !handle) return loc;
             D3DXCONSTANT_DESC desc{};
             UINT count = 1;
             if (FAILED(((ID3DXConstantTable*)table)->GetConstantDesc((D3DXHANDLE)handle, &desc, &count)))
-                return -1;
-            return (int)desc.RegisterIndex;
+                return loc;
+            loc.reg = (int)desc.RegisterIndex;
+            loc.count = (int)desc.RegisterCount;
+            // 寄存器组决定写入路径: SM3.0 int→INT4/bool→BOOL, SM2.0 全在 FLOAT4。
+            switch (desc.RegisterSet)
+            {
+            case D3DXRS_INT4:   loc.kind = CK_INT;   break;
+            case D3DXRS_BOOL:   loc.kind = CK_BOOL;  break;
+            case D3DXRS_FLOAT4:
+            default:            loc.kind = CK_FLOAT; break;
+            }
+            return loc;
         }
 
         int constant_table_get_sampler_register(void* table, void* handle)

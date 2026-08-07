@@ -46,6 +46,10 @@ struct UniformHandle
     int owner_shader = -1;   // 回指 shader, 用于销毁清理
     int ps_reg = -1;         // -1 = 该阶段未命中
     int vs_reg = -1;
+    int ps_kind = d3d::CK_FLOAT;   // 寄存器类型(ConstKind): SM3.0 才有 int/bool, SM2.0 恒 FLOAT
+    int vs_kind = d3d::CK_FLOAT;
+    int ps_count = 1;        // RegisterCount: BOOL 用(bool 标量=1, bool4=4); FLOAT/INT 恒 1
+    int vs_count = 1;
 };
 
 static std::unordered_map<int, ShaderBundle>  shaders;    // shader id → bundle
@@ -120,8 +124,10 @@ exp_real d3d_dev_get_tex_mem()
 //
 // 设计要点(权威: 桌面 "Shader API 设计.md"):
 //   - shader = bundle { vs, ps, 常量表 }; 空字符串阶段 = 不用(空 VS = passthrough FVF 固定管线)。
-//   - uniform 句柄 = 统一 map 索引(从 1 递增), 结构体 {ps_reg, vs_reg}; asm/HLSL 共用同一 map。
-//   - 写入一律按寄存器走 d3d::set_ps_const / d3d::set_vs_const, 与来源(asm/HLSL)无关。
+//   - uniform 句柄 = 统一 map 索引(从 1 递增), 结构体 {ps_reg, vs_reg, ps_kind, vs_kind};
+//     asm/HLSL 共用同一 map。kind(ConstKind) 记录寄存器类型 —— SM3.0 才有 int/bool 寄存器。
+//   - 写入按寄存器类型分发(set_*_const_typed): SM3.0 int→SetI/bool→SetB, SM2.0 恒 float→SetF。
+//     kind 由常量表 RegisterSet 自动判定, 与来源(asm/HLSL)无关, 无需按 profile 特判。
 //   - HLSL 仅 D3D9; D3D8 下 shader_create / shader_has_uniform 返回 -1 / gfalse。
 // ============================================================================
 
@@ -362,29 +368,39 @@ exp_real shader_get_uniform(double sh, const char* uni)
     bool has_hlsl = (b.ps_table || b.vs_table);
     if (has_hlsl)
     {
-        // HLSL: 按名字查常量表。无前缀 → 先 ps 后 vs; 同名两阶段都设(设计 §4.4)。
+        // HLSL: 按名字查常量表, 取寄存器号 + 类型(设计 §3/§4.4)。
+        // 无前缀 → 先 ps 后 vs; 同名两阶段都设。
         if (prefix == 0 || prefix == 1)
         {
-            uh.ps_reg = -1;
+            uh.ps_reg = -1; uh.ps_kind = d3d::CK_FLOAT; uh.ps_count = 1;
             if (b.ps_table)
             {
                 void* h = d3d::constant_table_get_constant_by_name(b.ps_table, name);
-                if (h) uh.ps_reg = d3d::constant_table_get_register(b.ps_table, h);
+                if (h)
+                {
+                    d3d::UniformLoc loc = d3d::constant_table_get_uniform(b.ps_table, h);
+                    uh.ps_reg = loc.reg; uh.ps_kind = loc.kind; uh.ps_count = loc.count;
+                }
             }
         }
         if (prefix == 0 || prefix == 2)
         {
-            uh.vs_reg = -1;
+            uh.vs_reg = -1; uh.vs_kind = d3d::CK_FLOAT; uh.vs_count = 1;
             if (b.vs_table)
             {
                 void* h = d3d::constant_table_get_constant_by_name(b.vs_table, name);
-                if (h) uh.vs_reg = d3d::constant_table_get_register(b.vs_table, h);
+                if (h)
+                {
+                    d3d::UniformLoc loc = d3d::constant_table_get_uniform(b.vs_table, h);
+                    uh.vs_reg = loc.reg; uh.vs_kind = loc.kind; uh.vs_count = loc.count;
+                }
             }
         }
     }
     else
     {
         // asm: uni 是寄存器数字串(设计约定)。无前缀 → 恒两阶段同号寄存器(设计 §3)。
+        // asm 恒 float 寄存器(ps_1.x/vs_1.x 无 int/bool), kind 保持默认 CK_FLOAT。
         int reg = atoi(name);
         if (prefix == 0)      { uh.ps_reg = reg; uh.vs_reg = reg; }
         else if (prefix == 1) { uh.ps_reg = reg; uh.vs_reg = -1; }
@@ -465,11 +481,19 @@ static void uniform_set_impl(double h, const float v[4])
         throw std::runtime_error("Invalid uniform handle.");
 
     const UniformHandle& uh = it->second;
-    if (uh.ps_reg >= 0) D3DCheck(d3d::set_ps_const((DWORD)uh.ps_reg, v, 1), 1);
-    if (uh.vs_reg >= 0) D3DCheck(d3d::set_vs_const((DWORD)uh.vs_reg, v, 1), 2);
+    // 按 uniform 声明的寄存器类型分发(SM3.0 int→SetI/bool→SetB; SM2.0 恒 float→SetF)。
+    // 标量/向量 setter 只提供 4 个值 = 一个向量: FLOAT/INT 恒 1 个寄存器(一个 float4/int4);
+    // BOOL 的 SM3.0 bN 每寄存器 1 个布尔, 写 RegisterCount 个(bool 标量=1, bool4=4)。
+    // count 这样取也避免了对矩阵 uniform(RegisterCount=4)用 _4f 时的越界读。
+    if (uh.ps_reg >= 0)
+        D3DCheck(d3d::set_ps_const_typed((DWORD)uh.ps_reg, (d3d::ConstKind)uh.ps_kind, v,
+            (uh.ps_kind == d3d::CK_BOOL) ? (DWORD)uh.ps_count : 1), 1);
+    if (uh.vs_reg >= 0)
+        D3DCheck(d3d::set_vs_const_typed((DWORD)uh.vs_reg, (d3d::ConstKind)uh.vs_kind, v,
+            (uh.vs_kind == d3d::CK_BOOL) ? (DWORD)uh.vs_count : 1), 2);
 }
 
-exp_real shader_set_uniform_4f(double h, double x, double y, double z, double w)
+exp_real shader_set_uniform_f(double h, double x, double y, double z, double w)
 {
     try
     {
@@ -477,22 +501,23 @@ exp_real shader_set_uniform_4f(double h, double x, double y, double z, double w)
         uniform_set_impl(h, v);
         return gtrue;
     }
-    simple_catch("shader_set_uniform_4f", gerror)
+    simple_catch("shader_set_uniform_f", gerror)
 }
 
-exp_real shader_set_uniform_4i(double h, double x, double y, double z, double w)
+exp_real shader_set_uniform_i(double h, double x, double y, double z, double w)
 {
-    // D3D9 SM2/3 无 int 寄存器(D3DX9 把 int 常量编进 float 寄存器), 整数以 float 写入。
+    // 值以 float 传入; 底层按 uniform 声明的寄存器类型分发 —— SM3.0 int uniform → SetI,
+    // SM2.0 无 int 寄存器(编译器编进 float)→ SetF。GML 侧 _i/_f 都可用同一句柄。
     try
     {
         float v[4] = { (float)x, (float)y, (float)z, (float)w };
         uniform_set_impl(h, v);
         return gtrue;
     }
-    simple_catch("shader_set_uniform_4i", gerror)
+    simple_catch("shader_set_uniform_i", gerror)
 }
 
-exp_real shader_set_uniform_4b(double h, double x, double y, double z, double w)
+exp_real shader_set_uniform_b(double h, double x, double y, double z, double w)
 {
     try
     {
@@ -505,7 +530,7 @@ exp_real shader_set_uniform_4b(double h, double x, double y, double z, double w)
         uniform_set_impl(h, v);
         return gtrue;
     }
-    simple_catch("shader_set_uniform_4b", gerror)
+    simple_catch("shader_set_uniform_b", gerror)
 }
 
 exp_real shader_set_uniform_color(double h, double col, double alpha)
@@ -570,18 +595,19 @@ exp_real shader_set_uniform_matrix(double h, double mtx_type, double size)
             memcpy(m, r, sizeof r);
         }
 
-        if (uh.ps_reg >= 0) D3DCheck(d3d::set_ps_const((DWORD)uh.ps_reg, m, (DWORD)regs), 4);
-        if (uh.vs_reg >= 0) D3DCheck(d3d::set_vs_const((DWORD)uh.vs_reg, m, (DWORD)regs), 5);
+        // 矩阵恒为 float4x4, 强制 float 寄存器(与声明的 float 类型一致)。
+        if (uh.ps_reg >= 0) D3DCheck(d3d::set_ps_const_typed((DWORD)uh.ps_reg, d3d::CK_FLOAT, m, (DWORD)regs), 4);
+        if (uh.vs_reg >= 0) D3DCheck(d3d::set_vs_const_typed((DWORD)uh.vs_reg, d3d::CK_FLOAT, m, (DWORD)regs), 5);
         return gtrue;
     }
     simple_catch("shader_set_uniform_matrix", gerror)
 }
 
 // ============================================================================
-// Sampler stages(对应旧 d3d_set_tex* 系列)
+// Sampler stages(GMS2 gpu_set_tex*_ext 家族)
 // ============================================================================
 
-// 绑定纹理到采样器 stage(旧 d3d_set_tex)。tex < 0 清空该 stage。
+// 绑定纹理到采样器(GMS2 texture_set_stage 同名)。tex < 0 清空该 stage。
 exp_real texture_set_stage(double samp, double tex)
 {
     uint s = (uint)samp;
@@ -613,16 +639,26 @@ void texture_clear_all()
         d3d::set_texture(i, nullptr);
 }
 
-// 设置采样器插值模式(旧 d3d_set_tex_int)。默认 nearest, 通常不理想。
-exp_real texture_set_stage_interpolation(double samp, double mode)
+// 采样器基础过滤(GMS2 gpu_set_texfilter_ext, 参数扩展为 D3D 过滤值)。
+// filter: 0=point(最近邻)/1=linear(双线性)/2=anisotropic/3=none。
+exp_real gpu_set_texfilter_ext(double sampler, double filter)
 {
-    dword s = (dword)samp;
+    dword s = (dword)sampler;
 
     if (s >= d3dcaps.max_tex_stages)
         return gerror;
 
-    if ((D3D_OK == d3d::set_tex_stage_state(s, D3DTSS_MAGFILTER, (dword)mode))
-        && (D3D_OK == d3d::set_tex_stage_state(s, D3DTSS_MINFILTER, (dword)mode)))
+    dword f = D3DTEXF_POINT;
+    switch ((int)filter)
+    {
+    case 1: f = D3DTEXF_LINEAR;     break;
+    case 2: f = D3DTEXF_ANISOTROPIC; break;
+    case 3: f = D3DTEXF_NONE;       break;
+    default: f = D3DTEXF_POINT;     break;
+    }
+
+    if ((D3D_OK == d3d::set_tex_stage_state(s, D3DTSS_MAGFILTER, f))
+        && (D3D_OK == d3d::set_tex_stage_state(s, D3DTSS_MINFILTER, f)))
     {
         return gtrue;
     }
@@ -630,11 +666,12 @@ exp_real texture_set_stage_interpolation(double samp, double mode)
     return gfalse;
 }
 
-// 对应旧 d3d_set_tex_wrap + border 色。h/v: 0 → clamp(D3DTADDRESS_CLAMP), 否则透传
-// D3DTADDRESS_* 值(WRAP=1/MIRROR=2/CLAMP=3/BORDER=4)。border_col 为 GM 颜色。
-exp_real texture_set_stage_repeat(double samp, double h, double v, double border_col)
+// 采样器寻址/循环(GMS2 gpu_set_texrepeat_ext, 扩展 h/v 双轴 + border 色)。
+// h/v: 0 → clamp(D3DTADDRESS_CLAMP), 否则透传 D3DTADDRESS_* 值(WRAP=1/MIRROR=2/CLAMP=3/BORDER=4)。
+// border_col 为 GM 颜色。
+exp_real gpu_set_texrepeat_ext(double sampler, double h, double v, double border_col)
 {
-    dword s = (dword)samp;
+    dword s = (dword)sampler;
 
     if (s >= d3dcaps.max_tex_stages)
         return gerror;
@@ -649,10 +686,33 @@ exp_real texture_set_stage_repeat(double samp, double h, double v, double border
     return SUCCEEDED(hr) ? gtrue : gfalse;
 }
 
-// 设置 border 模式使用的颜色(旧 d3d_set_tex_border)。
-exp_real texture_set_stage_border(double samp, double col, double alpha)
+// 各向异性过滤级别(GMS2 gpu_set_tex_max_aniso_ext)。值: 1,2,4,8,16。1=无, 默认 1。
+exp_real gpu_set_tex_max_aniso_ext(double sampler, double maxaniso)
 {
-    dword s = (dword)samp;
+    dword s = (dword)sampler;
+
+    if (s >= d3dcaps.max_tex_stages)
+        return gerror;
+
+    d3dcheck(d3d::set_tex_stage_state(s, D3DTSS_MAXANISOTROPY,
+        (dword)std::min((dword)maxaniso, d3dcaps.max_aniso)));
+}
+
+// Mip 过滤(GMS2 gpu_set_tex_mip_filter_ext)。0=none/1=point/3=linear。
+exp_real gpu_set_tex_mip_filter_ext(double sampler, double filter)
+{
+    dword s = (dword)sampler;
+
+    if (s >= d3dcaps.max_tex_stages)
+        return gerror;
+
+    d3dcheck(d3d::set_tex_stage_state(s, D3DTSS_MIPFILTER, (dword)filter));
+}
+
+// border 寻址模式颜色(D3D 扩展, GMS2 无对等)。tex_wrap_border(4) 模式用。
+exp_real gpu_set_tex_border_ext(double sampler, double col, double alpha)
+{
+    dword s = (dword)sampler;
 
     if (s >= d3dcaps.max_tex_stages)
         return gerror;
@@ -660,67 +720,29 @@ exp_real texture_set_stage_border(double samp, double col, double alpha)
     d3dcheck(d3d::set_tex_stage_state(s, D3DTSS_BORDERCOLOR, col_d3d((int)col, alpha)));
 }
 
-// 设置各向异性过滤级别(旧 d3d_set_tex_aniso)。值: 1,2,4,8,16。1=无, 默认 1。
-exp_real texture_set_stage_anisotropy(double samp, double aniso)
-{
-    dword s = (dword)samp;
-
-    if (s >= d3dcaps.max_tex_stages)
-        return gerror;
-
-    d3dcheck(d3d::set_tex_stage_state(s, D3DTSS_MAXANISOTROPY,
-        (dword)std::min((dword)aniso, d3dcaps.max_aniso)));
-}
-
-// 设置 mipmap 过滤模式(旧 d3d_set_tex_mip)。tex_int_nearest 或 tex_int_bilinear。
-exp_real texture_set_stage_mipmap(double samp, double mode)
-{
-    dword s = (dword)samp;
-
-    if (s >= d3dcaps.max_tex_stages)
-        return gerror;
-
-    d3dcheck(d3d::set_tex_stage_state(s, D3DTSS_MIPFILTER, (dword)mode));
-}
-
 // ============================================================================
-// Fog
+// Fog(GMS2 的 gpu_set_fog, 扩展 mode/density 保留 D3D 控制)
 // ============================================================================
 
-// Turn fog on or off.
-exp_real d3d_set_fog_state(double state) { d3dcrs(D3DRS_FOGENABLE, (state > 0.0)); }
-
-// Set the type of fog.  Use fog_type_ constants.  Linear by default.
-exp_real d3d_set_fog_type(double fog_type)
+// 合并旧 d3d_set_fog_* 6 个函数为一个 gpu_set_fog(不严格对齐 GMS2)。
+// mode: 0=线性(默认, 用 start/end)/1=exp/2=exp2(用 density)。
+// GML 传 4 参时 GM8 补 mode=0, density=0 → 线性 fog, 兼容 GMS2 的 gpu_set_fog(enable,col,start,end)。
+exp_real gpu_set_fog(double enable, double colour, double start, double end, double mode, double density)
 {
-    d3dcrs(D3DRS_FOGTABLEMODE, (dword)fog_type);
-}
+    int m = (int)mode;
+    if (m == 1)      m = D3DFOG_EXP;
+    else if (m == 2) m = D3DFOG_EXP2;
+    else             m = D3DFOG_LINEAR;   // 0 / 其它 → 线性
 
-// Controls density of exponential fog. 0-1.
-exp_real d3d_set_fog_density(double density)
-{
-    float d = (float)clamp(density, 0, 1);
-    d3dcrs(D3DRS_FOGDENSITY, d3dvar(d));
-}
+    float s = (float)start, e = (float)end, d = (float)clamp(density, 0, 1);
 
-// Set fog colour.
-exp_real d3d_set_fog_color(double col)
-{
-    d3dcrs(D3DRS_FOGCOLOR, col_d3d((int)col, 0.0));
-}
-
-// Set fog start.
-exp_real d3d_set_fog_start(double dist)
-{
-    float d = (float)dist;
-    d3dcrs(D3DRS_FOGSTART, d3dvar(d));
-}
-
-// Set fog end.
-exp_real d3d_set_fog_end(double dist)
-{
-    float d = (float)dist;
-    d3dcrs(D3DRS_FOGEND, d3dvar(d));
+    HRESULT hr = d3d::set_render_state(D3DRS_FOGENABLE, (enable > 0.0));
+    if (SUCCEEDED(hr)) hr = d3d::set_render_state(D3DRS_FOGCOLOR, col_d3d((int)colour, 0.0));
+    if (SUCCEEDED(hr)) hr = d3d::set_render_state(D3DRS_FOGTABLEMODE, (DWORD)m);
+    if (SUCCEEDED(hr)) hr = d3d::set_render_state(D3DRS_FOGSTART, d3dvar(s));
+    if (SUCCEEDED(hr)) hr = d3d::set_render_state(D3DRS_FOGEND, d3dvar(e));
+    if (SUCCEEDED(hr)) hr = d3d::set_render_state(D3DRS_FOGDENSITY, d3dvar(d));
+    return SUCCEEDED(hr) ? gtrue : gfalse;
 }
 
 // ============================================================================
@@ -779,75 +801,60 @@ exp_real d3d_set_point_sprite(double state)
 }
 
 // ============================================================================
-// Render control
+// Render control(GMS2 gpu_* 系列)
 // ============================================================================
 
-// Set colour writemask.
-// You can enable/disable writing of each channel independently. All enabled by default.
-exp_real d3d_set_mask(double r, double g, double b, double a)
+// 颜色写掩码(GMS2 gpu_set_colourwriteenable)。enable 总开关; 关闭时全部禁止写。
+// 各通道独立开/关, 全部启用时全开。默认全开。
+exp_real gpu_set_colourwriteenable(double enable, double r, double g, double b, double a)
 {
     if (!(d3dcaps.prim_misc_caps & D3DPMISCCAPS_COLORWRITEENABLE))
         return gfalse;
 
-    dword mask[4]{};
-    mask[0] = (r > 0.0) ? D3DCOLORWRITEENABLE_RED : 0;
-    mask[1] = (g > 0.0) ? D3DCOLORWRITEENABLE_GREEN : 0;
-    mask[2] = (b > 0.0) ? D3DCOLORWRITEENABLE_BLUE : 0;
-    mask[3] = (a > 0.0) ? D3DCOLORWRITEENABLE_ALPHA : 0;
-
-    d3dcrs(D3DRS_COLORWRITEENABLE, mask[0] | mask[1] | mask[2] | mask[3]);
-}
-
-// Set z-buffer writing.
-// Enabled by default. Disabling it prevents overwriting of the z-buffer.
-exp_real d3d_set_zwrite(double state)
-{
-    d3dcrs(D3DRS_ZWRITEENABLE, (state > 0.0));
-}
-
-// Prevents drawing of pixels that don't meet the given alpha criteria.
-// Use the cmp_ constants. Pass -1 as value to disable alpha testing.
-exp_real d3d_set_alphatest(double value, double mode)
-{
-    dword a, b, c;
-    if (value < 0.0)
+    if (enable > 0.0)
     {
-        d3dcrs(D3DRS_ALPHATESTENABLE, false);
+        dword mask[4]{};
+        mask[0] = (r > 0.0) ? D3DCOLORWRITEENABLE_RED : 0;
+        mask[1] = (g > 0.0) ? D3DCOLORWRITEENABLE_GREEN : 0;
+        mask[2] = (b > 0.0) ? D3DCOLORWRITEENABLE_BLUE : 0;
+        mask[3] = (a > 0.0) ? D3DCOLORWRITEENABLE_ALPHA : 0;
+        d3dcrs(D3DRS_COLORWRITEENABLE, mask[0] | mask[1] | mask[2] | mask[3]);
     }
     else
-    {
-        a = d3drs(D3DRS_ALPHATESTENABLE, true);
-        b = d3drs(D3DRS_ALPHAREF, (dword)clamp(value, 0x00000000, 0x000000FF));
-        c = d3drs(D3DRS_ALPHAFUNC, (dword)mode);
-    }
-
-    return (a == D3D_OK && b == D3D_OK && c == D3D_OK);
+        d3dcrs(D3DRS_COLORWRITEENABLE, 0);
 }
 
-// Prevents drawing of pixels that don't meet the given depth criteria.
-// Use the cmp_ constants. Defaults to <=. The other value is the current z-buffer value.
-exp_real d3d_set_ztest(double mode)
+// Z 缓冲写入(GMS2 gpu_set_zwriteenable)。默认启用; 关闭可防止覆盖 z-buffer。
+exp_real gpu_set_zwriteenable(double enable) { d3dcrs(D3DRS_ZWRITEENABLE, (enable > 0.0)); }
+
+// Z 测试开关(GMS2 gpu_set_ztestenable)。
+exp_real gpu_set_ztestenable(double enable) { d3dcrs(D3DRS_ZENABLE, (enable > 0.0)); }
+
+// Z 测试比较函数(GMS2 gpu_set_ztestfunc)。用 cmp_ 常量, 默认 <=。
+exp_real gpu_set_ztestfunc(double func)
 {
     if (!(d3dcaps.raster_caps & D3DPRASTERCAPS_ZTEST))
         return gfalse;
 
-    d3dcrs(D3DRS_ZFUNC, (dword)mode);
+    d3dcrs(D3DRS_ZFUNC, (dword)func);
 }
 
-// Offsets the drawing depth, allowing polygons with the same positions to be
-// drawn without z-fighting artifacts.  Useful for shadows, decals, etc.
-// Integer 0-16, defaults to 0. Higher values appear in front of lower ones.
-exp_real d3d_set_zbias(double bias)
-{
-    d3dcrs(D3DRS_ZBIAS, (uint)floor(clamp(bias, 0, 16)));
-}
+// Alpha 测试开关(GMS2 gpu_set_alphatestenable)。
+exp_real gpu_set_alphatestenable(double enable) { d3dcrs(D3DRS_ALPHATESTENABLE, (enable > 0.0)); }
 
-// Set how D3D renders polygons: point, wireframe or solid.
-// Use d3d_fillmode_ constants. Defaults to solid.
-exp_real d3d_set_fillmode(double mode) { d3dcrs(D3DRS_FILLMODE, (dword)mode); }
+// Alpha 测试参考值 0-255(GMS2 gpu_set_alphatestref)。低于此值的像素不绘制。
+exp_real gpu_set_alphatestref(double ref) { d3dcrs(D3DRS_ALPHAREF, (dword)clamp(ref, 0.0, 255.0)); }
 
-// Automatically normalises vectors when rendering.
-// Should solve problems with models changing brightness when scaled.
+// Alpha 测试比较函数(D3D 扩展, GMS2 无)。用 cmp_ 常量。
+exp_real gpu_set_alphatestfunc(double func) { d3dcrs(D3DRS_ALPHAFUNC, (dword)func); }
+
+// 深度偏移(GMS2 gpu_set_depth), 避免 z-fighting。整数 0-16, 默认 0。
+exp_real gpu_set_depth(double depth) { d3dcrs(D3DRS_ZBIAS, (uint)floor(clamp(depth, 0, 16))); }
+
+// 多边形填充模式: point/wireframe/solid(GMS2 gpu_set_fillmode)。默认 solid。
+exp_real gpu_set_fillmode(double mode) { d3dcrs(D3DRS_FILLMODE, (dword)mode); }
+
+// 自动归一化法线(GMS2 无对等, 保留 d3d_ 前缀)。解决模型缩放时亮度变化。
 exp_real d3d_set_normal_auto(double state)
 {
     d3dcrs(D3DRS_NORMALIZENORMALS, (state > 0.0));

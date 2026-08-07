@@ -37,6 +37,14 @@ namespace d3d
         char  adapter_desc[512];
     };
 
+    // ---- uniform 常量寄存器类型 ----
+    // SM3.0 才有独立的 int(iN)/bool(bN) 寄存器组; SM2.0 与 D3D8 所有常量都在 float 寄存器,
+    // 编译器会把 int/bool uniform 编进 float 寄存器 → 常量表 RegisterSet 报 FLOAT4, 自然回退。
+    enum ConstKind : int { CK_NONE = -1, CK_FLOAT = 0, CK_INT = 1, CK_BOOL = 2 };
+    // count = D3DXCONSTANT_DESC.RegisterCount(占用的寄存器数): FLOAT/INT 按 int4 计(标量/向量=1),
+    // BOOL 按单个布尔寄存器计(bool 标量=1, bool4=4)。写入时 FLOAT/INT 恒用 1(BOOL 用 count)。
+    struct UniformLoc { int reg = -1; int kind = CK_NONE; int count = 1; };   // kind 取 ConstKind
+
     // ---- 初始化 / 检测 ----
     int  version();                          // 惰性检测并缓存; 未初始化时默认 V8
     void ensure_version(void* device, void* iface);
@@ -60,19 +68,19 @@ namespace d3d
         HRESULT delete_pixel_shader(DWORD);
         HRESULT set_pixel_shader(DWORD);
         HRESULT get_pixel_shader(DWORD*);
-        HRESULT set_ps_const(DWORD, const float*, DWORD);
+        HRESULT set_ps_const_typed(DWORD, ConstKind, const float*, DWORD);
 
         HRESULT create_vertex_shader(VertexFmt, const BYTE*, const BYTE*, size_t, DWORD*);
         HRESULT delete_vertex_shader(DWORD);
         HRESULT set_vertex_shader(bool fvf_mode, DWORD fvf, DWORD handle);
-        HRESULT set_vs_const(DWORD, const float*, DWORD);
+        HRESULT set_vs_const_typed(DWORD, ConstKind, const float*, DWORD);
 
         // HLSL 依赖 D3DX9 常量表, D3D8 不支持 —— 桩实现(一律失败/返回空)。
         HRESULT compile_hlsl(const char*, size_t, const char*, const char*,
                              std::vector<BYTE>&, void**, std::string*);
         HRESULT constant_table_set_defaults(void*);
         void*   constant_table_get_constant_by_name(void*, const char*);
-        int     constant_table_get_register(void*, void*);
+        UniformLoc constant_table_get_uniform(void*, void*);   // 返回 {寄存器号, ConstKind}; 失败 reg=-1
         int     constant_table_get_sampler_register(void*, void*);
 
         HRESULT set_texture(DWORD, void*);
@@ -98,12 +106,12 @@ namespace d3d
         HRESULT delete_pixel_shader(DWORD);
         HRESULT set_pixel_shader(DWORD);
         HRESULT get_pixel_shader(DWORD*);
-        HRESULT set_ps_const(DWORD, const float*, DWORD);
+        HRESULT set_ps_const_typed(DWORD, ConstKind, const float*, DWORD);
 
         HRESULT create_vertex_shader(VertexFmt, const BYTE*, const BYTE*, size_t, DWORD*);
         HRESULT delete_vertex_shader(DWORD);
         HRESULT set_vertex_shader(bool fvf_mode, DWORD fvf, DWORD handle);
-        HRESULT set_vs_const(DWORD, const float*, DWORD);
+        HRESULT set_vs_const_typed(DWORD, ConstKind, const float*, DWORD);
 
         // HLSL(D3D9 专属): D3DXCompileShader + ID3DXConstantTable, 常量表是 COM 对象,
         // 用公共 release(void*) 释放。table 可为空(如 compile_hlsl 失败时不写)。
@@ -111,7 +119,7 @@ namespace d3d
                              std::vector<BYTE>& code, void** table, std::string* err);
         HRESULT constant_table_set_defaults(void* table);
         void*   constant_table_get_constant_by_name(void* table, const char* name);
-        int     constant_table_get_register(void* table, void* handle);          // 普通常量寄存器号
+        UniformLoc constant_table_get_uniform(void* table, void* handle);        // {寄存器号, ConstKind}; 失败 reg=-1
         int     constant_table_get_sampler_register(void* table, void* handle);  // 采样器寄存器号(sN), 非采样器返回 -1
 
         HRESULT set_texture(DWORD, void*);
@@ -148,8 +156,8 @@ namespace d3d
     { return version() == V9 ? impl9::set_pixel_shader(handle) : impl8::set_pixel_shader(handle); }
     inline HRESULT get_pixel_shader(DWORD* handle)
     { return version() == V9 ? impl9::get_pixel_shader(handle) : impl8::get_pixel_shader(handle); }
-    inline HRESULT set_ps_const(DWORD reg, const float* v, DWORD count)
-    { return version() == V9 ? impl9::set_ps_const(reg, v, count) : impl8::set_ps_const(reg, v, count); }
+    inline HRESULT set_ps_const_typed(DWORD reg, ConstKind kind, const float* v, DWORD count)
+    { return version() == V9 ? impl9::set_ps_const_typed(reg, kind, v, count) : impl8::set_ps_const_typed(reg, kind, v, count); }
 
     inline HRESULT create_vertex_shader(VertexFmt fmt, const BYTE* code, const BYTE* constants, size_t constants_sz, DWORD* handle)
     { return version() == V9 ? impl9::create_vertex_shader(fmt, code, constants, constants_sz, handle) : impl8::create_vertex_shader(fmt, code, constants, constants_sz, handle); }
@@ -157,8 +165,8 @@ namespace d3d
     { return version() == V9 ? impl9::delete_vertex_shader(handle) : impl8::delete_vertex_shader(handle); }
     inline HRESULT set_vertex_shader(bool fvf_mode, DWORD fvf, DWORD handle)
     { return version() == V9 ? impl9::set_vertex_shader(fvf_mode, fvf, handle) : impl8::set_vertex_shader(fvf_mode, fvf, handle); }
-    inline HRESULT set_vs_const(DWORD reg, const float* v, DWORD count)
-    { return version() == V9 ? impl9::set_vs_const(reg, v, count) : impl8::set_vs_const(reg, v, count); }
+    inline HRESULT set_vs_const_typed(DWORD reg, ConstKind kind, const float* v, DWORD count)
+    { return version() == V9 ? impl9::set_vs_const_typed(reg, kind, v, count) : impl8::set_vs_const_typed(reg, kind, v, count); }
 
     // HLSL(D3D9 专属; D3D8 走 impl8 桩, 一律失败/返回空)。
     inline HRESULT compile_hlsl(const char* src, size_t len, const char* entry, const char* profile,
@@ -169,8 +177,8 @@ namespace d3d
     { return version() == V9 ? impl9::constant_table_set_defaults(table) : impl8::constant_table_set_defaults(table); }
     inline void* constant_table_get_constant_by_name(void* table, const char* name)
     { return version() == V9 ? impl9::constant_table_get_constant_by_name(table, name) : impl8::constant_table_get_constant_by_name(table, name); }
-    inline int constant_table_get_register(void* table, void* handle)
-    { return version() == V9 ? impl9::constant_table_get_register(table, handle) : impl8::constant_table_get_register(table, handle); }
+    inline UniformLoc constant_table_get_uniform(void* table, void* handle)
+    { return version() == V9 ? impl9::constant_table_get_uniform(table, handle) : impl8::constant_table_get_uniform(table, handle); }
     inline int constant_table_get_sampler_register(void* table, void* handle)
     { return version() == V9 ? impl9::constant_table_get_sampler_register(table, handle) : impl8::constant_table_get_sampler_register(table, handle); }
 

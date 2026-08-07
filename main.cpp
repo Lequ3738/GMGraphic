@@ -84,13 +84,13 @@ void atlas::end_draw()
 				shader_set(sdf::shader);
 
 				// 保持旧 d3d_set_ps_const 的 ps_1.4 寄存器 [-1,1] clamp 行为,
-				// 避免新 shader_set_uniform_4f(不 clamp)改变 SDF 文字锐度。
+				// 避免新 shader_set_uniform_f(不 clamp)改变 SDF 文字锐度。
 				double sharpness = std::clamp(sdf::font_sharpness * sdf::game_font_size * 0.005,
 					-1.0, 1.0);
 				double thickness = std::clamp((-(sdf::font_thickness - 500.0f) +
 					500.0f) / 1000.0f, 0.1f, 0.9f);
 
-				shader_set_uniform_4f(sdf_shader_uniform, sharpness, thickness, 0, 0);
+				shader_set_uniform_f(sdf_shader_uniform, sharpness, thickness, 0, 0);
 			}
 			else
 			{

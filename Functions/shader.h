@@ -51,31 +51,34 @@ exp_real shader_get_uniform(double sh, const char* uni);
 exp_real shader_has_uniform(double sh, const char* uni);      // HLSL 专用(D3D9), 依赖常量表
 exp_real shader_get_sampler_index(double sh, const char* uni);// 采样器句柄, 配 texture_set_stage
 
-// uniform 写入: 固定参导出, GML 层变参脚本分发到 _4f/_4i/_4b。
-exp_real shader_set_uniform_4f(double h, double x, double y, double z, double w);
-exp_real shader_set_uniform_4i(double h, double x, double y, double z, double w);
-exp_real shader_set_uniform_4b(double h, double x, double y, double z, double w);
+// uniform 写入: 固定参导出, GML 层变参脚本分发到 _f/_i/_b。
+exp_real shader_set_uniform_f(double h, double x, double y, double z, double w);
+exp_real shader_set_uniform_i(double h, double x, double y, double z, double w);
+exp_real shader_set_uniform_b(double h, double x, double y, double z, double w);
 exp_real shader_set_uniform_color(double h, double col, double alpha);
 // mtx_type 掩码: world=1 / view=2 / projection=4 / wvp=7(gm82dx9 式)。size = 写几个寄存器(默认 4)。
 exp_real shader_set_uniform_matrix(double h, double mtx_type, double size);
 
-// 采样器 stage(对应旧 d3d_set_tex* 系列)。
+// 采样器 stage。绑纹理用 texture_set_stage(GMS2 同名); 参数控制用 gpu_set_tex*_ext(GMS2 gpu_* 家族)。
 exp_real texture_set_stage(double samp, double tex);
-exp_real texture_set_stage_interpolation(double samp, double mode);
-exp_real texture_set_stage_repeat(double samp, double h, double v, double border_col);  // 0→clamp, border_col 为 GM 颜色
-exp_real texture_set_stage_border(double samp, double col, double alpha);
-exp_real texture_set_stage_anisotropy(double samp, double aniso);
-exp_real texture_set_stage_mipmap(double samp, double mode);
+// GMS2 gpu_set_texfilter_ext, 参数扩展为 D3D 过滤值: 0=point/1=linear/2=anisotropic/3=none。
+exp_real gpu_set_texfilter_ext(double sampler, double filter);
+// GMS2 gpu_set_texrepeat_ext, 扩展 h/v 双轴寻址 + border 色(0→clamp, 否则 D3DTADDRESS_* 值)。
+exp_real gpu_set_texrepeat_ext(double sampler, double h, double v, double border_col);
+// GMS2 gpu_set_tex_max_aniso_ext。值 1,2,4,8,16。1=无。
+exp_real gpu_set_tex_max_aniso_ext(double sampler, double maxaniso);
+// GMS2 gpu_set_tex_mip_filter_ext。0=none/1=point/3=linear。
+exp_real gpu_set_tex_mip_filter_ext(double sampler, double filter);
+// D3D 扩展(无 GMS2 对等): border 寻址模式用的颜色。
+exp_real gpu_set_tex_border_ext(double sampler, double col, double alpha);
 
 // 内部助手(不导出): 清空所有纹理 stage。
 void texture_clear_all();
 
-exp_real d3d_set_fog_state(double state);
-exp_real d3d_set_fog_type(double fog_type);
-exp_real d3d_set_fog_density(double density);
-exp_real d3d_set_fog_color(double col);
-exp_real d3d_set_fog_start(double dist);
-exp_real d3d_set_fog_end(double dist);
+// ---- GPU Control(GMS2 gpu_* 系列)----
+// Fog 合并成一个 gpu_set_fog(不严格对齐 GMS2, 扩展 mode/density 保留 D3D 控制)。
+// mode: 0=线性(默认, 用 start/end)/1=exp/2=exp2(用 density)。GML 传 4 参 → GM8 补 mode=0/density=0。
+exp_real gpu_set_fog(double enable, double colour, double start, double end, double mode, double density);
 
 exp_real d3d_set_point_size(double size);
 exp_real d3d_set_point_size_min(double size);
@@ -84,13 +87,17 @@ exp_real d3d_set_point_scale(double state);
 exp_real d3d_set_point_scale_coef(double coef1, double coef2, double coef3);
 exp_real d3d_set_point_sprite(double state);
 
-exp_real d3d_set_mask(double r, double g, double b, double a);
-exp_real d3d_set_zwrite(double state);
-exp_real d3d_set_alphatest(double value, double mode);
-exp_real d3d_set_ztest(double mode);
-exp_real d3d_set_zbias(double bias);
-exp_real d3d_set_fillmode(double mode);
-exp_real d3d_set_normal_auto(double state);
+// 颜色写掩码(GMS2 gpu_set_colourwriteenable): enable 总开关 + 各通道。全部启用时全开。
+exp_real gpu_set_colourwriteenable(double enable, double r, double g, double b, double a);
+exp_real gpu_set_zwriteenable(double enable);   // GMS2 同名, Z 缓冲写入
+exp_real gpu_set_ztestenable(double enable);    // GMS2 同名, Z 测试开关(拆自 d3d_set_ztest)
+exp_real gpu_set_ztestfunc(double func);        // GMS2 同名, Z 比较函数
+exp_real gpu_set_alphatestenable(double enable);// GMS2 同名, Alpha 测试开关(拆自 d3d_set_alphatest)
+exp_real gpu_set_alphatestref(double ref);      // GMS2 同名, 参考值 0-255
+exp_real gpu_set_alphatestfunc(double func);    // D3D 扩展, Alpha 比较函数
+exp_real gpu_set_depth(double depth);           // GMS2 同名, 深度偏移(原 d3d_set_zbias)
+exp_real gpu_set_fillmode(double mode);         // GMS2 同名
+exp_real d3d_set_normal_auto(double state);     // GMS2 无对等, 保留 d3d_
 exp_real d3d_use_ext_vertex_format(gm_real use);
 
 exp_real d3d_primitive_begin_ext(double primitive, double textured);
