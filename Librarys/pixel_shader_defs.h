@@ -3,7 +3,7 @@
 constexpr const char* ps_sdf = ""
 "ps.1.4"																				"\r\n"
 ""																						"\r\n"
-// c0(scale/thickness) 由 d3d_set_ps_const(0,...) 运行时设置, 不能 def c0 —— D3D9 的 def 优先于 API 常量(2026-08-06)
+// c0(scale/thickness) 由运行时设置
 "									// c0.y: The thickness value of the text"			"\r\n"
 "def		c1, 0.0625, 0, 0, 0		// c1.x: the compensation of mad_x8 (0.5 / 8)"		"\r\n"
 ""																						"\r\n"
@@ -21,7 +21,7 @@ constexpr const char* ps_sdf = ""
 constexpr const char* ps_sdf_premul = ""
 "ps.1.4"																				"\r\n"
 ""																						"\r\n"
-// c0(scale/thickness) 由 d3d_set_ps_const(0,...) 运行时设置, 不能 def c0 —— D3D9 的 def 优先于 API 常量(2026-08-06)
+// c0(scale/thickness) 由运行时设置
 "									// c0.y: The thickness value of the text"			"\r\n"
 "def		c1, 0.0625, 0, 0, 0		// c1.x: the compensation of mad_x8 (0.5 / 8)"		"\r\n"
 ""																						"\r\n"
@@ -36,3 +36,39 @@ constexpr const char* ps_sdf_premul = ""
 ""																						"\r\n"
 "mul		r0,      r0, v0		// Blend"												"\r\n"
 "mul		r0.rgb,  r0, r0.a	// Pre-multiplied alpha"								"\r\n";
+
+// ============================================================================
+// DX9 专用: MapLibre 风格 smoothstep SDF 像素着色器(ps-only, HLSL)。
+// 与 asm 版(ps_sdf)关系: 同一套顶点输入(t0/v0) + 同一张 A8 图集纹理, 仅阈值公式不同:
+//   asm  = sat(32*scale*(dist - thickness) + 0.0625)                    (线性斜坡)
+//   HLSL = smoothstep(u_buffer - u_gamma, u_buffer + u_gamma, dist)     (平滑阈值)
+// 颜色都取 v0(顶点色, 支持四角渐变); premul 版本再做 rgb *= a。
+// 编译入口 mainPS; 源码不含 "mainVS" → 顶点阶段自动 passthrough(Option A, FVF)。
+// ============================================================================
+
+constexpr const char* ps_sdf_hlsl = ""
+"sampler2D u_texture;"															"\r\n"
+"float u_buffer;    // SDF 阈值(thickness): 0.1~0.9, 默认 0.5"					"\r\n"
+"float u_gamma;     // 边缘软度(与 sharpness 成反比), 默认约 0.03"					"\r\n"
+""																				"\r\n"
+"float4 mainPS(float2 v_texcoord : TEXCOORD0,"									"\r\n"
+"              float4 v_color    : COLOR0) : COLOR0"							"\r\n"
+"{"																				"\r\n"
+"    float dist = tex2D(u_texture, v_texcoord).a;  // A8 图集 → alpha"			"\r\n"
+"    float alpha = smoothstep(u_buffer - u_gamma, u_buffer + u_gamma, dist);"	"\r\n"
+"    return float4(v_color.rgb, alpha * v_color.a);"							"\r\n"
+"}"																				"\r\n";
+
+constexpr const char* ps_sdf_hlsl_premul = ""
+"sampler2D u_texture;"															"\r\n"
+"float u_buffer;"																"\r\n"
+"float u_gamma;"																"\r\n"
+""																				"\r\n"
+"float4 mainPS(float2 v_texcoord : TEXCOORD0,"									"\r\n"
+"              float4 v_color    : COLOR0) : COLOR0"							"\r\n"
+"{"																				"\r\n"
+"    float dist = tex2D(u_texture, v_texcoord).a;"								"\r\n"
+"    float alpha = smoothstep(u_buffer - u_gamma, u_buffer + u_gamma, dist);"	"\r\n"
+"    float a = alpha * v_color.a;   // 与 asm premul(mul r0,r0,v0 后 rgb*=a)一致"	"\r\n"
+"    return float4(v_color.rgb * a, a);"										"\r\n"
+"}"																				"\r\n";

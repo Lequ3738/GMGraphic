@@ -58,9 +58,11 @@ static int shader_id_counter = 1;                          // 从 1 递增(0 保
 static int uniform_counter = 1;
 static int current_shader = -1;                            // shader_current() 用
 
-int sdf_shader = -1;          // SDF 字体着色器(id, init() 里创建)
+int sdf_shader = -1;          // SDF 字体着色器(id, init() 里按后端创建)
 int sdf_shader_premul = -1;
-int sdf_shader_uniform = -1;  // c0(scale/thickness) 的 uniform 句柄 = shader_get_uniform(sdf_shader, "ps.0")
+int sdf_shader_uniform = -1;  // DX8: c0(scale/thickness) 的 uniform 句柄 = shader_get_uniform(sdf_shader, "ps.0")
+int sdf_shader_uniform_buffer = -1;   // DX9: "u_buffer"(thickness) 句柄
+int sdf_shader_uniform_gamma = -1;    // DX9: "u_gamma"(边缘软度) 句柄
 
 // ============================================================================
 // Initialisation
@@ -75,10 +77,25 @@ exp_real init(gm_real arg_list)
 
     gm::argument_list = (int)arg_list;
 
-    sdf_shader        = (int)shader_create_asm("", ps_sdf);
-    sdf_shader_premul = (int)shader_create_asm("", ps_sdf_premul);
-    sdf_shader_uniform = (int)shader_get_uniform(sdf_shader, "ps.0");   // 只写 ps 寄存器 0
-    sdf::shader       = sdf_shader;
+    // SDF 字体着色器按后端创建: DX8 走 asm ps_1.4(ps_sdf); DX9 走 HLSL ps_2_0/3_0
+    // (ps_sdf_hlsl, MapLibre 风格 smoothstep 阈值)。uniform 句柄随之取:
+    // asm 用寄存器串 "ps.0", HLSL 用常量名 "u_buffer"/"u_gamma"。
+    // init() 在 is_d3d9() 定义之前, 直接用 d3d::version() 判定。
+    if (d3d::version() == d3d::V9)
+    {
+        sdf_shader        = (int)shader_create(ps_sdf_hlsl, "", "mainPS");
+        sdf_shader_premul = (int)shader_create(ps_sdf_hlsl_premul, "", "mainPS");
+        // 两个 shader 声明序一致(u_buffer 在前), 寄存器相同, 句柄可通用。
+        sdf_shader_uniform_buffer = (int)shader_get_uniform(sdf_shader, "u_buffer");
+        sdf_shader_uniform_gamma  = (int)shader_get_uniform(sdf_shader, "u_gamma");
+    }
+    else
+    {
+        sdf_shader         = (int)shader_create_asm("", ps_sdf);
+        sdf_shader_premul  = (int)shader_create_asm("", ps_sdf_premul);
+        sdf_shader_uniform = (int)shader_get_uniform(sdf_shader, "ps.0");   // 只写 ps 寄存器 0
+    }
+    sdf::shader = sdf_shader;
 
     return gtrue;
 }
@@ -133,7 +150,11 @@ exp_real d3d_dev_get_tex_mem()
 
 static bool is_d3d9() { return d3d::version() == d3d::V9; }
 
-// HLSL profile 自适应(设计 §4.3): SM2.0 与 SM3.0 语法完全相同, 只是能力上限不同。
+// 像素着色器 profile: 有 VS 时按设备能力选 SM3.0/SM2.0; 无 VS(ps-only, FVF 固定管线)强制 ps_2_0。
+// 原因(2026-08-07 IDA + 实测): ps_3_0 反汇编输入为 `dcl_texcoord v0` + `dcl_color v1`,
+// 而固定管线(FVF, 无 VS)只把插值喂到 ps_2.x 的 t0(texcoord)/v0(color)寄存器;
+// ps_3_0 拿到的 v0/v1 为 0 → 采样 dist=0 → 输出全透明。ps_2_0(dcl t0/dcl v0)正常。
+// 见 shader_create 里 b.vs 判定。
 static const char* ps_profile()
 {
     return (d3dcaps.pixel_shader_version >= D3DPS_VERSION(3, 0)) ? "ps_3_0" : "ps_2_0";
@@ -222,7 +243,10 @@ exp_real shader_create(const char* src, const char* vs_entry, const char* ps_ent
         if (!is_d3d9()) return gerror;   // HLSL 仅 D3D9(设计 §5)
 
         compile_hlsl_stage(src, vs_entry, "mainVS", vs_profile(), true,  b);
-        compile_hlsl_stage(src, ps_entry, "mainPS", ps_profile(), false, b);
+        // 无 VS(ps-only)→ 固定管线 FVF 模式, ps_3_0 的 v0/v1 输入路由失败(实测全透明),
+        // 强制 ps_2_0; 有 VS(顶点声明喂输入)则按设备能力选 ps_3_0。
+        const char* psp = b.vs ? ps_profile() : "ps_2_0";
+        compile_hlsl_stage(src, ps_entry, "mainPS", psp, false, b);
 
         if (!b.vs && !b.ps) return gerror;   // 双 passthrough 没意义 → -1
 
@@ -854,8 +878,8 @@ exp_real gpu_set_depth(double depth) { d3dcrs(D3DRS_ZBIAS, (uint)floor(clamp(dep
 // 多边形填充模式: point/wireframe/solid(GMS2 gpu_set_fillmode)。默认 solid。
 exp_real gpu_set_fillmode(double mode) { d3dcrs(D3DRS_FILLMODE, (dword)mode); }
 
-// 自动归一化法线(GMS2 无对等, 保留 d3d_ 前缀)。解决模型缩放时亮度变化。
-exp_real d3d_set_normal_auto(double state)
+// 自动归一化法线(GMS2 无对等, gpu_ 扩展)。解决模型缩放时亮度变化。
+exp_real gpu_set_normal_auto(double state)
 {
     d3dcrs(D3DRS_NORMALIZENORMALS, (state > 0.0));
 }

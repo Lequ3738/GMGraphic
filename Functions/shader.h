@@ -11,10 +11,13 @@ extern bool vbuff_autoinc;
 extern bool vbuff_use_struct;
 extern bool vbuff_use_ext;
 
-// SDF 字体着色器(asm ps_1.4)的 shader id 与 uniform 句柄。init() 里创建。
+// SDF 字体着色器。init() 里按后端创建:
+//   DX8 = asm ps_1.4(ps_sdf / ps_sdf_premul); DX9 = HLSL ps_2_0/3_0(ps_sdf_hlsl, smoothstep 阈值)。
 extern int sdf_shader;
 extern int sdf_shader_premul;
-extern int sdf_shader_uniform;   // c0(scale/thickness) 的 uniform 句柄 = shader_get_uniform(sdf_shader, "ps.0")
+extern int sdf_shader_uniform;          // DX8: c0(scale/thickness) 句柄 = shader_get_uniform(sdf_shader, "ps.0")
+extern int sdf_shader_uniform_buffer;   // DX9: "u_buffer"(thickness) 句柄
+extern int sdf_shader_uniform_gamma;    // DX9: "u_gamma"(边缘软度) 句柄
 
 namespace gm
 {
@@ -97,15 +100,14 @@ exp_real gpu_set_alphatestref(double ref);      // GMS2 同名, 参考值 0-255
 exp_real gpu_set_alphatestfunc(double func);    // D3D 扩展, Alpha 比较函数
 exp_real gpu_set_depth(double depth);           // GMS2 同名, 深度偏移(原 d3d_set_zbias)
 exp_real gpu_set_fillmode(double mode);         // GMS2 同名
-exp_real d3d_set_normal_auto(double state);     // GMS2 无对等, 保留 d3d_
-exp_real d3d_use_ext_vertex_format(gm_real use);
+exp_real gpu_set_normal_auto(double state);     // 自动归一化法线(GMS2 无对等, gpu_ 扩展)
 
+exp_real d3d_use_ext_vertex_format(gm_real use);
 exp_real d3d_primitive_begin_ext(double primitive, double textured);
 exp_real d3d_vertex_ext(double x, double y, double z, double nx, double ny, double nz, double col, double alpha, double speccol, double specalpha);
 exp_real d3d_vertex_ext_tex(double set, double xtex, double ytex);
 exp_real d3d_vertex_ext_next();
 exp_real d3d_primitive_end_ext();
-
 exp_real draw_primitive_begin_ext(double primitive, double textured);
 exp_real draw_vertex_ext(double x, double y, double col, double alpha, double speccol, double specalpha);
 exp_real draw_vertex_ext_tex(double set, double xtex, double ytex);
