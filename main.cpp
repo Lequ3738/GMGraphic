@@ -33,12 +33,12 @@ bool WINAPI DllMain(HINSTANCE aModuleHandle, int aReason, int aReserved)
 		case DLL_PROCESS_DETACH:
 		{
 			// 如下内容提前清理，确保不会发生全局变量析构顺序问题。
-			game_texture_atlas.clear();  
+			game_texture_atlas.clear();
 			game_sdf_glyphs.clear();
 
-			d3d_ps_destroy((double)ps_sdf_comp);
-			d3d_ps_destroy((double)ps_sdf_premul_comp);
-			
+			shader_destroy((double)sdf_shader);
+			shader_destroy((double)sdf_shader_premul);
+
 			gmapi->Destroy();
 		}
 		break;
@@ -69,9 +69,9 @@ void atlas::end_draw()
 		if (current_texture.texture == nullptr)
 			return;
 
-		dword prev_pixel_shader = 0;
+		int prev_shader = -1;
 
-		d3d_set_tex_all(-1);
+		texture_clear_all();
 		D3DCheck(d3d::set_texture(0, current_texture.texture), 0);
 		D3DCheck(d3d::set_tex_stage_state(0, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP), 1);
 		D3DCheck(d3d::set_tex_stage_state(0, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP), 2);
@@ -80,14 +80,17 @@ void atlas::end_draw()
 		{
 			if (sdf::use_shader)
 			{
-				D3DCheck(d3d::get_pixel_shader(&prev_pixel_shader), 3);
-				D3DCheck(d3d::set_pixel_shader(sdf::shader), 4);
+				prev_shader = (int)shader_current();
+				shader_set(sdf::shader);
 
-				double sharpness = sdf::font_sharpness * sdf::game_font_size * 0.005;
+				// 保持旧 d3d_set_ps_const 的 ps_1.4 寄存器 [-1,1] clamp 行为,
+				// 避免新 shader_set_uniform_4f(不 clamp)改变 SDF 文字锐度。
+				double sharpness = std::clamp(sdf::font_sharpness * sdf::game_font_size * 0.005,
+					-1.0, 1.0);
 				double thickness = std::clamp((-(sdf::font_thickness - 500.0f) +
 					500.0f) / 1000.0f, 0.1f, 0.9f);
 
-				d3d_set_ps_const(0, sharpness, thickness, 0, 0);
+				shader_set_uniform_4f(sdf_shader_uniform, sharpness, thickness, 0, 0);
 			}
 			else
 			{
@@ -104,7 +107,7 @@ void atlas::end_draw()
 		if (current_texture.format == D3DFMT_A8)
 		{
 			if (sdf::use_shader)
-				D3DCheck(d3d::set_pixel_shader(prev_pixel_shader), 7);
+				shader_set(prev_shader);
 			else
 			{
 				D3DCheck(d3d::set_tex_stage_state(0, D3DTSS_COLOROP, D3DTOP_MODULATE), 8);

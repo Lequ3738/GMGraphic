@@ -17,7 +17,7 @@ float sdf::game_font_size = 16.0f;
 float sdf::line_spacing = 1.0f;
 bool sdf::per_line_halign = false;
 bool sdf::use_shader = true;
-dword sdf::shader = NULL;
+int sdf::shader = -1;
 
 float sdf::font_sharpness = 24.0f;		// 字体的锐度。最好与字体纹理中单个字体大小相同
 float sdf::font_thickness = 500.0f;		// 字体的粗细度。100~900之间
@@ -770,14 +770,14 @@ exp_real sdf_draw_get_use_shader() { return sdf::use_shader ? gtrue : gfalse; }
 exp_real sdf_draw_set_premul(gm_real premul)
 {
 	if (premul >= 0.5)
-		sdf::shader = ps_sdf_premul_comp;
+		sdf::shader = sdf_shader_premul;
 	else
-		sdf::shader = ps_sdf_comp;
+		sdf::shader = sdf_shader;
 	return gtrue;
 }
 exp_real sdf_draw_get_premul()
 {
-	return (sdf::shader == ps_sdf_premul_comp) ? gtrue : gfalse;
+	return (sdf::shader == sdf_shader_premul) ? gtrue : gfalse;
 }
 
 exp_real sdf_draw_set_font_sharpness(gm_real sharpness)

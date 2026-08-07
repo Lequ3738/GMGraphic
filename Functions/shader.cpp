@@ -1,7 +1,8 @@
 // Shader Extension
-// Version: 1.4
-// Updated: 22/Dec/2010  by LSnK
-//          2026/2/10    by Lequ
+// Version: 2.0
+// Updated: 2026/8/7  by Lequ
+//          shader API 重构: HLSL 支持 + GMS2 风格命名。权威文档: 桌面 "Shader API 设计.md"
+//          旧 d3d_ps_* / d3d_vs_* / d3d_set_tex* / d3d_conf_* 已删除(不做旧名兼容)。
 
 #include "math_s.h"
 #include "shader.h"
@@ -23,16 +24,39 @@ bool vbuff_autoinc;                         // Automatic increment?
 bool vbuff_use_struct;                      // Use struct vertices instead of raw data?
 bool vbuff_use_ext = false;                 // Use ext vertex buffer?
 
-static std::vector<ps_conf>    conf_vec_ps;			 // Dynamic arrays for configs
-static std::vector<vs_conf>    conf_vec_vs;          // 
-static std::vector<tex_conf>   conf_vec_tex;         // 
-
-dword ps_sdf_comp = NULL, ps_sdf_premul_comp = NULL;
-
 namespace gm
 {
     int argument_list = noone;
 }
+
+// ============================================================================
+// Shader bundle 与 uniform 句柄(设计 §2 / §7)
+// ============================================================================
+
+struct ShaderBundle
+{
+    dword vs = NULL;          // D3D8=DWORD 句柄; D3D9=对象指针(dword 往返)。NULL = 该阶段未用
+    void* vs_table = nullptr; // ID3DXConstantTable*(HLSL 编译才有); asm 恒 NULL
+    dword ps = NULL;
+    void* ps_table = nullptr;
+};
+
+struct UniformHandle
+{
+    int owner_shader = -1;   // 回指 shader, 用于销毁清理
+    int ps_reg = -1;         // -1 = 该阶段未命中
+    int vs_reg = -1;
+};
+
+static std::unordered_map<int, ShaderBundle>  shaders;    // shader id → bundle
+static std::unordered_map<int, UniformHandle> uniforms;   // uniform handle → 结构体
+static int shader_id_counter = 1;                          // 从 1 递增(0 保留)
+static int uniform_counter = 1;
+static int current_shader = -1;                            // shader_current() 用
+
+int sdf_shader = -1;          // SDF 字体着色器(id, init() 里创建)
+int sdf_shader_premul = -1;
+int sdf_shader_uniform = -1;  // c0(scale/thickness) 的 uniform 句柄 = shader_get_uniform(sdf_shader, "ps.0")
 
 // ============================================================================
 // Initialisation
@@ -47,10 +71,10 @@ exp_real init(gm_real arg_list)
 
     gm::argument_list = (int)arg_list;
 
-    ps_sdf_comp = (dword)d3d_ps_create(ps_sdf);
-	ps_sdf_premul_comp = (dword)d3d_ps_create(ps_sdf_premul);
-
-    sdf::shader = ps_sdf_comp;
+    sdf_shader        = (int)shader_create_asm("", ps_sdf);
+    sdf_shader_premul = (int)shader_create_asm("", ps_sdf_premul);
+    sdf_shader_uniform = (int)shader_get_uniform(sdf_shader, "ps.0");   // 只写 ps 寄存器 0
+    sdf::shader       = sdf_shader;
 
     return gtrue;
 }
@@ -92,204 +116,413 @@ exp_real d3d_dev_get_tex_mem()
 }
 
 // ============================================================================
-// Pixel shaders
+// Shader API(GMS2 风格)
+//
+// 设计要点(权威: 桌面 "Shader API 设计.md"):
+//   - shader = bundle { vs, ps, 常量表 }; 空字符串阶段 = 不用(空 VS = passthrough FVF 固定管线)。
+//   - uniform 句柄 = 统一 map 索引(从 1 递增), 结构体 {ps_reg, vs_reg}; asm/HLSL 共用同一 map。
+//   - 写入一律按寄存器走 d3d::set_ps_const / d3d::set_vs_const, 与来源(asm/HLSL)无关。
+//   - HLSL 仅 D3D9; D3D8 下 shader_create / shader_has_uniform 返回 -1 / gfalse。
 // ============================================================================
 
-// Assembles and creates pixel shader. Returns handle.
-exp_real d3d_ps_create(const char* src_asm)
+static bool is_d3d9() { return d3d::version() == d3d::V9; }
+
+// HLSL profile 自适应(设计 §4.3): SM2.0 与 SM3.0 语法完全相同, 只是能力上限不同。
+static const char* ps_profile()
 {
-    using namespace std;
-
-    string           str = src_asm;
-    string           err;
-    dword            shader;
-    vector<BYTE>     code;
-
-    if (d3dcaps.pixel_shader_version < D3DPS_VERSION(1, 4))
-    {
-        err = "PS 1.4 unsupported by GPU.";
-        complain(err.c_str());
-        return gfalse;
-    }
-
-    if (FAILED(d3d::assemble_ps(str.c_str(), str.length(), code, &err)))
-    {
-        err = "Shader assembly error:\r\n\r\n" + err + "\r\n\r\n" + str;
-        complain(err.c_str());
-        return gerror;
-    }
-
-    if (FAILED(d3d::create_pixel_shader(code.data(), &shader)))
-    {
-        err = "Shader creation failed.  This should never happen.";
-        complain(err.c_str());
-        return gfalse;
-    }
-
-    return (double)shader;
+    return (d3dcaps.pixel_shader_version >= D3DPS_VERSION(3, 0)) ? "ps_3_0" : "ps_2_0";
+}
+static const char* vs_profile()
+{
+    return (d3dcaps.vertex_shader_version >= D3DVS_VERSION(3, 0)) ? "vs_3_0" : "vs_2_0";
 }
 
-// Free shader.
-exp_real d3d_ps_destroy(double shader)
+static void bundle_release(ShaderBundle& b)
 {
-    d3dcheck(d3d::delete_pixel_shader((dword)shader));
+    if (b.vs) d3d::delete_vertex_shader(b.vs);
+    if (b.ps) d3d::delete_pixel_shader(b.ps);
+    if (b.vs_table) d3d::release(b.vs_table);   // ID3DXConstantTable 是 COM 对象
+    if (b.ps_table) d3d::release(b.ps_table);
+    b = ShaderBundle{};
 }
 
-// Set active pixel shader, or -1 to disable.
-exp_real d3d_set_ps(double shader)
+// 创建类导出共用兜底: 失败时释放已创建的对象(避免半成品泄漏) + 弹 gm 错误框。
+// 不能用 simple_catch —— 那会漏掉 bundle_release(b)。需要局部变量 b 在作用域内。
+#define shader_create_catch(funcname)                                                   \
+    catch (const std::exception& e)                                                     \
+    {                                                                                   \
+        bundle_release(b);                                                              \
+        gm::show_error("An error occurred while executing function " funcname           \
+            " in GMGraphic.dll:\r\n" + std::string(e.what()), false);                   \
+        return gerror;                                                                  \
+    }
+
+// 前缀语法 "ps." / "vs."(大小写不敏感, 设计 §3)。返回 0=无前缀, 1=ps, 2=vs;
+// *rest 指向去掉前缀后的名字/寄存器串。
+static int parse_prefix(const char* uni, const char** rest)
 {
-    if (shader < 0) { d3dcheck(d3d::set_pixel_shader(0)); }
-    else { d3dcheck(d3d::set_pixel_shader((dword)shader)); }
+    if (_strnicmp(uni, "ps.", 3) == 0) { *rest = uni + 3; return 1; }
+    if (_strnicmp(uni, "vs.", 3) == 0) { *rest = uni + 3; return 2; }
+    *rest = uni;
+    return 0;
 }
 
-// Set active pixel shader and configuration.
-exp_real d3d_set_ps_ext(double shader, double conf)
-{
-    bool a, b;
-    a = (d3d_set_ps(shader) > 0.0);
-    b = (d3d_set_ps_conf(conf) > 0.0);
+// ---- 创建 ----
 
-    if (a && b)
-        return gtrue;
+// 编译 HLSL 单个阶段并创建设备对象。
+// 返回 true = 阶段已创建; false = 该阶段 passthrough(未使用)。
+// entry 非空 → 直接编译(失败抛异常 = gm 错误框);
+// entry 空 → 源码含 fallback 入口名(mainVS/mainPS)才编译, 否则该阶段 passthrough。
+static bool compile_hlsl_stage(const char* src, const char* entry, const char* fallback,
+                               const char* profile, bool is_vs, ShaderBundle& b)
+{
+    const char* use = (entry && entry[0]) ? entry : nullptr;
+    if (!use)
+    {
+        if (!strstr(src, fallback)) return false;   // 源码里没有默认入口 → passthrough
+        use = fallback;
+    }
+
+    std::vector<BYTE> code;
+    void* table = nullptr;
+    std::string err;
+    // 编译失败: 弹 gm 错误框, 附带 D3DX 编译器详细错误文本(设计 §0.6)。
+    if (FAILED(d3d::compile_hlsl(src, strlen(src), use, profile, code, &table, &err)))
+    {
+        if (table) d3d::release(table);   // 防御: 失败时 D3DX 理论上置空
+        throw std::runtime_error("Shader compile error:\r\n\r\n" + err + "\r\n\r\n" + std::string(src));
+    }
+
+    // 常量表先挂到 bundle: 若创建失败, 由外层 shader_create_catch 的 bundle_release 统一释放。
+    if (is_vs)
+    {
+        b.vs_table = table;
+        D3DCheck(d3d::create_vertex_shader(d3d::VERT_EXT, code.data(), nullptr, 0, &b.vs), 1);
+    }
     else
-        return gerror;
-}
-
-// Set pixel shader constant register.
-// There are 8 registers indexed 0-7 each containing 4 floating point values
-// between -1 and 1. This is the same as using "def" in the shader.
-exp_real d3d_set_ps_const(double constant, double r, double g, double b, double a)
-{
-    ps_const cx = {
-        .r = (float)clamp(r, -1.0, 1.0),
-        .g = (float)clamp(g, -1.0, 1.0),
-        .b = (float)clamp(b, -1.0, 1.0),
-        .a = (float)clamp(a, -1.0, 1.0)
-    };
-
-    d3dcheck(d3d::set_ps_const((dword)constant, (float*)&cx, 1));
-}
-
-// Set PS constant as colour. Handy shortcut.
-exp_real d3d_set_ps_const_col(double constant, double col, double alpha)
-{
-    int      c = (int)col;
-    ps_const cx = {
-        .r = (float(col_red(c)) / 255.0f),
-        .g = (float(col_green(c)) / 255.0f),
-        .b = (float(col_blue(c)) / 255.0f),
-        .a = (float)clamp(alpha, 0.0, 1.0)
-    };
-
-    d3dcheck(d3d::set_ps_const((dword)constant, (float*)&cx, 1));
-}
-
-// Set PS constant registers from a predefined configuration.
-// Constants not set in the config aren't overwritten.
-exp_real d3d_set_ps_conf(double conf)
-{
-    if (conf > conf_vec_ps.size() - 1)
-        return gerror;
-
-    uint     vpos = (uint)floor(conf);
-    ps_conf* px = &(conf_vec_ps[vpos]);
-
-    for (uint i = 0; i < 8; i++)
     {
-        if (px->set[i])
-            d3d::set_ps_const(i, (float*)&(px->c[i]), 1);
+        b.ps_table = table;
+        D3DCheck(d3d::create_pixel_shader(code.data(), &b.ps), 1);
     }
-
-    return gtrue;
+    return true;
 }
 
-// ============================================================================
-// Vertex shaders
-// ============================================================================
-
-// Assembles && creates vertex shader. Returns handle.
-// Whoever wrote the D3D API should be punched in the balls. Just for the record.
-// D3D8 用 D3DVSD 声明, D3D9 用 D3DVERTEXELEMENT9 —— 翻译在 d3d_adapter9.cpp 内。
-exp_real d3d_vs_create(const char* src_asm)
+// 创建 HLSL 着色器(单文件双入口, D3D9 only; D3D8 返回 -1)。GML 层变参 vs_entry/ps_entry。
+exp_real shader_create(const char* src, const char* vs_entry, const char* ps_entry)
 {
-    using namespace std;
-
-    string           str = src_asm;
-    string           err;
-    DWORD            shader;
-    vector<BYTE>     code, constants;
-
-    if (FAILED(d3d::assemble_vs(str.c_str(), str.length(), code, constants, &err)))
+    ShaderBundle b;
+    try
     {
-        err = "Shader assembly error:\r\n\r\n" + err + "\r\n\r\n" + str;
-        complain(err.c_str());
-        return gerror;
-    }
+        if (!is_d3d9()) return gerror;   // HLSL 仅 D3D9(设计 §5)
 
-    if (FAILED(d3d::create_vertex_shader(d3d::VERT_EXT, code.data(),
-        constants.data(), constants.size(), &shader)))
+        compile_hlsl_stage(src, vs_entry, "mainVS", vs_profile(), true,  b);
+        compile_hlsl_stage(src, ps_entry, "mainPS", ps_profile(), false, b);
+
+        if (!b.vs && !b.ps) return gerror;   // 双 passthrough 没意义 → -1
+
+        int id = shader_id_counter++;
+        shaders.emplace(id, b);
+        return (double)id;
+    }
+    shader_create_catch("shader_create")
+}
+
+// 创建 asm 着色器(D3D8/9 通用)。vs/ps 空字符串 = 不用该阶段; 双空返回 -1(设计 §1)。
+exp_real shader_create_asm(const char* vs_src, const char* ps_src)
+{
+    ShaderBundle b;
+    try
     {
-        err = "Vertex shader creation failed.\r\n\r\n" + str;
-        complain(err.c_str());
-        return gerror;
+        if (vs_src && vs_src[0])
+        {
+            std::vector<BYTE> code, constants;
+            std::string err;
+            // 汇编失败附编译器文本; 设备创建失败走 D3DCheck。
+            if (FAILED(d3d::assemble_vs(vs_src, strlen(vs_src), code, constants, &err)))
+                throw std::runtime_error("Shader assembly error:\r\n\r\n" + err + "\r\n\r\n" + vs_src);
+            D3DCheck(d3d::create_vertex_shader(d3d::VERT_EXT, code.data(), constants.data(), constants.size(), &b.vs), 2);
+        }
+
+        if (ps_src && ps_src[0])
+        {
+            if (d3dcaps.pixel_shader_version < D3DPS_VERSION(1, 4))
+                throw std::runtime_error("PS 1.4 unsupported by GPU.");
+            std::vector<BYTE> code;
+            std::string err;
+            if (FAILED(d3d::assemble_ps(ps_src, strlen(ps_src), code, &err)))
+                throw std::runtime_error("Shader assembly error:\r\n\r\n" + err + "\r\n\r\n" + ps_src);
+            D3DCheck(d3d::create_pixel_shader(code.data(), &b.ps), 3);
+        }
+
+        if (!b.vs && !b.ps) return gerror;   // 双空 → -1
+
+        int id = shader_id_counter++;
+        shaders.emplace(id, b);
+        return (double)id;
     }
-
-    return (double)shader;
+    shader_create_catch("shader_create_asm")
 }
 
-// Free vertex shader.
-exp_real d3d_vs_destroy(double shader)
+// ---- 销毁 / 设置 ----
+
+// 释放 vs/ps 对象 + 常量表; 清理该 shader 的 uniform map 条目(设计 §2)。
+exp_real shader_destroy(double sh)
 {
-    d3dcheck(d3d::delete_vertex_shader((DWORD)shader));
+    try
+    {
+        int id = (int)sh;
+        auto it = shaders.find(id);
+        if (it == shaders.end()) return gerror;
+
+        for (auto uit = uniforms.begin(); uit != uniforms.end(); )
+        {
+            if (uit->second.owner_shader == id) uit = uniforms.erase(uit);
+            else ++uit;
+        }
+
+        bundle_release(it->second);   // COM Release 无 HRESULT, 不需 D3DCheck
+        shaders.erase(it);
+
+        if (current_shader == id) current_shader = -1;
+        return gtrue;
+    }
+    simple_catch("shader_destroy", gerror)
 }
 
-// Set current vertex shader or -1 for none. GM's normal drawing functions are not affected.
-exp_real d3d_set_vs(double shader)
+// 绑定 vs+ps; 自动 SetDefaults(仅非空常量表 = HLSL; asm 靠字节码里的 def, 跳过)。
+exp_real shader_set(double sh)
 {
-    if (shader < 0)
+    try
+    {
+        int id = (int)sh;
+        if (id < 0) return shader_reset();
+
+        auto it = shaders.find(id);
+        if (it == shaders.end()) return gerror;
+
+        ShaderBundle& b = it->second;
+
+        // VS: 非空 → 绑顶点着色器; 空 → passthrough(FVF 固定管线, Option A, 设计 §4.1)。
+        if (b.vs)
+        {
+            vbuff_usevs = true;
+            D3DCheck(d3d::set_vertex_shader(false, 0, b.vs), 1);
+        }
+        else
+        {
+            vbuff_usevs = false;
+            D3DCheck(d3d::set_vertex_shader(true, fvf_ext, 0), 2);
+        }
+        // PS: 非空 → 绑; 空 → 固定像素管线。
+        D3DCheck(d3d::set_pixel_shader(b.ps), 3);
+        // 默认常量(仅 HLSL 有常量表; asm 靠 def, 跳过)。
+        if (b.vs_table) D3DCheck(d3d::constant_table_set_defaults(b.vs_table), 4);
+        if (b.ps_table) D3DCheck(d3d::constant_table_set_defaults(b.ps_table), 5);
+
+        current_shader = id;
+        return gtrue;
+    }
+    simple_catch("shader_set", gerror)
+}
+
+// 解除 shader(回到 FVF), 等价 shader_set(-1)。
+exp_real shader_reset()
+{
+    try
     {
         vbuff_usevs = false;
-        d3dcheck(d3d::set_vertex_shader(true, fvf_ext, 0));
+        D3DCheck(d3d::set_vertex_shader(true, fvf_ext, 0), 1);
+        D3DCheck(d3d::set_pixel_shader(0), 2);
+        current_shader = -1;
+        return gtrue;
     }
-    else {
-        vbuff_usevs = true;
-        d3dcheck(d3d::set_vertex_shader(false, 0, (dword)shader));
+    simple_catch("shader_reset", gerror)
+}
+
+// 当前绑定 shader, 无则 -1。
+exp_real shader_current() { return (double)current_shader; }
+
+// ---- uniform 查找 ----
+
+// 按名字/寄存器拿句柄(设计 §2/§3)。asm 传数字串("0"/"ps.0"/"vs.3");
+// HLSL 传常量名("uColor"/"ps.uColor"/"vs.uWVP")。找不到返回 -1。
+exp_real shader_get_uniform(double sh, const char* uni)
+{
+    int id = (int)sh;
+    auto it = shaders.find(id);
+    if (it == shaders.end()) return gerror;
+
+    ShaderBundle& b = it->second;
+    const char* name = nullptr;
+    int prefix = parse_prefix(uni, &name);
+
+    UniformHandle uh;
+    uh.owner_shader = id;
+
+    bool has_hlsl = (b.ps_table || b.vs_table);
+    if (has_hlsl)
+    {
+        // HLSL: 按名字查常量表。无前缀 → 先 ps 后 vs; 同名两阶段都设(设计 §4.4)。
+        if (prefix == 0 || prefix == 1)
+        {
+            uh.ps_reg = -1;
+            if (b.ps_table)
+            {
+                void* h = d3d::constant_table_get_constant_by_name(b.ps_table, name);
+                if (h) uh.ps_reg = d3d::constant_table_get_register(b.ps_table, h);
+            }
+        }
+        if (prefix == 0 || prefix == 2)
+        {
+            uh.vs_reg = -1;
+            if (b.vs_table)
+            {
+                void* h = d3d::constant_table_get_constant_by_name(b.vs_table, name);
+                if (h) uh.vs_reg = d3d::constant_table_get_register(b.vs_table, h);
+            }
+        }
     }
+    else
+    {
+        // asm: uni 是寄存器数字串(设计约定)。无前缀 → 恒两阶段同号寄存器(设计 §3)。
+        int reg = atoi(name);
+        if (prefix == 0)      { uh.ps_reg = reg; uh.vs_reg = reg; }
+        else if (prefix == 1) { uh.ps_reg = reg; uh.vs_reg = -1; }
+        else                  { uh.ps_reg = -1; uh.vs_reg = reg; }
+    }
+
+    // 找不到 → -1(设计 §1); 至少一个阶段命中才算有效句柄。
+    if (uh.ps_reg < 0 && uh.vs_reg < 0) return gerror;
+
+    int hid = uniform_counter++;
+    uniforms.emplace(hid, uh);
+    return (double)hid;
 }
 
-// Set VS constant register.  There are 96 4-component registers available.
-exp_real d3d_set_vs_const(double constant, double x, double y, double z, double w)
+// uniform 是否存在(HLSL 专用, 依赖常量表; D3D8 返回 gfalse)。
+exp_real shader_has_uniform(double sh, const char* uni)
 {
-    vs_const vx = {
-        .x = (float)x,
-        .y = (float)y,
-        .z = (float)z,
-        .w = (float)w
-    };
+    if (!is_d3d9()) return gfalse;
 
-    d3dcheck(d3d::set_vs_const((dword)clamp(constant, 0.0, 95.0), (float*)&vx, 1));
+    int id = (int)sh;
+    auto it = shaders.find(id);
+    if (it == shaders.end()) return gfalse;
+
+    ShaderBundle& b = it->second;
+    if (!b.ps_table && !b.vs_table) return gfalse;   // asm 无常量表
+
+    const char* name = nullptr;
+    int prefix = parse_prefix(uni, &name);
+
+    bool found = false;
+    if (prefix == 0 || prefix == 1)
+        if (b.ps_table && d3d::constant_table_get_constant_by_name(b.ps_table, name)) found = true;
+    if (prefix == 0 || prefix == 2)
+        if (b.vs_table && d3d::constant_table_get_constant_by_name(b.vs_table, name)) found = true;
+    return found ? gtrue : gfalse;
 }
 
-// Set VS constant as colour. Handy shortcut.
-exp_real d3d_set_vs_const_col(double constant, double col, double alpha)
+// 采样器句柄(配 texture_set_stage)。asm 数字串转整数; HLSL 查常量表(只认采样器常量)。
+exp_real shader_get_sampler_index(double sh, const char* uni)
 {
-    int      c = (int)col;
-    vs_const vx = {
-        .x = (float(col_red(c)) / 255.0f),
-        .y = (float(col_green(c)) / 255.0f),
-        .z = (float(col_blue(c)) / 255.0f),
-        .w = (float)clamp(alpha, 0.0, 1.0)
-    };
+    int id = (int)sh;
+    auto it = shaders.find(id);
+    if (it == shaders.end()) return gerror;
 
-    d3dcheck(d3d::set_vs_const((dword)clamp(constant, 0.0, 95.0), (float*)&vx, 1));
+    ShaderBundle& b = it->second;
+    const char* name = nullptr;
+    int prefix = parse_prefix(uni, &name);
+
+    if (!b.ps_table && !b.vs_table)
+    {
+        // asm: 数字字符串转整数(设计 §1)
+        return (double)atoi(name);
+    }
+
+    // HLSL: 查 ps 表优先, 其次 vs 表; 只认采样器(D3DXPC_OBJECT + D3DXPT_SAMPLER)。
+    void* h = nullptr;
+    if ((prefix == 0 || prefix == 1) && b.ps_table)
+        h = d3d::constant_table_get_constant_by_name(b.ps_table, name);
+    int stage = -1;
+    if (h) stage = d3d::constant_table_get_sampler_register(b.ps_table, h);
+    if (stage < 0 && (prefix == 0 || prefix == 2) && b.vs_table)
+    {
+        h = d3d::constant_table_get_constant_by_name(b.vs_table, name);
+        if (h) stage = d3d::constant_table_get_sampler_register(b.vs_table, h);
+    }
+    if (stage < 0) return gerror;
+    return (double)stage;
 }
 
-// Sets four constants as the transposed world*view*projection matrix.
-// You can then use [m4x4 oPos,v0,cn] in the shader to transform the vertices in
-// keeping with GM's normal behaviour.
-// Ex: 0 would set c0,c1,c2,c3; 4 would set c4,c5,c6,c7.
-// 纯 float 手写 4x4 乘 + 转置, 去掉 D3DX 数学依赖(双后端通用)。
-static void mat_mul(float* c, const float* a, const float* b)   // 行主序: c = a * b
+// ---- uniform 写入(固定参导出, GML 层变参脚本分发到 _4f/_4i/_4b) ----
+
+// 查句柄 → 按结构体写对应阶段(设计 §2: 对 -1 的阶段跳过)。
+// 非法句柄 / D3D 调用失败 → 抛异常, 由各导出 try/simple_catch 统一兜底(弹错误框)。
+static void uniform_set_impl(double h, const float v[4])
+{
+    auto it = uniforms.find((int)h);
+    if (it == uniforms.end())
+        throw std::runtime_error("Invalid uniform handle.");
+
+    const UniformHandle& uh = it->second;
+    if (uh.ps_reg >= 0) D3DCheck(d3d::set_ps_const((DWORD)uh.ps_reg, v, 1), 1);
+    if (uh.vs_reg >= 0) D3DCheck(d3d::set_vs_const((DWORD)uh.vs_reg, v, 1), 2);
+}
+
+exp_real shader_set_uniform_4f(double h, double x, double y, double z, double w)
+{
+    try
+    {
+        float v[4] = { (float)x, (float)y, (float)z, (float)w };
+        uniform_set_impl(h, v);
+        return gtrue;
+    }
+    simple_catch("shader_set_uniform_4f", gerror)
+}
+
+exp_real shader_set_uniform_4i(double h, double x, double y, double z, double w)
+{
+    // D3D9 SM2/3 无 int 寄存器(D3DX9 把 int 常量编进 float 寄存器), 整数以 float 写入。
+    try
+    {
+        float v[4] = { (float)x, (float)y, (float)z, (float)w };
+        uniform_set_impl(h, v);
+        return gtrue;
+    }
+    simple_catch("shader_set_uniform_4i", gerror)
+}
+
+exp_real shader_set_uniform_4b(double h, double x, double y, double z, double w)
+{
+    try
+    {
+        float v[4] = {
+            (x >= 0.5) ? 1.f : 0.f,
+            (y >= 0.5) ? 1.f : 0.f,
+            (z >= 0.5) ? 1.f : 0.f,
+            (w >= 0.5) ? 1.f : 0.f
+        };
+        uniform_set_impl(h, v);
+        return gtrue;
+    }
+    simple_catch("shader_set_uniform_4b", gerror)
+}
+
+exp_real shader_set_uniform_color(double h, double col, double alpha)
+{
+    try
+    {
+        int c = (int)col;
+        float v[4] = { (float)col_red(c) / 255.0f, (float)col_green(c) / 255.0f,
+                       (float)col_blue(c) / 255.0f, (float)clamp(alpha, 0.0, 1.0) };
+        uniform_set_impl(h, v);
+        return gtrue;
+    }
+    simple_catch("shader_set_uniform_color", gerror)
+}
+
+// 行主序手写 4x4 乘: c = a * b(与旧代码一致, 去掉 D3DX 数学依赖)。
+static void mat_mul(float* c, const float* a, const float* b)
 {
     for (int r = 0; r < 4; r++)
         for (int col = 0; col < 4; col++)
@@ -300,98 +533,92 @@ static void mat_mul(float* c, const float* a, const float* b)   // 行主序: c 
             c[r * 4 + col] = s;
         }
 }
-static void mat_transpose(float* t, const float* m)
+
+// 设矩阵 uniform。mtx_type 掩码: world=1 / view=2 / projection=4 / wvp=7(gm82dx9 式)。
+// size = 写几个寄存器(默认 4)。行主序直写不转置(与 gm82dx9 一致, HLSL 用 mul(pos, mtx))。
+exp_real shader_set_uniform_matrix(double h, double mtx_type, double size)
 {
-    for (int r = 0; r < 4; r++)
-        for (int col = 0; col < 4; col++)
-            t[r * 4 + col] = m[col * 4 + r];
-}
-
-exp_real d3d_set_vs_const_matrix(double constant)
-{
-    float world[16], view[16], proj[16], in[16], out[16];
-    d3d::get_transform(D3DTS_WORLD, world);
-    d3d::get_transform(D3DTS_VIEW, view);
-    d3d::get_transform(D3DTS_PROJECTION, proj);
-
-    mat_mul(in, world, view);        // in = world * view
-    mat_mul(in, in, proj);           // in = (world*view) * proj
-    mat_transpose(out, in);
-
-    d3dcheck(d3d::set_vs_const((dword)clamp(constant, 0.0, 92.0), out, 4));
-}
-
-// Set VS constant registers from a predefined configuration.
-exp_real d3d_set_vs_conf(double conf)
-{
-    if (conf > conf_vec_vs.size() - 1)
-        return gerror;
-
-    uint     vpos = (uint)floor(conf);
-    vs_conf* vx = &(conf_vec_vs[vpos]);
-
-    for (uint i = 0; i < 96; i++)
+    try
     {
-        if (vx->set[i])
-            d3d::set_vs_const(i, (float*)&(vx->c[i]), 1);
-    }
+        auto it = uniforms.find((int)h);
+        if (it == uniforms.end())
+            throw std::runtime_error("Invalid uniform handle.");
+        const UniformHandle& uh = it->second;
 
-    return gtrue;
-};
+        int mask = (int)mtx_type;
+        int regs = (int)size; if (regs < 1) regs = 4;
 
-// ============================================================================
-// Texture stages
-// ============================================================================
-
-// Set texture for this texture stage or -1 for none.
-// Read the texture in a shader by using (texld r<stage>,t0).
-// GM uses 0 for drawing so don't fiddle with it.
-exp_real d3d_set_tex(double stage, double tex)
-{
-    uint s = (uint)stage;
-
-    if (s < d3dcaps.max_tex_stages)
-    {
-        if (tex < 0.0)
-        {
-            d3dcheck(d3d::set_texture(s, nullptr));
-        }
+        float m[16];
+        if (mask & 1)
+            D3DCheck(d3d::get_transform(D3DTS_WORLD, m), 1);
         else
+            for (int i = 0; i < 16; i++) m[i] = (i % 5 == 0) ? 1.0f : 0.0f;   // 单位矩阵
+
+        // 基准 = world(或 identity); 依次右乘 view / projection。mat_mul 不能原地(会读到已写值)。
+        if (mask & 2)
         {
-            void* t = (void*)gmapi->GetDirect3DTexture((int)tex);   // 不透明: 不直接调它的方法
-
-            if (t == nullptr)
-                return gerror;
-
-            d3dcheck(d3d::set_texture(s, t));
+            float t[16], r[16];
+            D3DCheck(d3d::get_transform(D3DTS_VIEW, t), 2);
+            mat_mul(r, m, t);
+            memcpy(m, r, sizeof r);
         }
+        if (mask & 4)
+        {
+            float t[16], r[16];
+            D3DCheck(d3d::get_transform(D3DTS_PROJECTION, t), 3);
+            mat_mul(r, m, t);
+            memcpy(m, r, sizeof r);
+        }
+
+        if (uh.ps_reg >= 0) D3DCheck(d3d::set_ps_const((DWORD)uh.ps_reg, m, (DWORD)regs), 4);
+        if (uh.vs_reg >= 0) D3DCheck(d3d::set_vs_const((DWORD)uh.vs_reg, m, (DWORD)regs), 5);
+        return gtrue;
+    }
+    simple_catch("shader_set_uniform_matrix", gerror)
+}
+
+// ============================================================================
+// Sampler stages(对应旧 d3d_set_tex* 系列)
+// ============================================================================
+
+// 绑定纹理到采样器 stage(旧 d3d_set_tex)。tex < 0 清空该 stage。
+exp_real texture_set_stage(double samp, double tex)
+{
+    uint s = (uint)samp;
+
+    if (s >= d3dcaps.max_tex_stages)
+        return gerror;
+    
+    if (tex < 0.0)
+    {
+        d3dcheck(d3d::set_texture(s, nullptr));
     }
     else
-        return gerror;
-
-    return gtrue;
-}
-
-// Set all available texture stages. -1 for no texture.
-exp_real d3d_set_tex_all(double tex)
-{
-    for (uint i = 0; i < d3dcaps.max_tex_stages; i++)
     {
-        if (!d3d_set_tex(i, tex))
+        void* t = (void*)gmapi->GetDirect3DTexture((int)tex);   // 不透明: 不直接调它的方法
+
+        if (t == nullptr)
             return gerror;
+
+        d3dcheck(d3d::set_texture(s, t));
     }
 
     return gtrue;
 }
 
-// Set texture stage interpolation mode. Use tex_int_ constant.
-// Defaults to nearest, which is usually undesirable.
-// Stage 0 is also controlled by texture_set_interpolation in GM.
-exp_real d3d_set_tex_int(double stage, double mode)
+// 内部助手(不导出): 清空所有纹理 stage(替代旧 d3d_set_tex_all)。
+void texture_clear_all()
 {
-    dword s = (dword)stage;
+    for (uint i = 0; i < d3dcaps.max_tex_stages; i++)
+        d3d::set_texture(i, nullptr);
+}
 
-    if (stage >= d3dcaps.max_tex_stages)
+// 设置采样器插值模式(旧 d3d_set_tex_int)。默认 nearest, 通常不理想。
+exp_real texture_set_stage_interpolation(double samp, double mode)
+{
+    dword s = (dword)samp;
+
+    if (s >= d3dcaps.max_tex_stages)
         return gerror;
 
     if ((D3D_OK == d3d::set_tex_stage_state(s, D3DTSS_MAGFILTER, (dword)mode))
@@ -403,27 +630,29 @@ exp_real d3d_set_tex_int(double stage, double mode)
     return gfalse;
 }
 
-// Set texture stage wrapping mode.  Use tex_wrap_ constant.
-exp_real d3d_set_tex_wrap(double stage, double xmode, double ymode)
+// 对应旧 d3d_set_tex_wrap + border 色。h/v: 0 → clamp(D3DTADDRESS_CLAMP), 否则透传
+// D3DTADDRESS_* 值(WRAP=1/MIRROR=2/CLAMP=3/BORDER=4)。border_col 为 GM 颜色。
+exp_real texture_set_stage_repeat(double samp, double h, double v, double border_col)
 {
-    dword s = (dword)stage;
+    dword s = (dword)samp;
 
-    if (stage >= d3dcaps.max_tex_stages)
+    if (s >= d3dcaps.max_tex_stages)
         return gerror;
 
-    if ((D3D_OK == d3d::set_tex_stage_state(s, D3DTSS_ADDRESSU, (dword)xmode))
-        && (D3D_OK == d3d::set_tex_stage_state(s, D3DTSS_ADDRESSV, (dword)ymode)))
-    {
-        return gtrue;
-    }
+    dword u = (dword)h, w = (dword)v;
+    if (u == 0) u = D3DTADDRESS_CLAMP;   // 0 = clamp(gm82dx9 式)
+    if (w == 0) w = D3DTADDRESS_CLAMP;
 
-    return gfalse;
+    HRESULT hr = d3d::set_tex_stage_state(s, D3DTSS_ADDRESSU, u);
+    if (SUCCEEDED(hr)) hr = d3d::set_tex_stage_state(s, D3DTSS_ADDRESSV, w);
+    if (SUCCEEDED(hr)) hr = d3d::set_tex_stage_state(s, D3DTSS_BORDERCOLOR, col_d3d((int)border_col, 1.0));
+    return SUCCEEDED(hr) ? gtrue : gfalse;
 }
 
-// Set colour to use with tex_wrap_border.
-exp_real d3d_set_tex_border(double stage, double col, double alpha)
+// 设置 border 模式使用的颜色(旧 d3d_set_tex_border)。
+exp_real texture_set_stage_border(double samp, double col, double alpha)
 {
-    dword s = (dword)stage;
+    dword s = (dword)samp;
 
     if (s >= d3dcaps.max_tex_stages)
         return gerror;
@@ -431,153 +660,27 @@ exp_real d3d_set_tex_border(double stage, double col, double alpha)
     d3dcheck(d3d::set_tex_stage_state(s, D3DTSS_BORDERCOLOR, col_d3d((int)col, alpha)));
 }
 
-// Set anisotropic filtering level for tex_int_anisotropic.
-// Values: 1,2,4,8,16.  1=none.  Defaults to 1.
-exp_real d3d_set_tex_aniso(double stage, double anisotropy)
+// 设置各向异性过滤级别(旧 d3d_set_tex_aniso)。值: 1,2,4,8,16。1=无, 默认 1。
+exp_real texture_set_stage_anisotropy(double samp, double aniso)
 {
-    dword s = (dword)stage;
+    dword s = (dword)samp;
 
     if (s >= d3dcaps.max_tex_stages)
         return gerror;
 
     d3dcheck(d3d::set_tex_stage_state(s, D3DTSS_MAXANISOTROPY,
-        (dword)std::min((dword)anisotropy, d3dcaps.max_aniso)));
+        (dword)std::min((dword)aniso, d3dcaps.max_aniso)));
 }
 
-// Set mipmap filtering mode. tex_int_nearest or tex_int_bilinear.
-// The latter when combined with tex_int_bilinear on the texture itself results
-// in trilinear filtering.
-exp_real d3d_set_tex_mip(double stage, double mode)
+// 设置 mipmap 过滤模式(旧 d3d_set_tex_mip)。tex_int_nearest 或 tex_int_bilinear。
+exp_real texture_set_stage_mipmap(double samp, double mode)
 {
-    dword s = (dword)stage;
+    dword s = (dword)samp;
 
     if (s >= d3dcaps.max_tex_stages)
         return gerror;
 
     d3dcheck(d3d::set_tex_stage_state(s, D3DTSS_MIPFILTER, (dword)mode));
-}
-
-// Set texture stage state from a predefined configuration.
-exp_real d3d_set_tex_conf(double conf)
-{
-    if (conf > conf_vec_tex.size() - 1)
-        return gerror;
-
-    uint vpos = (uint)floor(conf);
-
-    for (uint i = 0; i < (uint)std::min(8, (int)d3dcaps.max_tex_stages); i++)
-    {
-        if (conf_vec_tex[vpos].set[i])
-        {
-            d3d::set_texture(i, conf_vec_tex[vpos].tex[i]);
-            d3d_set_tex_int(i, conf_vec_tex[vpos].in[i]);
-            d3d_set_tex_wrap(i, conf_vec_tex[vpos].xwrap[i],
-                conf_vec_tex[vpos].ywrap[i]);
-        }
-    }
-    return gtrue;
-}
-
-// ============================================================================
-// Configurations
-// ============================================================================
-
-// Creates new pixel shader configuration and returns its index.
-exp_real d3d_conf_ps_create()
-{
-    ps_conf conf{};
-
-    SecureZeroMemory((PVOID)&conf, sizeof(ps_conf));
-
-    conf_vec_ps.push_back(conf);
-    return (double)conf_vec_ps.size() - 1;
-}
-
-// Defines PS constant configuration.
-exp_real d3d_conf_ps_set(double conf, double constant, double r, double g, 
-    double b, double a)
-{
-    if (conf > conf_vec_ps.size() - 1)
-        return gerror;
-
-    uint vpos = (uint)floor(conf);
-    uint cpos = (uint)floor(clamp(constant, 0.0, 7.0));
-
-    conf_vec_ps[vpos].c[cpos].r = (float)clamp(r, -1.0, 1.0);
-    conf_vec_ps[vpos].c[cpos].g = (float)clamp(g, -1.0, 1.0);
-    conf_vec_ps[vpos].c[cpos].b = (float)clamp(b, -1.0, 1.0);
-    conf_vec_ps[vpos].c[cpos].a = (float)clamp(a, -1.0, 1.0);
-    conf_vec_ps[vpos].set[cpos] = true;
-
-    return gtrue;
-}
-
-// Creates new vertex shader configuration && returns its index.
-exp_real d3d_conf_vs_create()
-{
-    vs_conf conf{};
-
-    SecureZeroMemory((PVOID)&conf, sizeof(vs_conf));
-
-    conf_vec_vs.push_back(conf);
-    return (double)conf_vec_vs.size() - 1;
-}
-
-// Defines VS constant configuration.
-exp_real d3d_conf_vs_set(double conf, double constant, double x, double y, 
-    double z, double w)
-{
-    if (conf > conf_vec_vs.size() - 1)
-        return gerror;
-
-    uint vpos = (uint)floor(conf);
-    uint cpos = (uint)floor(clamp(constant, 0.0, 255.0));
-
-    conf_vec_vs[vpos].c[cpos].x = (float)x;
-    conf_vec_vs[vpos].c[cpos].y = (float)y;
-    conf_vec_vs[vpos].c[cpos].z = (float)z;
-    conf_vec_vs[vpos].c[cpos].w = (float)w;
-    conf_vec_vs[vpos].set[cpos] = true;
-
-    return gtrue;
-}
-
-// Creates new texture stage configuration && returns its index.
-exp_real d3d_conf_tex_create()
-{
-    tex_conf conf{};
-
-    SecureZeroMemory((PVOID)&conf, sizeof(tex_conf));
-
-    conf_vec_tex.push_back(conf);
-    return (double)conf_vec_tex.size() - 1;
-}
-
-exp_real d3d_conf_tex_set(double conf, double stage, double tex, double interp, 
-    double xmode, double ymode)
-{
-    if (conf > conf_vec_tex.size() - 1)
-        return gerror;
-
-    uint vpos = (uint)floor(conf);
-    uint s = (uint)stage;
-
-    if (s >= d3dcaps.max_tex_stages)
-        return gerror;
-
-    void* t = (void*)gmapi->GetDirect3DTexture((int)tex);   // 不透明: 不直接调它的方法
-
-    if (t != nullptr)
-    {
-        conf_vec_tex[vpos].tex[s] = t;
-        conf_vec_tex[vpos].in[s] = (dword)interp;
-        conf_vec_tex[vpos].xwrap[s] = (dword)xmode;
-        conf_vec_tex[vpos].ywrap[s] = (dword)ymode;
-        conf_vec_tex[vpos].set[s] = true;
-        return gtrue;
-    }
-    else
-        return gerror;
 }
 
 // ============================================================================
@@ -702,7 +805,7 @@ exp_real d3d_set_zwrite(double state)
     d3dcrs(D3DRS_ZWRITEENABLE, (state > 0.0));
 }
 
-// Prevents drawing of pixels that don't meet the given alpha criteria. 
+// Prevents drawing of pixels that don't meet the given alpha criteria.
 // Use the cmp_ constants. Pass -1 as value to disable alpha testing.
 exp_real d3d_set_alphatest(double value, double mode)
 {
@@ -721,7 +824,7 @@ exp_real d3d_set_alphatest(double value, double mode)
     return (a == D3D_OK && b == D3D_OK && c == D3D_OK);
 }
 
-// Prevents drawing of pixels that don't meet the given depth criteria. 
+// Prevents drawing of pixels that don't meet the given depth criteria.
 // Use the cmp_ constants. Defaults to <=. The other value is the current z-buffer value.
 exp_real d3d_set_ztest(double mode)
 {
@@ -731,7 +834,7 @@ exp_real d3d_set_ztest(double mode)
     d3dcrs(D3DRS_ZFUNC, (dword)mode);
 }
 
-// Offsets the drawing depth, allowing polygons with the same positions to be 
+// Offsets the drawing depth, allowing polygons with the same positions to be
 // drawn without z-fighting artifacts.  Useful for shadows, decals, etc.
 // Integer 0-16, defaults to 0. Higher values appear in front of lower ones.
 exp_real d3d_set_zbias(double bias)
@@ -769,7 +872,7 @@ void vertex::begin(D3DPRIMITIVETYPE primitive, bool textured)
         std::memset(vbuff_default_int, 0, vb_default_bytes);
 
     if (!textured)
-        d3d_set_tex_all(-1);
+        texture_clear_all();
 }
 
 exp_real d3d_primitive_begin_ext(double primitive, double textured)
@@ -785,7 +888,7 @@ exp_real d3d_primitive_begin_ext(double primitive, double textured)
         case 6: { prim = D3DPT_TRIANGLEFAN; } break;
         default: { return gerror; } break;
     }
-    
+
     vbuff_use_ext = true;
     vertex::begin(prim, textured < 0.5);
     return gtrue;
@@ -818,7 +921,7 @@ void vertex::add(float x, float y, float z, float nx, float ny, float nz, uint c
         vbuff_c++;
 }
 
-exp_real d3d_vertex_ext(double x, double y, double z, double nx, double ny, double nz, 
+exp_real d3d_vertex_ext(double x, double y, double z, double nx, double ny, double nz,
     double col, double alpha, double speccol, double specalpha)
 {
     vertex::add((float)x, (float)y, (float)z, (float)nx, (float)ny, (float)nz,
@@ -930,7 +1033,7 @@ exp_real draw_primitive_begin_ext(double primitive, double textured)
 
 // 2D equivalent.
 // The buffer is zeroed by begin_ext; no need to set the 3D stuff here.
-exp_real draw_vertex_ext(double x, double y, double col, double alpha, 
+exp_real draw_vertex_ext(double x, double y, double col, double alpha,
     double speccol, double specalpha)
 {
     vbuff_ext_int[vbuff_c].x = (float)x;

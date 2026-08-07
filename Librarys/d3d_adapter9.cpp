@@ -35,22 +35,25 @@ namespace d3d
         // ---- D3DX9 运行时解析(不静态链 d3dx9.lib, 避免与 D3DX8 撞名) ----
         // 签名直接取自 d3dx9shader.h / d3dx9tex.h。
         typedef HRESULT(WINAPI* D3DX9_ASSEMBLE_SHADER)(LPCSTR, UINT, const D3DXMACRO*, LPD3DXINCLUDE, DWORD, LPD3DXBUFFER*, LPD3DXBUFFER*);
+        typedef HRESULT(WINAPI* D3DX9_COMPILE_SHADER)(LPCSTR, UINT, const D3DXMACRO*, LPD3DXINCLUDE, LPCSTR, LPCSTR, DWORD, LPD3DXBUFFER*, LPD3DXBUFFER*, LPD3DXCONSTANTTABLE*);
         typedef HRESULT(WINAPI* D3DX9_LOAD_SURFACE_FROM_MEMORY)(LPDIRECT3DSURFACE9, const PALETTEENTRY*, const RECT*, LPCVOID, D3DFORMAT, UINT, const PALETTEENTRY*, const RECT*, DWORD, D3DCOLOR);
         typedef HRESULT(WINAPI* D3DX9_LOAD_SURFACE_FROM_SURFACE)(LPDIRECT3DSURFACE9, const PALETTEENTRY*, const RECT*, LPDIRECT3DSURFACE9, const PALETTEENTRY*, const RECT*, DWORD, D3DCOLOR);
         static HMODULE s_d3dx9 = nullptr;
         static D3DX9_ASSEMBLE_SHADER           s_assemble  = nullptr;
+        static D3DX9_COMPILE_SHADER            s_compile   = nullptr;
         static D3DX9_LOAD_SURFACE_FROM_MEMORY  s_load_mem  = nullptr;
         static D3DX9_LOAD_SURFACE_FROM_SURFACE s_load_surf = nullptr;
 
         static bool load_d3dx9()
         {
-            if (s_d3dx9) return s_assemble && s_load_mem && s_load_surf;
+            if (s_d3dx9) return s_assemble && s_compile && s_load_mem && s_load_surf;
             s_d3dx9 = LoadLibraryW(L"D3DX9_43.dll");   // GMDirectX9 的 gex 已带此 DLL
             if (!s_d3dx9) return false;
             s_assemble  = (D3DX9_ASSEMBLE_SHADER)GetProcAddress(s_d3dx9, "D3DXAssembleShader");
+            s_compile   = (D3DX9_COMPILE_SHADER)GetProcAddress(s_d3dx9, "D3DXCompileShader");
             s_load_mem  = (D3DX9_LOAD_SURFACE_FROM_MEMORY)GetProcAddress(s_d3dx9, "D3DXLoadSurfaceFromMemory");
             s_load_surf = (D3DX9_LOAD_SURFACE_FROM_SURFACE)GetProcAddress(s_d3dx9, "D3DXLoadSurfaceFromSurface");
-            return s_assemble && s_load_mem && s_load_surf;
+            return s_assemble && s_compile && s_load_mem && s_load_surf;
         }
 
         // ---- 同签名转发(与 D3D8 签名逐字相同, 仅 vtable 槽位不同) ----
@@ -156,8 +159,9 @@ namespace d3d
         {
             if (fvf_mode)
             {
-                HRESULT hr = dev()->SetFVF(fvf);
-                if (SUCCEEDED(hr)) dev()->SetVertexDeclaration(nullptr);
+                HRESULT hr = dev()->SetVertexShader(nullptr);
+                if (SUCCEEDED(hr)) hr = dev()->SetVertexDeclaration(nullptr);
+                if (SUCCEEDED(hr)) hr = dev()->SetFVF(fvf);
                 return hr;
             }
             HRESULT hr = dev()->SetVertexDeclaration(ensure_decl(VERT_EXT));
@@ -166,6 +170,64 @@ namespace d3d
         }
         HRESULT set_vs_const(DWORD reg, const float* v, DWORD count)
         { return dev()->SetVertexShaderConstantF(reg, v, count); }
+
+        // ---- HLSL(D3D9 专属): D3DXCompileShader + ID3DXConstantTable ----
+        // 编译单文件单入口; 常量表随第 10 个出参返回(HLSL 专属, asm 走 D3DXAssembleShader)。
+        HRESULT compile_hlsl(const char* src, size_t len, const char* entry, const char* profile,
+                             std::vector<BYTE>& code, void** table, std::string* err)
+        {
+            if (!load_d3dx9()) return E_FAIL;
+            LPD3DXBUFFER shader = nullptr, errors = nullptr;
+            ID3DXConstantTable* ct = nullptr;
+            HRESULT hr = s_compile(src, (UINT)len, nullptr, nullptr, entry, profile, 0,
+                                   &shader, &errors, &ct);
+            if (FAILED(hr))
+            {
+                if (err && errors)
+                    err->assign((const char*)errors->GetBufferPointer(), errors->GetBufferSize());
+                if (errors) errors->Release();
+                return hr;
+            }
+            code.assign((BYTE*)shader->GetBufferPointer(),
+                        (BYTE*)shader->GetBufferPointer() + shader->GetBufferSize());
+            shader->Release();
+            if (table) *table = ct;
+            return S_OK;
+        }
+
+        HRESULT constant_table_set_defaults(void* table)
+        {
+            if (!table) return E_INVALIDARG;
+            return ((ID3DXConstantTable*)table)->SetDefaults(dev());
+        }
+
+        void* constant_table_get_constant_by_name(void* table, const char* name)
+        {
+            if (!table || !name) return nullptr;
+            return (void*)((ID3DXConstantTable*)table)->GetConstantByName(nullptr, name);
+        }
+
+        int constant_table_get_register(void* table, void* handle)
+        {
+            if (!table || !handle) return -1;
+            D3DXCONSTANT_DESC desc{};
+            UINT count = 1;
+            if (FAILED(((ID3DXConstantTable*)table)->GetConstantDesc((D3DXHANDLE)handle, &desc, &count)))
+                return -1;
+            return (int)desc.RegisterIndex;
+        }
+
+        int constant_table_get_sampler_register(void* table, void* handle)
+        {
+            if (!table || !handle) return -1;
+            D3DXCONSTANT_DESC desc{};
+            UINT count = 1;
+            if (FAILED(((ID3DXConstantTable*)table)->GetConstantDesc((D3DXHANDLE)handle, &desc, &count)))
+                return -1;
+            if (desc.Class != D3DXPC_OBJECT || desc.Type != D3DXPT_SAMPLER)
+                return -1;
+            return (int)desc.RegisterIndex;
+        }
 
         // ---- 纹理桥 ----
         HRESULT set_texture(DWORD stage, void* tex)
@@ -272,6 +334,7 @@ namespace d3d
             memcpy(&max_ps, &caps.MaxPointSize, sizeof(max_ps));   // D3D9 是 DWORD(同 bit)
             out.max_point_size       = max_ps;
             out.pixel_shader_version = caps.PixelShaderVersion;
+            out.vertex_shader_version = caps.VertexShaderVersion;
             out.max_tex_w            = caps.MaxTextureWidth;
             out.max_tex_h            = caps.MaxTextureHeight;
             out.max_tex_stages       = caps.MaxSimultaneousTextures;

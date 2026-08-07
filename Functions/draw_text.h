@@ -104,7 +104,7 @@ namespace sdf
 	extern float line_spacing;			// 行距（单位：像素）。默认值为 1
 	extern bool per_line_halign;		// 是否逐行对齐。默认值为 false，即整段文本作为一个整体进行水平对齐
 	extern bool use_shader;				// 是否使用着色器进行 SDF 字体的绘制。默认值为 true
-	extern dword shader;				// 当前使用的着色器。默认为 ps_sdf_comp
+	extern int shader;					// 当前使用的着色器 id(shader_create_asm 返回)。默认为 sdf_shader
 
 	extern float font_sharpness;		// 字体的锐度。最好与字形纹理大小相同
 	extern float font_thickness;		// 字体的粗细度。在 100 - 900 之间。默认值为 500

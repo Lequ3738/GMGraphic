@@ -31,6 +31,7 @@ namespace d3d
     {
         float max_point_size;          // D3D8 是 FLOAT, D3D9 是 DWORD(同 bit), 统一存 float
         DWORD pixel_shader_version;
+        DWORD vertex_shader_version;   // HLSL vs profile 自适应(ps_2_0/3_0 同理)
         DWORD max_tex_w, max_tex_h, max_tex_stages, max_aniso;
         DWORD prim_misc_caps, raster_caps;
         char  adapter_desc[512];
@@ -66,6 +67,14 @@ namespace d3d
         HRESULT set_vertex_shader(bool fvf_mode, DWORD fvf, DWORD handle);
         HRESULT set_vs_const(DWORD, const float*, DWORD);
 
+        // HLSL 依赖 D3DX9 常量表, D3D8 不支持 —— 桩实现(一律失败/返回空)。
+        HRESULT compile_hlsl(const char*, size_t, const char*, const char*,
+                             std::vector<BYTE>&, void**, std::string*);
+        HRESULT constant_table_set_defaults(void*);
+        void*   constant_table_get_constant_by_name(void*, const char*);
+        int     constant_table_get_register(void*, void*);
+        int     constant_table_get_sampler_register(void*, void*);
+
         HRESULT set_texture(DWORD, void*);
         HRESULT create_texture(UINT, UINT, UINT, DWORD, DWORD, DWORD, void**);
         HRESULT upload_texture(void*, UINT, UINT, DWORD, const void*, UINT);
@@ -95,6 +104,15 @@ namespace d3d
         HRESULT delete_vertex_shader(DWORD);
         HRESULT set_vertex_shader(bool fvf_mode, DWORD fvf, DWORD handle);
         HRESULT set_vs_const(DWORD, const float*, DWORD);
+
+        // HLSL(D3D9 专属): D3DXCompileShader + ID3DXConstantTable, 常量表是 COM 对象,
+        // 用公共 release(void*) 释放。table 可为空(如 compile_hlsl 失败时不写)。
+        HRESULT compile_hlsl(const char* src, size_t len, const char* entry, const char* profile,
+                             std::vector<BYTE>& code, void** table, std::string* err);
+        HRESULT constant_table_set_defaults(void* table);
+        void*   constant_table_get_constant_by_name(void* table, const char* name);
+        int     constant_table_get_register(void* table, void* handle);          // 普通常量寄存器号
+        int     constant_table_get_sampler_register(void* table, void* handle);  // 采样器寄存器号(sN), 非采样器返回 -1
 
         HRESULT set_texture(DWORD, void*);
         HRESULT create_texture(UINT, UINT, UINT, DWORD, DWORD, DWORD, void**);
@@ -141,6 +159,20 @@ namespace d3d
     { return version() == V9 ? impl9::set_vertex_shader(fvf_mode, fvf, handle) : impl8::set_vertex_shader(fvf_mode, fvf, handle); }
     inline HRESULT set_vs_const(DWORD reg, const float* v, DWORD count)
     { return version() == V9 ? impl9::set_vs_const(reg, v, count) : impl8::set_vs_const(reg, v, count); }
+
+    // HLSL(D3D9 专属; D3D8 走 impl8 桩, 一律失败/返回空)。
+    inline HRESULT compile_hlsl(const char* src, size_t len, const char* entry, const char* profile,
+                                std::vector<BYTE>& code, void** table, std::string* err)
+    { return version() == V9 ? impl9::compile_hlsl(src, len, entry, profile, code, table, err)
+                             : impl8::compile_hlsl(src, len, entry, profile, code, table, err); }
+    inline HRESULT constant_table_set_defaults(void* table)
+    { return version() == V9 ? impl9::constant_table_set_defaults(table) : impl8::constant_table_set_defaults(table); }
+    inline void* constant_table_get_constant_by_name(void* table, const char* name)
+    { return version() == V9 ? impl9::constant_table_get_constant_by_name(table, name) : impl8::constant_table_get_constant_by_name(table, name); }
+    inline int constant_table_get_register(void* table, void* handle)
+    { return version() == V9 ? impl9::constant_table_get_register(table, handle) : impl8::constant_table_get_register(table, handle); }
+    inline int constant_table_get_sampler_register(void* table, void* handle)
+    { return version() == V9 ? impl9::constant_table_get_sampler_register(table, handle) : impl8::constant_table_get_sampler_register(table, handle); }
 
     inline HRESULT set_texture(DWORD stage, void* tex)
     { return version() == V9 ? impl9::set_texture(stage, tex) : impl8::set_texture(stage, tex); }

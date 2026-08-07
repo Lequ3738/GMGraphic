@@ -119,6 +119,14 @@ namespace d3d
         HRESULT set_vs_const(DWORD reg, const float* v, DWORD count)
         { return dev()->SetVertexShaderConstant(reg, v, count); }
 
+        // ---- HLSL(D3D8 不支持, 桩) ----
+        HRESULT compile_hlsl(const char*, size_t, const char*, const char*,
+                             std::vector<BYTE>&, void**, std::string*) { return E_NOTIMPL; }
+        HRESULT constant_table_set_defaults(void*) { return E_NOTIMPL; }
+        void*   constant_table_get_constant_by_name(void*, const char*) { return nullptr; }
+        int     constant_table_get_register(void*, void*) { return -1; }
+        int     constant_table_get_sampler_register(void*, void*) { return -1; }
+
         // ---- 纹理桥(纹理一律不透明 void*) ----
         HRESULT set_texture(DWORD stage, void* tex)
         { return dev()->SetTexture(stage, (IDirect3DBaseTexture8*)tex); }
@@ -198,6 +206,7 @@ namespace d3d
             if (FAILED(intf()->GetAdapterIdentifier(D3DADAPTER_DEFAULT, D3DENUM_NO_WHQL_LEVEL, &aid))) return false;
             out.max_point_size       = caps.MaxPointSize;           // D3D8 是 FLOAT
             out.pixel_shader_version = caps.PixelShaderVersion;
+            out.vertex_shader_version = caps.VertexShaderVersion;
             out.max_tex_w            = caps.MaxTextureWidth;
             out.max_tex_h            = caps.MaxTextureHeight;
             out.max_tex_stages       = caps.MaxSimultaneousTextures;

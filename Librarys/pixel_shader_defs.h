@@ -3,7 +3,7 @@
 constexpr const char* ps_sdf = ""
 "ps.1.4"																				"\r\n"
 ""																						"\r\n"
-"def		c0, 0.75, 0.5, 0, 0		// c0.x: The 1/32 of the scale"						"\r\n"
+// c0(scale/thickness) 由 d3d_set_ps_const(0,...) 运行时设置, 不能 def c0 —— D3D9 的 def 优先于 API 常量(2026-08-06)
 "									// c0.y: The thickness value of the text"			"\r\n"
 "def		c1, 0.0625, 0, 0, 0		// c1.x: the compensation of mad_x8 (0.5 / 8)"		"\r\n"
 ""																						"\r\n"
@@ -21,7 +21,7 @@ constexpr const char* ps_sdf = ""
 constexpr const char* ps_sdf_premul = ""
 "ps.1.4"																				"\r\n"
 ""																						"\r\n"
-"def		c0, 0.75, 0.5, 0, 0		// c0.x: The 1/32 of the scale"						"\r\n"
+// c0(scale/thickness) 由 d3d_set_ps_const(0,...) 运行时设置, 不能 def c0 —— D3D9 的 def 优先于 API 常量(2026-08-06)
 "									// c0.y: The thickness value of the text"			"\r\n"
 "def		c1, 0.0625, 0, 0, 0		// c1.x: the compensation of mad_x8 (0.5 / 8)"		"\r\n"
 ""																						"\r\n"
