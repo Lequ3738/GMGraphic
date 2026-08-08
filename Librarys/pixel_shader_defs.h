@@ -43,7 +43,7 @@ constexpr const char* ps_sdf_premul = ""
 //   asm  = sat(32*scale*(dist - thickness) + 0.0625)                    (线性斜坡)
 //   HLSL = smoothstep(u_buffer - u_gamma, u_buffer + u_gamma, dist)     (平滑阈值)
 // 颜色都取 v0(顶点色, 支持四角渐变); premul 版本再做 rgb *= a。
-// 编译入口 mainPS; 源码不含 "mainVS" → 顶点阶段自动 passthrough(Option A, FVF)。
+// 编译入口 mainPS; 无顶点阶段 → 顶点自动 passthrough(Option A, FVF)。
 // ============================================================================
 
 constexpr const char* ps_sdf_hlsl = ""

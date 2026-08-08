@@ -204,9 +204,13 @@ static bool compile_hlsl_stage(const char* src, const char* entry, const char* f
                                const char* profile, bool is_vs, ShaderBundle& b)
 {
     const char* use = (entry && entry[0]) ? entry : nullptr;
+    bool default_entry = (use == nullptr);
     if (!use)
     {
-        if (!strstr(src, fallback)) return false;   // 源码里没有默认入口 → passthrough
+        // 快速路径: 源码里连标识符都没有 → passthrough, 免一次 D3DX 编译。
+        // 注意: 这仅是启发式 —— 注释/字符串里的 fallback 字样也会命中, 此时仍会
+        // 走到编译, 失败且报 X3501(entrypoint not found)由下面兜底按 passthrough 处理。
+        if (!strstr(src, fallback)) return false;
         use = fallback;
     }
 
@@ -217,6 +221,13 @@ static bool compile_hlsl_stage(const char* src, const char* entry, const char* f
     if (FAILED(d3d::compile_hlsl(src, strlen(src), use, profile, code, &table, &err)))
     {
         if (table) d3d::release(table);   // 防御: 失败时 D3DX 理论上置空
+        // entry 为空 = "没写就用默认入口; 源码没有则该阶段 passthrough"。此时编译器报
+        // X3501(entrypoint not found)属正常情况: 源码里没有该函数(可能只是注释提到了
+        // fallback 字样), 该阶段不参与, 直接 passthrough, 不弹错。其它错误(真语法/语义
+        // 错误)才抛异常。
+        if (default_entry &&
+            (strstr(err.c_str(), "X3501") || strstr(err.c_str(), "entrypoint not found")))
+            return false;
         throw std::runtime_error("Shader compile error:\r\n\r\n" + err + "\r\n\r\n" + std::string(src));
     }
 
