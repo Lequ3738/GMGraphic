@@ -1,14 +1,7 @@
 // ============================================================================
 // GMGraphic 新 Shader API — GML 侧调用参考
-//
-// 设计定稿(2026-08-07): C++ 导出名即 shader_set_uniform_f/i/b(固定 5 参:
-//   handle + 4 个值)。游戏侧用 external_define 绑定(见 Nature Edition 的
-//   graphic_dll_init.gml), 调用时少传值 GM8 自动补 0 —— 无需额外变参脚本。
-//
-// 示例(GML):
-//   var h = external_call(global._shader_get_uniform, sh, "uColor");
-//   external_call(global._shader_set_uniform_f, h, 1, 0, 0);      // 3 个值, w=0
-//   external_call(global._shader_set_uniform_f, h, 1, 0, 0, 1);   // 4 个值
+// 设计定稿(2026-08-07): 导出名即 shader_set_uniform_f/i/b(固定 5 参), external_define 绑定见
+// Nature Edition 的 graphic_dll_init.gml; 少传值 GM8 自动补 0。示例: external_call(global._shader_set_uniform_f, h, 1, 0, 0);
 // ============================================================================
 
 // ============================================================================

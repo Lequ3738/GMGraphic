@@ -1,12 +1,5 @@
-// 双后端检测: 判断当前进程里 GM8 runner 的 D3D 设备是 D3D8 还是 D3D9。
-//
-// 在 GMDirectX9 插件下, 0x58d388(GMDIRECT3DINFO.direct3dDevice)里存的是
-// IDirect3DDevice9 对象; 原生 GM8 则是 IDirect3DDevice8。两者指针相同但 vtable
-// 槽位不同, 因此必须精确区分后再调用。
-//
-// 权威判据: COM 对象的前 4 字节是它的 vtable 指针(QueryInterface 入口), 查它
-// 落在哪个模块的地址区间 —— 真正的 D3D9 设备 vtable 在 d3d9.dll 内, D3D8 设备
-// 在 d3d8.dll 内。
+// 双后端检测: 判断 GM8 runner 的 D3D 设备是 D3D8 还是 D3D9。GMDirectX9 插件下 0x58d388 是 IDirect3DDevice9,
+// 原生 GM8 是 IDirect3DDevice8(vtable 槽位不同)。权威判据: 查设备 vtable 指针落在 d3d9.dll(→V9)还是 d3d8.dll(→V8)。
 #include "d3d_adapter.h"
 
 namespace d3d

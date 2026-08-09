@@ -561,9 +561,7 @@ std::vector<texture_atlas::images*> texture_atlas::load(path& file_path)
 	transpond_catch("texture_atlas::load(path&)")
 }
 
-// ============================================================================
-// Export Functions
-// ============================================================================
+// ==================== Export Functions ====================
 
 #pragma region Texture Atlas Create / Add image
 

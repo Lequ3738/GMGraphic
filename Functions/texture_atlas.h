@@ -21,19 +21,13 @@ struct copy_image_rect
 	bool is_rotated = false;
 };
 
-/// <summary>
 /// 纹理图集结构体。
-/// </summary>
 struct texture_atlas
 {
-	/// <summary>
 	/// 纹理图集图片结构体。
-	/// </summary>
 	struct images
 	{
-		/// <summary>
 		/// 图片位置结构体
-		/// </summary>
 		struct sub_image
 		{
 			uint texture_left = 0;
@@ -92,77 +86,38 @@ struct texture_atlas
 
 	static bool texture_amplification;		// 是否按照“边缘像素重复”的方式添加纹理到纹理图集中
 
-	/// <summary>
-	/// 创建一个新的纹理图集。
-	/// </summary>
-	/// <param name="size">纹理图集的大小，可以为 256，512，1024 或 2048。</param>
-	/// <param name="id">位于 game_texture_atlas 的 ID。</param>
+	/// 创建新的纹理图集。size: 256/512/1024/2048；id: game_texture_atlas 的 ID。
 	texture_atlas(uint size, uint id);
 
-	/// <summary>
 	/// 默认构造函数，不允许使用。
-	/// </summary>
 	texture_atlas() = delete;
 
-	/// <summary>
 	/// 该结构体的析构函数。
-	/// </summary>
 	~texture_atlas();
 
-	/// <summary>
-	/// 在该纹理图集中添加一个图像文件。不是已导入到 GameMaker 里面的 Sprite 和 Background。
-	/// </summary>
-	/// <param name="image_file">图像文件。仅支持 gmspr 和 png 文件。</param>
-	/// <returns>若成功，返回 ID，否则返回 -1。</returns>
+	/// 添加图像文件（非 GM 已导入的 Sprite/Background）。仅支持 gmspr/png。成功返回 ID，否则 -1。
 	static gm::sprite decode_image(const std::string& image_file);
 
-	/// <summary>
-	/// 在该纹理图集中添加一个已导入到 GameMaker 里的 Sprite。
-	/// 该 Sprite 在添加至纹理图集后，不会自动删除，需要使用 gm::sprite_delete 进行删除。
-	/// </summary>
-	/// <param name="id">Sprite ID。</param>
-	/// <returns>若成功，返回 ID，否则返回 -1。</returns>
+	/// 添加已导入 GM 的 Sprite。添加后不会自动删除，需调用 gm::sprite_delete。
+	/// 成功返回 ID，否则 -1。
 	static gm::sprite decode_sprite(uint id);
 
-	/// <summary>
-	/// 在该纹理图集中添加一个已导入到 GameMaker 里的 Background。<para>
-	/// 该 Background 在添加至纹理图集后，不会自动删除，需要使用 gm::background_delete 进行删除。
-	/// </para></summary>
-	/// <param name="id">Background ID。</param>
-	/// <returns>若成功，返回 ID，否则返回 -1。</returns>
+	/// 添加已导入 GM 的 Background。添加后不会自动删除，需调用 gm::background_delete。
+	/// 成功返回 ID，否则 -1。
 	static gm::sprite decode_background(uint id);
 	
-	/// <summary>
-	/// 
-	/// </summary>
-	/// <param name="spr"></param>
-	/// <returns></returns>
 	int add_image(gm::sprite& spr);
 
-	/// <summary>
-	/// 将纹理图集数据上传至 GPU。
-	/// </summary>
-	/// <param name="del_memdata">是否删除内存中的纹理图集数据。
-	/// 若为 true，使用此函数后纹理图集将变为只读状态。</param>
-	/// <returns>是否成功。</returns>
+	/// 将纹理图集数据上传至 GPU。del_memdata=true 时删除内存数据并使图集变为只读。
 	bool burn(bool del_memdata = true);
 
-	/// <summary>
-	/// 将纹理图集保存至一个 png 文件中，该纹理图集必须使用过 burn 方法。
-	/// </summary>
-	/// <param name="file_path">要保存的文件路径，不包含扩展名。</param>
+	/// 将纹理图集保存至 png 文件（需先调用 burn）。file_path 不含扩展名。
 	void save(path& file_path) const;
 
-	/// <summary>
-	/// 从指定文件中加载纹理图集数据，加载后该纹理图集将变为只读状态。
-	/// </summary>
-	/// <param name="file_path">要载入的文件路径，不包含扩展名。</param>
-	/// <returns>包含所有载入图像指针的列表。</returns>
+	/// 从文件加载纹理图集数据，加载后图集变为只读。file_path 不含扩展名。
 	std::vector<images*> load(path& file_path);
 
-	/// <summary>
 	/// 指示该纹理图集是否为只读模式
-	/// </summary>
 	inline bool read_only() const
 	{
 		return texture != nullptr && data.empty();
@@ -176,9 +131,7 @@ extern std::unordered_map<uint, std::unique_ptr<texture_atlas>> game_texture_atl
 extern std::unordered_map<uint, texture_atlas::images*> game_images;
 extern std::unordered_map<uint, texture_atlas::images::sub_image*> game_textures;
 
-// ============================================================================
-// Export Functions
-// ============================================================================
+// ==================== Export Functions ====================
 exp_real texture_atlas_auto_start();
 exp_real texture_atlas_auto_add_file(gm_string file);
 exp_real texture_atlas_auto_add_sprite(gm_real spr);

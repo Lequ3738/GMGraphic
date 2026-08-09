@@ -9,9 +9,7 @@ constexpr uint absence_character_unicode = '?';
 
 namespace sdf
 {
-	/// <summary>
 	/// 字体图集结构体
-	/// </summary>
 	struct glyphs
 	{
 		/// <summary>
@@ -85,9 +83,7 @@ namespace sdf
 		int c4, double alpha);
 	void draw_text_rich(double x, double y, std::string& str, double xscale, double yscale);
 
-	/// <summary>
 	/// 传入 inner_draw_text 函数的结构体，包含所有绘制信息
-	/// </summary>
 	struct draw_info
 	{
 		float x = 0, y = 0;
@@ -112,9 +108,7 @@ namespace sdf
 
 	typedef std::unique_ptr<glyphs> glyphs_ptr;
 
-	/// <summary>
 	/// 函数 composing_string 返回的结构体，包含了字符串被切分成多行后的每行信息，以及整段文本的宽高信息
-	/// </summary>
 	struct composed_string
 	{
 		struct line
@@ -130,9 +124,7 @@ namespace sdf
 		std::string raw;  // 原始字符串
 	};
 
-	/// <summary>
 	/// 用于 sdf_draw_set_conf 等函数的结构体，能一次性配置多个绘制参数
-	/// </summary>
 	struct font_info
 	{
 		glyphs* font = nullptr;
@@ -148,9 +140,7 @@ extern std::unordered_map<uint, sdf::font_info> game_font_info;
 
 extern sdf::glyphs* current_sdf_glyphs;
 
-// ============================================================================
 // Export Functions
-// ============================================================================
 
 exp_real sdf_add_font(gm_string image_path, gm_string csv_path);
 exp_real sdf_delete_font(gm_real id);

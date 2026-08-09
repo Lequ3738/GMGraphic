@@ -1,22 +1,6 @@
 #pragma once
-// ============================================================================
-// GMGraphic 双后端适配器 —— 版本中立接口(D3D8 / D3D9 运行时自动分发)
-//
-// 规则: 本头只出现 DWORD / UINT / 指针 / float / std 类型, 绝不出现
-//       IDirect3DDevice8/9、D3DFORMAT 等 D3D 类型。这样共享代码无需认识
-//       任何一个具体版本的接口, 也就没有 d3d8.h 与 d3d9.h 的头冲突。
-//
-// 实现分两个 TU:
-//   d3d_adapter8.cpp  仅 include d3d8.h + d3dx8.h  (D3D8 分支)
-//   d3d_adapter9.cpp  仅 include d3d9.h + d3dx9.h  (D3D9 分支)
-// 两者永不同时进入同一编译单元, 头冲突从根上消除。公共 API 按运行时的
-// 后端选择(见 version()/ensure_version())。未初始化时默认按 D3D8(历史行为)。
-//
-// 为什么共享代码沿用 D3D8 枚举: gmapi.h 经 GmapiDefs.h 在 GMAPI_USE_D3D 下
-// 已引入 d3d8.h; 且 D3DFMT_/D3DPOOL_/D3DRS_/D3DTSS_/D3DPT_/D3DFVF_ 等枚举值
-// 在 DX8 与 DX9 中数值完全一致。共享代码把 D3D8 枚举值当 DWORD 传入,
-// 适配器按后端转回对应版本的类型。此前提由 GMDirectX9 移植实机验证过。
-// ============================================================================
+// GMGraphic 双后端适配器(D3D8/D3D9 运行时自动分发): 本头只用 DWORD/UINT/指针/float/std 类型,
+// 实现分 d3d_adapter8.cpp/d3d_adapter9.cpp 两 TU 各含一个版本的 D3D 头; 共享代码沿用 D3D8 枚举(DX8/DX9 数值一致)。
 #include <windows.h>
 #include <string>
 #include <vector>
@@ -38,8 +22,7 @@ namespace d3d
     };
 
     // ---- uniform 常量寄存器类型 ----
-    // SM3.0 才有独立的 int(iN)/bool(bN) 寄存器组; SM2.0 与 D3D8 所有常量都在 float 寄存器,
-    // 编译器会把 int/bool uniform 编进 float 寄存器 → 常量表 RegisterSet 报 FLOAT4, 自然回退。
+    // SM3.0 才有独立 int(iN)/bool(bN) 寄存器组; SM2.0/D3D8 全在 float 寄存器, int/bool uniform 编进 float → RegisterSet 报 FLOAT4, 自然回退。
     enum ConstKind : int { CK_NONE = -1, CK_FLOAT = 0, CK_INT = 1, CK_BOOL = 2 };
     // count = D3DXCONSTANT_DESC.RegisterCount(占用的寄存器数): FLOAT/INT 按 int4 计(标量/向量=1),
     // BOOL 按单个布尔寄存器计(bool 标量=1, bool4=4)。写入时 FLOAT/INT 恒用 1(BOOL 用 count)。
@@ -73,6 +56,9 @@ namespace d3d
         HRESULT create_vertex_shader(VertexFmt, const BYTE*, const BYTE*, size_t, DWORD*);
         HRESULT delete_vertex_shader(DWORD);
         HRESULT set_vertex_shader(bool fvf_mode, DWORD fvf, DWORD handle);
+        // ps-only 着色器配套: 无自定义 VS 时绑"仿固定管线 VS"(D3D9 = 透传 VS + 声明 + WVP;
+        // D3D8 = 固定顶点管线 FVF)。用于 ps_3_0 像素着色器的 v0/v1 输入喂给。
+        HRESULT set_vertex_shader_passthrough(VertexFmt);
         HRESULT set_vs_const_typed(DWORD, ConstKind, const float*, DWORD);
 
         // HLSL 依赖 D3DX9 常量表, D3D8 不支持 —— 桩实现(一律失败/返回空)。
@@ -111,6 +97,9 @@ namespace d3d
         HRESULT create_vertex_shader(VertexFmt, const BYTE*, const BYTE*, size_t, DWORD*);
         HRESULT delete_vertex_shader(DWORD);
         HRESULT set_vertex_shader(bool fvf_mode, DWORD fvf, DWORD handle);
+        // ps-only 着色器配套: 无自定义 VS 时绑"仿固定管线 VS"(D3D9 = 透传 VS + 声明 + WVP;
+        // D3D8 = 固定顶点管线 FVF)。用于 ps_3_0 像素着色器的 v0/v1 输入喂给。
+        HRESULT set_vertex_shader_passthrough(VertexFmt);
         HRESULT set_vs_const_typed(DWORD, ConstKind, const float*, DWORD);
 
         // HLSL(D3D9 专属): D3DXCompileShader + ID3DXConstantTable, 常量表是 COM 对象,
@@ -165,6 +154,8 @@ namespace d3d
     { return version() == V9 ? impl9::delete_vertex_shader(handle) : impl8::delete_vertex_shader(handle); }
     inline HRESULT set_vertex_shader(bool fvf_mode, DWORD fvf, DWORD handle)
     { return version() == V9 ? impl9::set_vertex_shader(fvf_mode, fvf, handle) : impl8::set_vertex_shader(fvf_mode, fvf, handle); }
+    inline HRESULT set_vertex_shader_passthrough(VertexFmt fmt)
+    { return version() == V9 ? impl9::set_vertex_shader_passthrough(fmt) : impl8::set_vertex_shader_passthrough(fmt); }
     inline HRESULT set_vs_const_typed(DWORD reg, ConstKind kind, const float* v, DWORD count)
     { return version() == V9 ? impl9::set_vs_const_typed(reg, kind, v, count) : impl8::set_vs_const_typed(reg, kind, v, count); }
 

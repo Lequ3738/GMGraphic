@@ -35,8 +35,7 @@ exp_real d3d_dev_get_tex_max_stages();
 exp_real d3d_dev_get_tex_mem();
 
 // ---- Shader API(GMS2 风格, 权威文档: 桌面 "Shader API 设计.md") ----
-// PS/VS 统一为一个 shader 资源(bundle); 空字符串 = 不用该阶段(空 VS = passthrough FVF)。
-// uniform 句柄 = 统一 map 索引(不透明), 结构体 {ps_reg, vs_reg} 编码目标阶段。
+// bundle{ps/vs}, 空字符串=passthrough; uniform=统一 map 索引, {ps_reg,vs_reg} 编码目标阶段。
 
 // 创建 asm 着色器(D3D8/9 通用)。vs/ps 空字符串 = 不用该阶段; 双空返回 -1。
 exp_real shader_create_asm(const char* vs, const char* ps);

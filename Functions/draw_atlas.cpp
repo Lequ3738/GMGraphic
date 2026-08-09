@@ -302,9 +302,7 @@ void atlas::force_draw_to_screen()
 	transpond_catch("atlas::force_draw_to_screen()")
 }
 
-// ============================================================================
-// Export Functions
-// ============================================================================
+// ==================== Export Functions ====================
 
 exp_real atlas_sprite_exists(gm_real id)
 {

@@ -39,11 +39,7 @@ constexpr const char* ps_sdf_premul = ""
 
 // ============================================================================
 // DX9 专用: MapLibre 风格 smoothstep SDF 像素着色器(ps-only, HLSL)。
-// 与 asm 版(ps_sdf)关系: 同一套顶点输入(t0/v0) + 同一张 A8 图集纹理, 仅阈值公式不同:
-//   asm  = sat(32*scale*(dist - thickness) + 0.0625)                    (线性斜坡)
-//   HLSL = smoothstep(u_buffer - u_gamma, u_buffer + u_gamma, dist)     (平滑阈值)
-// 颜色都取 v0(顶点色, 支持四角渐变); premul 版本再做 rgb *= a。
-// 编译入口 mainPS; 无顶点阶段 → 顶点自动 passthrough(Option A, FVF)。
+// 与 asm 版(ps_sdf)差异仅在阈值公式: asm=sat(32*scale*(dist-thickness)+0.0625), HLSL=smoothstep(u_buffer±u_gamma,dist)。
 // ============================================================================
 
 constexpr const char* ps_sdf_hlsl = ""

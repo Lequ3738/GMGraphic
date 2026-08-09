@@ -1,20 +1,5 @@
-// D3D9 后端实现。本 TU 认识 d3d9.h / d3dx9.h(现代 Windows SDK 的 D3D9Ex 合并头)。
-// 在 GMDirectX9 插件下, 设备指针(0x58d388)是 IDirect3DDevice9 对象。
-//
-// 与 D3D8 的差异集中体现在本文件:
-//   1. 顶点着色器声明: D3D8 用 D3DVSD 记号流, D3D9 用 D3DVERTEXELEMENT9
-//   2. 着色器句柄: D3D8 是 DWORD, D3D9 是对象指针(x86 下互转安全)
-//   3. 着色器释放: D3D8 用设备 Delete*Shader(handle); D3D9 无此方法,
-//      shader 是 COM 对象, 直接对对象调 Release()(引用计数到 0 自动释放)
-//   4. 常量寄存器: Set*ShaderConstant -> Set*ShaderConstantF
-//   5. 创建方法的共享句柄参数: 现代头 CreateTexture / CreateOffscreenPlainSurface
-//      是 8 参(多 HANDLE* pSharedHandle), 传 nullptr 即"不共享"的经典行为
-//
-// 关于 D3DX9 为什么【不能】像 D3D8 那样静态链 d3dx9.lib:
-//   D3DX8 与 D3DX9 有大量同名函数(如 D3DXLoadSurfaceFromMemory, 都是 @40),
-//   stdcall 修饰名相同, 静态链接必然撞名, 导致两个分支的 D3DX 调用都解析错误。
-//   因此 D3DX9 走运行时 LoadLibrary + GetProcAddress(与 GMDirectX9 自身一致);
-//   D3D8 分支保持静态链 d3dx8.lib(原样)。d3d9.h / d3dx9.h 仍完整引入供类型使用。
+// D3D9 后端实现(认识 d3d9.h/d3dx9.h; GMDirectX9 插件下设备指针 0x58d388 是 IDirect3DDevice9 对象)。
+// 与 D3D8 差异: 声明 D3DVSD→D3DVERTEXELEMENT9, 句柄 DWORD→对象指针, 释放走对象 Release(); D3DX9 不静态链 d3dx9.lib(D3DX8/D3DX9 同名 stdcall 撞名)→LoadLibrary+GetProcAddress, D3D8 仍静态链。
 #include <cstring>
 #include <cstdio>
 #include "d3d_adapter.h"
@@ -67,9 +52,8 @@ namespace d3d
         { return dev()->DrawPrimitiveUP((D3DPRIMITIVETYPE)prim, count, verts, stride); }
         UINT get_available_tex_mem() { return dev()->GetAvailableTextureMem(); }
 
-        // ---- 汇编: D3DX9AssembleShader(7 参; 支持 1.1-3.0) ----
-        // 注意: d3dx9_43.dll 的 D3DXAssembleShader 是 7 参(含 pInclude + Flags),
-        // 不是某些旧资料里的 5 参 —— d3dx9.lib 导入名 _D3DXAssembleShader@28 可证。
+        // ---- 汇编: D3DX9AssembleShader(7 参, 含 pInclude+Flags; 支持 1.1-3.0) ----
+        // 注意是 7 参而非旧资料里的 5 参 —— d3dx9.lib 导入名 _D3DXAssembleShader@28 可证。
         static HRESULT assemble_impl(const char* src, size_t len, std::vector<BYTE>& code, std::string* err)
         {
             if (!load_d3dx9()) return E_FAIL;
@@ -128,10 +112,7 @@ namespace d3d
         }
 
         // ---- 顶点着色器: D3D8 的 D3DVSD 声明 -> D3D9 的 D3DVERTEXELEMENT9 ----
-        // 偏移必须与 vert_default(24B)/vert_ext(96B) 逐字节对上。
-        //   vert_ext: pos[0..11] | normal[12..23] | c[24] | s[28] | uv[32..95]
-        //   vert_default: pos[0..11] | c[12] | uv[16..23]
-        // D3D9 对 vs_1_1 / ps_1.x 字节码向后兼容, 现有 1.x 汇编 shader 零改写。
+        // 偏移与 vert_default(24B: pos|c|uv)/vert_ext(96B: pos|normal|c|s|uv) 逐字节对上; D3D9 对 vs_1_1/ps_1.x 字节码向后兼容, 现有 1.x 汇编 shader 零改写。
         static const D3DVERTEXELEMENT9 ext_elems[] = {
             { 0,  0, D3DDECLTYPE_FLOAT3,   D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0 },
             { 0, 12, D3DDECLTYPE_FLOAT3,   D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_NORMAL,   0 },
@@ -187,6 +168,63 @@ namespace d3d
             HRESULT hr = dev()->SetVertexDeclaration(ensure_decl(VERT_EXT));
             if (FAILED(hr)) return hr;
             return dev()->SetVertexShader((IDirect3DVertexShader9*)handle);
+        }
+        // ---- 仿固定管线/透传 VS(D3D9 only): 给 ps-only shader 喂 ps_3_0 的 v0(texcoord)/v1(color), FVF 只喂 ps_2.x 的 t0/v0 → ps_3_0 读 0 全透明。----
+        // 必须 vs_3_0 显式 dcl_color o1/dcl_texcoord o2.xy(vs_2_0 隐式 oT0/oD0 喂不进); 矩阵必须写 mul(uWVP,v.pos)(HLSL float4x4 常量寄存器列主序 vs SetVertexShaderConstantF 写行主序, 反写丢投影平移→出屏)。
+        static IDirect3DVertexShader9* s_passthrough_vs = nullptr;
+        static const char s_passthrough_vs_hlsl[] =
+            "float4x4 uWVP : register(c0);"                                                                 "\n"
+            "struct VS_IN { float4 pos: POSITION; float4 color: COLOR0; float2 uv: TEXCOORD0; };"          "\n"
+            "struct VS_OUT { float4 pos: POSITION; float4 color: COLOR0; float2 uv: TEXCOORD0; };"         "\n"
+            "VS_OUT main(VS_IN v) {"                                                                       "\n"
+            "  VS_OUT o;"                                                                                  "\n"
+            "  o.pos = mul(uWVP, v.pos);"                                                                  "\n"
+            "  o.color = v.color;"                                                                         "\n"
+            "  o.uv = v.uv;"                                                                               "\n"
+            "  return o;"                                                                                  "\n"
+            "}";
+        // out = a * b (4x4, row-major, 与 D3DXMatrixMultiply 同约定)。D3D9 分支不静态链
+        // d3dx9.lib(与 D3DX8 撞名), 故手动乘, 不复用 D3DXMatrixMultiply。
+        static void mul4x4(const float* a, const float* b, float* out)
+        {
+            for (int r = 0; r < 4; r++)
+                for (int c = 0; c < 4; c++)
+                {
+                    float s = 0.0f;
+                    for (int k = 0; k < 4; k++) s += a[r * 4 + k] * b[k * 4 + c];
+                    out[r * 4 + c] = s;
+                }
+        }
+        HRESULT set_vertex_shader_passthrough(VertexFmt fmt)
+        {
+            if (!s_passthrough_vs)
+            {
+                if (!load_d3dx9()) return E_FAIL;
+                LPD3DXBUFFER shader = nullptr, errors = nullptr;
+                HRESULT hr = s_compile(s_passthrough_vs_hlsl, (UINT)sizeof(s_passthrough_vs_hlsl) - 1,
+                    nullptr, nullptr, "main", "vs_3_0", 0, &shader, &errors, nullptr);
+                if (FAILED(hr))
+                {
+                    if (errors) errors->Release();
+                    return hr;
+                }
+                hr = dev()->CreateVertexShader((const DWORD*)shader->GetBufferPointer(), &s_passthrough_vs);
+                shader->Release();
+                if (FAILED(hr)) return hr;
+            }
+            HRESULT hr = dev()->SetVertexDeclaration(ensure_decl(fmt));
+            if (FAILED(hr)) return hr;
+            // WVP = W*V*P(行向量约定, 与引擎 FFP 的 pos*W*V*P 一致)。uWVP 是唯一 uniform,
+            // 编译器固定分配 c0-c3。GetTransform 此刻返回引擎当前矩阵(投影在帧首设好)。
+            float world[16], view[16], proj[16], wv[16], wvp[16];
+            dev()->GetTransform(D3DTS_WORLD, (D3DMATRIX*)world);
+            dev()->GetTransform(D3DTS_VIEW, (D3DMATRIX*)view);
+            dev()->GetTransform(D3DTS_PROJECTION, (D3DMATRIX*)proj);
+            mul4x4(world, view, wv);
+            mul4x4(wv, proj, wvp);
+            hr = dev()->SetVertexShaderConstantF(0, wvp, 4);
+            if (FAILED(hr)) return hr;
+            return dev()->SetVertexShader(s_passthrough_vs);
         }
         HRESULT set_vs_const_typed(DWORD reg, ConstKind kind, const float* v, DWORD count)
         {

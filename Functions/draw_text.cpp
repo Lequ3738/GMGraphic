@@ -681,9 +681,7 @@ void sdf::draw_text_ext_transformed_color(double x, double y, std::string& str, 
 		"double, double, double, double, int, int, int, int, double)")
 }
 
-// ============================================================================
-// Export Functions
-// ============================================================================
+// ======================= Export Functions =======================
 
 std::unordered_map<uint, sdf::glyphs_ptr> game_sdf_glyphs;
 uint glyphs_id_position = 1;

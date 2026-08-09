@@ -134,10 +134,8 @@ double d3dcol_to_alpha(d3dcolor color)
 	return static_cast<double>((color & 0xFF000000) >> 24) / 255.0;
 }
 
-// Load file into RAM.
-// You need to declare the target pointer && size vars first.
-// Returns whether it succeeded.  If it fails, there's nothing to clean up.
-// If it works you need to delete[] the buffer when you're done.
+// Load file into RAM.  Declare target pointer && size vars first.
+// Returns whether it succeeded; if it works, delete[] the buffer when you're done.
 bool file_read(char* file_in, char*& target, uint& size)
 {
 	using namespace std;

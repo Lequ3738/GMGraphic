@@ -117,6 +117,14 @@ namespace d3d
         // D3D8: FVF 与着色器是同一个入口, 用哪个由调用方语义决定。
         HRESULT set_vertex_shader(bool fvf_mode, DWORD fvf, DWORD handle)
         { return dev()->SetVertexShader(fvf_mode ? fvf : handle); }
+        // D3D8 无 ps_3_0 输入路由问题(最高 ps_1.4 走 tN/v0), 无自定义 VS 就保持固定顶点管线。
+        HRESULT set_vertex_shader_passthrough(VertexFmt fmt)
+        {
+            DWORD fvf = (fmt == VERT_EXT)
+                ? (D3DFVF_XYZ | D3DFVF_NORMAL | D3DFVF_DIFFUSE | D3DFVF_SPECULAR | D3DFVF_TEX8)
+                : (D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1);
+            return set_vertex_shader(true, fvf, 0);
+        }
         HRESULT set_vs_const_typed(DWORD reg, ConstKind /*kind*/, const float* v, DWORD count)
         { return dev()->SetVertexShaderConstant(reg, (const DWORD*)v, count); }
 

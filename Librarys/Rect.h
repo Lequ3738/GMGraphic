@@ -1,8 +1,4 @@
-/** @file Rect.h
-	@author Jukka Jyl鋘ki
-
-	This work is released to Public Domain, do whatever you want with it.
-*/
+/** @file Rect.h  @author Jukka Jyl鋘ki  Released to Public Domain. */
 #pragma once
 
 #include <vector>
@@ -15,8 +11,6 @@
 #else
 #define debug_assert(x)
 #endif
-
-//using namespace std;
 
 namespace rbp {
 
@@ -35,9 +29,7 @@ struct Rect
 };
 
 /// Performs a lexicographic compare on (rect short side, rect long side).
-/// @return -1 if the smaller side of a is shorter than the smaller side of b, 1 if the other way around.
-///   If they are equal, the larger side length is used as a tie-breaker.
-///   If the rectangles are of same size, returns 0.
+/// @return -1/0/1; if the short sides are equal, the larger side breaks the tie.
 int CompareRectShortSide(const Rect &a, const Rect &b);
 
 /// Performs a lexicographic compare on (x, y, width, height).

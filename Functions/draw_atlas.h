@@ -54,9 +54,7 @@ namespace atlas
 	void force_draw_to_screen();
 }
 
-// ============================================================================
-// Export Functions
-// ============================================================================
+// ==================== Export Functions ====================
 
 exp_real atlas_sprite_exists(gm_real id);
 exp_real atlas_background_exists(gm_real id);
