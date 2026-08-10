@@ -100,6 +100,7 @@ namespace d3d
         // ps-only 着色器配套: 无自定义 VS 时绑"仿固定管线 VS"(D3D9 = 透传 VS + 声明 + WVP;
         // D3D8 = 固定顶点管线 FVF)。用于 ps_3_0 像素着色器的 v0/v1 输入喂给。
         HRESULT set_vertex_shader_passthrough(VertexFmt);
+        void*   get_passthrough_vs_ptr();  // 透传 VS 变量地址(&s_passthrough_vs), 供注册到 GMDirectX9
         HRESULT set_vs_const_typed(DWORD, ConstKind, const float*, DWORD);
 
         // HLSL(D3D9 专属): D3DXCompileShader + ID3DXConstantTable, 常量表是 COM 对象,

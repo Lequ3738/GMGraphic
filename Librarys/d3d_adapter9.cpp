@@ -226,6 +226,11 @@ namespace d3d
             if (FAILED(hr)) return hr;
             return dev()->SetVertexShader(s_passthrough_vs);
         }
+        // [GM80-2026-08-09] 透传 VS 槽地址: 返回 &s_passthrough_vs(变量地址, 非值)。注册到
+        // GMDirectX9 后, 其 SetVertexShader 钩子读此槽识别"当前绑的是透传 VS" → 刷新 c0-c3 WVP
+        // 到当前投影(surface_set_target 重设投影后不失真)。懒创建: 首次 shader_set ps-only 才非空,
+        // 槽始终有效(存的是变量地址, 值创建后自动可见)。
+        void* get_passthrough_vs_ptr() { return &s_passthrough_vs; }
         HRESULT set_vs_const_typed(DWORD reg, ConstKind kind, const float* v, DWORD count)
         {
             switch (kind)

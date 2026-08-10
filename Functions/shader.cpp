@@ -76,6 +76,21 @@ exp_real init(gm_real arg_list)
     d3d::ensure_version((void*)gmapi->GetDirect3DDevice(), (void*)gmapi->GetDirect3DInterface());
     d3d::get_caps(d3dcaps);
 
+    // [GM80-2026-08-09] 注册 FFP VS 槽到 GMDirectX9(注册模式): GMDirectX9 的 SetVertexShader 钩子
+    // 识别 FFP(仿固定管线) VS 后, 引擎绘制前刷新 c0-c3 WVP 到当前投影(surface_set_target 重设后不失真)。
+    // 注册传的是 FFP VS 变量的地址(&s_passthrough_vs)而非值 —— 懒创建后槽值自动生效。
+    // GMDirectX9 未加载时静默跳过(纯 dx8 或未装插件)。
+    {
+        HMODULE hdx9 = GetModuleHandleA("GMDirectX9.dll");
+        if (hdx9)
+        {
+            typedef int(__cdecl* GMDX9_REGISTER)(void**);
+            GMDX9_REGISTER reg = (GMDX9_REGISTER)GetProcAddress(hdx9, "gmdx9_register_ffp_vs");
+            if (reg)
+                reg((void**)d3d::impl9::get_passthrough_vs_ptr());
+        }
+    }
+
     gm::argument_list = (int)arg_list;
 
     // SDF 着色器按后端创建: DX8=asm ps_1.4, DX9=HLSL smoothstep(ps_sdf_hlsl)。
