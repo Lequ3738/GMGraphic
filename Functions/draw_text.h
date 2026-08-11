@@ -106,6 +106,7 @@ namespace sdf
 	extern float font_sharpness;		// 字体的锐度。最好与字形纹理大小相同
 	extern float font_thickness;		// 字体的粗细度。在 100 - 900 之间。默认值为 500
 	extern float font_gap;				// 字与字之间的间隔
+	extern float leading_factor;		// 行距/行高因子(leading, 字号倍数)。0=默认按字形升降部; >0 时每行行高=因子×字号。全局生效
 
 	typedef std::unique_ptr<glyphs> glyphs_ptr;
 
@@ -120,6 +121,7 @@ namespace sdf
 
 			float max_ascender = 0;   // 该行最大升部(基线上方高度), 单位: 像素
 			float max_descender = 0;  // 该行最大降部(基线下方高度), 单位: 像素
+			float line_height = 0;    // 该行实际行高(像素), 受字体 leading_factor 覆盖
 		};
 
 		std::vector<line> lines;
@@ -171,6 +173,8 @@ exp_real sdf_draw_get_font_thickness();
 exp_real sdf_draw_set_text_gap(gm_real gap);
 exp_real sdf_draw_get_text_gap();
 exp_real sdf_set_font_offset(gm_real id, gm_real xoffset, gm_real yoffset);
+exp_real sdf_draw_set_leading_factor(gm_real factor);
+exp_real sdf_draw_get_leading_factor();
 
 exp_real sdf_draw_set_conf(gm_real font, gm_real size, gm_real line_spacing,
 	gm_real sharpness, gm_real thickness);

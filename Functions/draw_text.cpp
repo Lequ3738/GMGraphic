@@ -23,6 +23,7 @@ int sdf::shader = -1;
 float sdf::font_sharpness = 24.0f;		// 字体的锐度。最好与字体纹理中单个字体大小相同
 float sdf::font_thickness = 500.0f;		// 字体的粗细度。100~900之间
 float sdf::font_gap = 0.0f;
+float sdf::leading_factor = 0.0f;		// 行距/行高因子(全局)。0=默认按字形升降部
 
 sdf::glyphs* current_sdf_glyphs = nullptr;
 
@@ -171,8 +172,17 @@ static sdf::composed_string composing_string(std::string& str)
 			else
 				line_glyphs.max_descender = font_size - line_glyphs.max_ascender;
 
-			height += (line_glyphs.max_ascender + line_glyphs.max_descender) +
-				sdf::line_spacing;
+			// 行高: 默认 = 升部+降部(空行 = 字号); 全局设置了 leading_factor
+			// (字号倍数)时以覆盖值为准。基线位置仍按升部, 因此 fa_top 不受影响,
+			// 仅行高/总高度/垂直对齐/行推进变化。
+			if (sdf::leading_factor > 0)
+				line_glyphs.line_height = sdf::leading_factor * font_size;
+			else if (!line_glyphs.str_unicode.empty())
+				line_glyphs.line_height = line_glyphs.max_ascender + line_glyphs.max_descender;
+			else
+				line_glyphs.line_height = font_size;
+
+			height += line_glyphs.line_height + sdf::line_spacing;
 			if (width > max_width)
 				max_width = width;
 
@@ -364,8 +374,8 @@ static void inner_draw_text(sdf::composed_string& str, sdf::draw_info& info)
 					info.xscale * font_size;
 			}
 
-			cursor_y += (line.max_ascender + line.max_descender + sdf::line_spacing) *
-				info.yscale;
+			// 推进至下一行(行高可能被全局 leading_factor 覆盖)
+			cursor_y += (line.line_height + sdf::line_spacing) * info.yscale;
 		}
 	}
 	transpond_catch("inner_draw_text(sdf::composed_string&, sdf::draw_info&)")
@@ -855,6 +865,20 @@ exp_real sdf_set_font_offset(gm_real id, gm_real xoffset, gm_real yoffset)
 		return gtrue;
 	}
 	simple_catch("sdf_set_font_offset", gfalse)
+}
+
+exp_real sdf_draw_set_leading_factor(gm_real factor)
+{
+	sdf::leading_factor = (float)factor;
+
+	// 行距因子影响排版结果(总高度/对齐/行距), 需清空排版缓存
+	sdf_release_cache();
+	return gtrue;
+}
+
+exp_real sdf_draw_get_leading_factor()
+{
+	return sdf::leading_factor;
 }
 
 std::unordered_map<uint, sdf::font_info> game_font_info;

@@ -564,13 +564,19 @@ static composed_rich_string composing_rich_string(const std::vector<rich_char>& 
 
 	composed_rich_string::line current_line;
 	float max_width = 0, total_height = 0;
+	float last_spacing = 0;  // 已计入高度的最后一个行距, 循环后减去(末行不占行距)
 
 	// 将当前行结算并压入结果集中
 	auto commit_line = [&](bool is_last_paragraph_line)
 	{
 		if (current_line.chars.empty())
 		{
+			// 空行: 行高默认字号, 全局 leading_factor 设置时按其覆盖
+			if (sdf::leading_factor > 0)
+				current_line.line_height = sdf::leading_factor * pt_to_px(sdf::game_font_size);
+
 			total_height += current_line.line_height + sdf::line_spacing;
+			last_spacing = sdf::line_spacing;
 			result.lines.push_back(std::move(current_line));
 			current_line = composed_rich_string::line();
 			return;
@@ -631,7 +637,13 @@ static composed_rich_string composing_rich_string(const std::vector<rich_char>& 
 		if (current_line.width > max_width)
 			max_width = current_line.width;
 
+		// 行距因子覆盖(全局, 字号倍数): 设置了 leading_factor 时,
+		// 该行行高 = 因子 × 行首字号, 覆盖按字形升降部算出的默认行高。
+		if (sdf::leading_factor > 0)
+			current_line.line_height = sdf::leading_factor * pt_to_px(first_style.size);
+
 		total_height += current_line.line_height + first_style.linespac;
+		last_spacing = first_style.linespac;
 
 		result.lines.push_back(std::move(current_line));
 		current_line = composed_rich_string::line();
@@ -780,6 +792,11 @@ static composed_rich_string composing_rich_string(const std::vector<rich_char>& 
 
 	if (!current_line.chars.empty())
 		commit_line(true);
+
+	// 末行之后不计行距, 与普通文本 (composing_string) 保持一致。
+	// 否则 height 恒多一个行距, 富文本的 fa_middle/fa_bottom 会随 line_spacing 漂移。
+	if (last_spacing > 0)
+		total_height -= last_spacing;
 
 	result.width = max_width;
 	result.height = total_height;
