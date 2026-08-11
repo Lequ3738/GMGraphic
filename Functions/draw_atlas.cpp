@@ -143,14 +143,13 @@ static void draw_image(atlas::draw_info& info)
 	texture_atlas* atlas_ptr = nullptr;												\
 	texture_atlas::images::sub_image* sub_image_ptr = nullptr;						\
 																					\
+	if (images_ptr == nullptr || images_ptr->frames.empty())						\
+		return;																		\
+																					\
 	subimg = subimg % images_ptr->frames.size();									\
 																					\
-	if (images_ptr != nullptr) {													\
-		atlas_ptr = game_texture_atlas.at(images_ptr->atlas_id).get();				\
-		sub_image_ptr = images_ptr->frames.at(subimg).get();						\
-	}																				\
-	else																			\
-		throw std::runtime_error("Cannot find the sprite.");						\
+	atlas_ptr = game_texture_atlas.at(images_ptr->atlas_id).get();					\
+	sub_image_ptr = images_ptr->frames.at(subimg).get();							\
 																					\
 	if (atlas_ptr == nullptr)														\
 		throw std::runtime_error("Cannot find the texture atlas of this sprite.");	\
@@ -367,8 +366,13 @@ exp_real atlas_sprite_get_xoffset(gm_real id)
 		if (id < IMAGE_START_POSITION)
 			return (gm_real)gm::sprite_get_xoffset((int)id);
 
-		auto sub = game_images.at((uint)id)->frames.at(0).get();
-		return gm_real(sub->texture_left + sub->orig_x);
+		auto image = game_images.at((uint)id);
+		if (image->frames.empty())
+			return 0;
+		auto sub = image->frames.at(0).get();
+		if (sub == nullptr)  // 空白帧
+			return 0;
+		return gm_real(sub->orig_x);
 	}
 	simple_catch("atlas_sprite_get_xoffset", 0)
 }
@@ -380,8 +384,13 @@ exp_real atlas_sprite_get_yoffset(gm_real id)
 		if (id < IMAGE_START_POSITION)
 			return (gm_real)gm::sprite_get_yoffset((int)id);
 
-		auto sub = game_images.at((uint)id)->frames.at(0).get();
-		return gm_real(sub->texture_top + sub->orig_y);
+		auto image = game_images.at((uint)id);
+		if (image->frames.empty())
+			return 0;
+		auto sub = image->frames.at(0).get();
+		if (sub == nullptr)  // 空白帧
+			return 0;
+		return gm_real(sub->orig_y);
 	}
 	simple_catch("atlas_sprite_get_yoffset", 0)
 }

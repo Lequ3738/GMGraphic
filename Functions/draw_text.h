@@ -51,7 +51,8 @@ namespace sdf
 		float xoffset = 0;
 		float yoffset = 0;
 
-		float max_glyph_height = 0;
+		float max_glyph_height = 0;  // 最大升部(基线上方),单位: 字号=1
+		float max_glyph_depth = 0;   // 最大降部(基线下方),单位: 字号=1
 
 		glyphs(std::string& image_path, std::string& csv_path);
 
@@ -116,6 +117,9 @@ namespace sdf
 			std::vector<uint> str_unicode;
 			float x = 0;
 			float width = 0;
+
+			float max_ascender = 0;   // 该行最大升部(基线上方高度), 单位: 像素
+			float max_descender = 0;  // 该行最大降部(基线下方高度), 单位: 像素
 		};
 
 		std::vector<line> lines;

@@ -7,7 +7,7 @@ std::vector<std::string> string_token(std::string& str, std::string&& sep)
 	{
 		std::vector<std::string> tokens;
 		size_t pos = 0, found = 0;
-		while ((found = str.find(",", pos)) != std::string::npos)
+		while ((found = str.find(sep, pos)) != std::string::npos)
 		{
 			std::string token = str.substr(pos, found - pos);
 			pos = found + sep.length();

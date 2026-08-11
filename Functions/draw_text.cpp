@@ -1,4 +1,5 @@
 #include <fstream>
+#include <list>
 #include "lodepng.h"
 #include "math_s.h"
 #include "utf8.h"
@@ -89,6 +90,9 @@ sdf::glyphs::glyphs(std::string& image_path, std::string& csv_path)
 			if (max_glyph_height < -charset.plane_bound.top)
 				max_glyph_height = -charset.plane_bound.top;
 
+			if (max_glyph_depth < charset.plane_bound.bottom)
+				max_glyph_depth = charset.plane_bound.bottom;
+
 			glaph_map[unicode] = std::move(charset);
 		}
 
@@ -159,7 +163,16 @@ static sdf::composed_string composing_string(std::string& str)
 			if (!line_glyphs.str_unicode.empty())
 				width -= sdf::font_gap * font_size;
 
-			height += font_size + sdf::line_spacing;
+			// 行的升/降部: 单字号字体整行统一取字体的最大升/降部。
+			// 空行用字号作为行高, 防止连续空行塌陷。
+			line_glyphs.max_ascender = glyphs.max_glyph_height * font_size;
+			if (!line_glyphs.str_unicode.empty())
+				line_glyphs.max_descender = glyphs.max_glyph_depth * font_size;
+			else
+				line_glyphs.max_descender = font_size - line_glyphs.max_ascender;
+
+			height += (line_glyphs.max_ascender + line_glyphs.max_descender) +
+				sdf::line_spacing;
 			if (width > max_width)
 				max_width = width;
 
@@ -195,6 +208,23 @@ static sdf::composed_string composing_string(std::string& str)
 using hash_map_composed = std::unordered_map<xxh::hash64_t, std::vector<sdf::composed_string>>;
 hash_map_composed composed_string_map;
 
+// 排版缓存使用简单 LRU 淘汰, 防止动态文本(分数/FPS/坐标)无限累积。
+constexpr size_t composed_string_cache_max = 256;
+static std::list<xxh::hash64_t> composed_string_lru;
+
+static void composed_cache_touch(xxh::hash64_t hash)
+{
+	composed_string_lru.remove(hash);
+	composed_string_lru.push_back(hash);
+
+	while (composed_string_lru.size() > composed_string_cache_max)
+	{
+		xxh::hash64_t victim = composed_string_lru.front();
+		composed_string_lru.pop_front();
+		composed_string_map.erase(victim);
+	}
+}
+
 static xxh::hash64_t string_hash(std::string& str, double width)
 {
 	try
@@ -209,6 +239,9 @@ static xxh::hash64_t string_hash(std::string& str, double width)
 		hs.update(&sdf::font_gap, sizeof(sdf::font_gap));
 		hs.update(&sdf::line_spacing, sizeof(sdf::line_spacing));
 		hs.update(&sdf::per_line_halign, sizeof(sdf::per_line_halign));
+
+		// 逐行对齐模式下, 行位置依赖当前水平对齐, 需纳入缓存键
+		hs.update(game_text_halign, sizeof(*game_text_halign));
 
 		return hs.digest();
 	}
@@ -249,7 +282,8 @@ static void inner_draw_text(sdf::composed_string& str, sdf::draw_info& info)
 		else if (*game_text_halign == gm::fa_right)
 			offset_x -= str.width * info.xscale;
 
-		float cursor_y = offset_y + glyphs.max_glyph_height * font_size * info.yscale;
+		// 第一行基线 = 顶部偏移 + 第一行的升部
+		float cursor_y = offset_y + str.lines[0].max_ascender * info.yscale;
 
 		float rot_c = 0, rot_s = 0;
 		if (std::abs(info.rot) > 0.00000001)
@@ -324,10 +358,14 @@ static void inner_draw_text(sdf::composed_string& str, sdf::draw_info& info)
 				vertex::push_vertex_2d(x_lb, y_lb, u0, v1, info.col_lb);
 
 				// 根据字形的水平步进调整绘制位置
-				cursor_x += (glyph.advance + sdf::font_gap) * info.xscale * font_size;
+				// 行内最后一个字符不追加字间距, 与排版时扣除的尾 gap 保持一致
+				bool is_last_char = (i + 1 == line.str_unicode.size());
+				cursor_x += (glyph.advance + (is_last_char ? 0.0f : sdf::font_gap)) *
+					info.xscale * font_size;
 			}
 
-			cursor_y += (font_size + sdf::line_spacing) * info.yscale;
+			cursor_y += (line.max_ascender + line.max_descender + sdf::line_spacing) *
+				info.yscale;
 		}
 	}
 	transpond_catch("inner_draw_text(sdf::composed_string&, sdf::draw_info&)")
@@ -486,6 +524,8 @@ static sdf::composed_string& hash_get_composed_string(std::string& str, double w
 	auto it = composed_string_map.find(hash);
 	if (it != composed_string_map.end())
 	{
+		composed_cache_touch(hash);
+
 		if (it->second.size() == 1)
 			return it->second[0];
 		else
@@ -502,15 +542,16 @@ static sdf::composed_string& hash_get_composed_string(std::string& str, double w
 	{
 		auto comp = composing_string(str);
 		composed_string_map[hash].push_back(std::move(comp));
-		return composed_string_map[hash].back();
 	}
 	else
 	{
 		std::string str_w = string_get_ext(str.c_str(), w, nullptr);
 		auto comp = composing_string(str_w);
 		composed_string_map[hash].push_back(std::move(comp));
-		return composed_string_map[hash].back();
 	}
+
+	composed_cache_touch(hash);
+	return composed_string_map[hash].back();
 }
 
 float sdf::string_width(std::string& str)
@@ -706,6 +747,9 @@ exp_real sdf_delete_font(gm_real id)
 	try
 	{
 		game_sdf_glyphs.erase((uint)id);
+
+		// 删除字体后, 排版缓存中该字体的字形指针可能失效, 清空缓存
+		sdf_release_cache();
 		return gtrue;
 	}
 	simple_catch("sdf_delete_font", gfalse)
@@ -714,6 +758,7 @@ exp_real sdf_delete_font(gm_real id)
 exp_real sdf_release_cache()
 {
 	composed_string_map.clear();
+	composed_string_lru.clear();
 	return gtrue;
 }
 

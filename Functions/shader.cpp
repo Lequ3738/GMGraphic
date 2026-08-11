@@ -1,6 +1,3 @@
-// Shader Extension v2.0 (2026/8/7 by Lequ)
-// HLSL 支持 + GMS2 风格命名(旧 d3d_ps_*/d3d_vs_* 已删)。权威文档: 桌面 "Shader API 设计.md"
-
 #include "math_s.h"
 #include "shader.h"
 #include "draw_text.h"
@@ -10,7 +7,7 @@
 // Variables
 // ============================================================================
 
-static d3d::Caps d3dcaps;                   // GPU capability struct(经 d3d::get_caps 填充, 双后端统一字段)
+static d3d::Caps d3dcaps;                   // GPU capability struct
 
 vert_ext vbuff_ext_int[vb_count];           // Internal vertex buffer (ext)
 vert_default vbuff_default_int[vb_count];   // Internal vertex buffer (default)
@@ -21,8 +18,8 @@ bool vbuff_autoinc;                         // Automatic increment?
 bool vbuff_use_struct;                      // Use struct vertices instead of raw data?
 bool vbuff_use_ext = false;                 // Use ext vertex buffer?
 
-// [2026-08-08] ps-only shader(有 PS 无 VS)激活时自绘需绑透传 VS 喂 ps_3_0 的 v0/v1;
-// 无 shader 时保持 FVP(SetFVF)固定管线(与 gm82dx9 默认一致, 避免 VS+FVP 纹理不采样)。
+// ps-only shader(有 PS 无 VS)激活时自绘需绑透传 VS 喂 ps_3_0 的 v0/v1;
+// 无 shader 时保持 FVP 固定管线。
 static bool g_vs_needed = false;
 
 namespace gm
@@ -31,7 +28,7 @@ namespace gm
 }
 
 // ============================================================================
-// Shader bundle 与 uniform 句柄(设计 §2 / §7)
+// Shader bundle 与 uniform 句柄
 // ============================================================================
 
 struct ShaderBundle
@@ -44,26 +41,26 @@ struct ShaderBundle
 
 struct UniformHandle
 {
-    int owner_shader = -1;   // 回指 shader, 用于销毁清理
-    int ps_reg = -1;         // -1 = 该阶段未命中
+    int owner_shader = -1;          // 回指 shader, 用于销毁清理
+    int ps_reg = -1;                // -1 = 该阶段未命中
     int vs_reg = -1;
-    int ps_kind = d3d::CK_FLOAT;   // 寄存器类型(ConstKind): SM3.0 才有 int/bool, SM2.0 恒 FLOAT
+    int ps_kind = d3d::CK_FLOAT;    // 寄存器类型(ConstKind): SM3.0 才有 int/bool, SM2.0 恒 FLOAT
     int vs_kind = d3d::CK_FLOAT;
-    int ps_count = 1;        // RegisterCount: BOOL 用(bool 标量=1, bool4=4); FLOAT/INT 恒 1
+    int ps_count = 1;               // RegisterCount: BOOL 用(bool 标量=1, bool4=4); FLOAT/INT 恒 1
     int vs_count = 1;
 };
 
 static std::unordered_map<int, ShaderBundle>  shaders;    // shader id → bundle
 static std::unordered_map<int, UniformHandle> uniforms;   // uniform handle → 结构体
-static int shader_id_counter = 1;                          // 从 1 递增(0 保留)
+static int shader_id_counter = 1;                         // 从 1 递增(0 保留)
 static int uniform_counter = 1;
-static int current_shader = -1;                            // shader_current() 用
+static int current_shader = -1;                           // shader_current() 用
 
-int sdf_shader = -1;          // SDF 字体着色器(id, init() 里按后端创建)
+int sdf_shader = -1;                // SDF 字体着色器(id, init() 里按后端创建)
 int sdf_shader_premul = -1;
-int sdf_shader_uniform = -1;  // DX8: c0(scale/thickness) 的 uniform 句柄 = shader_get_uniform(sdf_shader, "ps.0")
-int sdf_shader_uniform_buffer = -1;   // DX9: "u_buffer"(thickness) 句柄
-int sdf_shader_uniform_gamma = -1;    // DX9: "u_gamma"(边缘软度) 句柄
+int sdf_shader_uniform = -1;        // DX8: c0(scale/thickness) 的 uniform 句柄
+int sdf_shader_uniform_buffer = -1; // DX9: "u_buffer"(thickness) 句柄
+int sdf_shader_uniform_gamma = -1;  // DX9: "u_gamma"(边缘软度) 句柄
 
 // ============================================================================
 // Initialisation
@@ -76,9 +73,7 @@ exp_real init(gm_real arg_list)
     d3d::ensure_version((void*)gmapi->GetDirect3DDevice(), (void*)gmapi->GetDirect3DInterface());
     d3d::get_caps(d3dcaps);
 
-    // [GM80-2026-08-09] 注册 FFP VS 槽到 GMDirectX9(注册模式): GMDirectX9 的 SetVertexShader 钩子
-    // 识别 FFP(仿固定管线) VS 后, 引擎绘制前刷新 c0-c3 WVP 到当前投影(surface_set_target 重设后不失真)。
-    // 注册传的是 FFP VS 变量的地址(&s_passthrough_vs)而非值 —— 懒创建后槽值自动生效。
+    // 注册 FFP VS 槽到 GMDirectX9
     // GMDirectX9 未加载时静默跳过(纯 dx8 或未装插件)。
     {
         HMODULE hdx9 = GetModuleHandleA("GMDirectX9.dll");
@@ -97,17 +92,16 @@ exp_real init(gm_real arg_list)
     // uniform 句柄: asm 用 "ps.0", HLSL 用 "u_buffer"/"u_gamma"。is_d3d9() 未定义, 直接用 d3d::version()。
     if (d3d::version() == d3d::V9)
     {
-        sdf_shader        = (int)shader_create(ps_sdf_hlsl, "", "mainPS");
+        sdf_shader = (int)shader_create(ps_sdf_hlsl, "", "mainPS");
         sdf_shader_premul = (int)shader_create(ps_sdf_hlsl_premul, "", "mainPS");
-        // 两个 shader 声明序一致(u_buffer 在前), 寄存器相同, 句柄可通用。
         sdf_shader_uniform_buffer = (int)shader_get_uniform(sdf_shader, "u_buffer");
-        sdf_shader_uniform_gamma  = (int)shader_get_uniform(sdf_shader, "u_gamma");
+        sdf_shader_uniform_gamma = (int)shader_get_uniform(sdf_shader, "u_gamma");
     }
     else
     {
-        sdf_shader         = (int)shader_create_asm("", ps_sdf);
-        sdf_shader_premul  = (int)shader_create_asm("", ps_sdf_premul);
-        sdf_shader_uniform = (int)shader_get_uniform(sdf_shader, "ps.0");   // 只写 ps 寄存器 0
+        sdf_shader = (int)shader_create_asm("", ps_sdf);
+        sdf_shader_premul = (int)shader_create_asm("", ps_sdf_premul);
+        sdf_shader_uniform = (int)shader_get_uniform(sdf_shader, "ps.0");
     }
     sdf::shader = sdf_shader;
 
@@ -151,8 +145,7 @@ exp_real d3d_dev_get_tex_mem()
 }
 
 // ============================================================================
-// Shader API(GMS2 风格), 设计要点(权威: 桌面 "Shader API 设计.md"):
-//   bundle{vs,ps,常量表}; 空阶段=passthrough; uniform=统一 map 索引, 按寄存器类型分发; HLSL 仅 D3D9。
+// Shader API
 // ============================================================================
 
 static bool is_d3d9() { return d3d::version() == d3d::V9; }
@@ -177,8 +170,7 @@ static void bundle_release(ShaderBundle& b)
     b = ShaderBundle{};
 }
 
-// 创建类导出共用兜底: 失败时释放已创建的对象(避免半成品泄漏) + 弹 gm 错误框。
-// 不能用 simple_catch —— 那会漏掉 bundle_release(b)。需要局部变量 b 在作用域内。
+// 创建类导出共用兜底: 失败时释放已创建的对象 + 弹 gm 错误框。
 #define shader_create_catch(funcname)                                                   \
     catch (const std::exception& e)                                                     \
     {                                                                                   \
@@ -188,8 +180,7 @@ static void bundle_release(ShaderBundle& b)
         return gerror;                                                                  \
     }
 
-// 前缀语法 "ps." / "vs."(大小写不敏感, 设计 §3)。返回 0=无前缀, 1=ps, 2=vs;
-// *rest 指向去掉前缀后的名字/寄存器串。
+// 前缀语法 "ps." / "vs."
 static int parse_prefix(const char* uni, const char** rest)
 {
     if (_strnicmp(uni, "ps.", 3) == 0) { *rest = uni + 3; return 1; }
@@ -201,9 +192,7 @@ static int parse_prefix(const char* uni, const char** rest)
 // ---- 创建 ----
 
 // 编译 HLSL 单个阶段并创建设备对象。
-// 返回 true = 阶段已创建; false = 该阶段 passthrough(未使用)。
-// entry 非空 → 直接编译(失败抛异常 = gm 错误框);
-// entry 空 → 源码含 fallback 入口名(mainVS/mainPS)才编译, 否则该阶段 passthrough。
+// 返回 true = 阶段已创建; false = 该阶段 passthrough。
 static bool compile_hlsl_stage(const char* src, const char* entry, const char* fallback,
                                const char* profile, bool is_vs, ShaderBundle& b)
 {
@@ -211,8 +200,6 @@ static bool compile_hlsl_stage(const char* src, const char* entry, const char* f
     bool default_entry = (use == nullptr);
     if (!use)
     {
-        // 快速路径: 源码无 fallback 标识符 → passthrough, 免一次 D3DX 编译。
-        // 启发式: 注释里的字样也会命中, 失败(X3501)由下方兜底按 passthrough 处理。
         if (!strstr(src, fallback)) return false;
         use = fallback;
     }
@@ -220,15 +207,19 @@ static bool compile_hlsl_stage(const char* src, const char* entry, const char* f
     std::vector<BYTE> code;
     void* table = nullptr;
     std::string err;
-    // 编译失败: 弹 gm 错误框, 附带 D3DX 编译器详细错误文本(设计 §0.6)。
+
     if (FAILED(d3d::compile_hlsl(src, strlen(src), use, profile, code, &table, &err)))
     {
         if (table) d3d::release(table);   // 防御: 失败时 D3DX 理论上置空
+        
         // entry 为空时编译器报 X3501(无该入口)属正常 → passthrough 不弹错;
         // 其它真语法/语义错误才抛异常。
-        if (default_entry &&
+        if (default_entry && 
             (strstr(err.c_str(), "X3501") || strstr(err.c_str(), "entrypoint not found")))
+        {
             return false;
+        }
+
         throw std::runtime_error("Shader compile error:\r\n\r\n" + err + "\r\n\r\n" + std::string(src));
     }
 
@@ -252,15 +243,13 @@ exp_real shader_create(const char* src, const char* vs_entry, const char* ps_ent
     ShaderBundle b;
     try
     {
-        if (!is_d3d9()) return gerror;   // HLSL 仅 D3D9(设计 §5)
+        if (!is_d3d9()) return gerror;
 
-        compile_hlsl_stage(src, vs_entry, "mainVS", vs_profile(), true,  b);
-        // [2026-08-09] ps-only 放开 ps_3_0(实验): 透传 VS 已改 vs_3_0 编译, 语义齐全能喂 v0/v1。
-        // 若实机仍全透明则回退 `psp = b.vs ? ps_profile() : "ps_2_0"`。
+        compile_hlsl_stage(src, vs_entry, "mainVS", vs_profile(), true, b);
         const char* psp = ps_profile();
         compile_hlsl_stage(src, ps_entry, "mainPS", psp, false, b);
 
-        if (!b.vs && !b.ps) return gerror;   // 双 passthrough 没意义 → -1
+        if (!b.vs && !b.ps) return gerror;
 
         int id = shader_id_counter++;
         shaders.emplace(id, b);
@@ -279,20 +268,24 @@ exp_real shader_create_asm(const char* vs_src, const char* ps_src)
         {
             std::vector<BYTE> code, constants;
             std::string err;
-            // 汇编失败附编译器文本; 设备创建失败走 D3DCheck。
+
             if (FAILED(d3d::assemble_vs(vs_src, strlen(vs_src), code, constants, &err)))
                 throw std::runtime_error("Shader assembly error:\r\n\r\n" + err + "\r\n\r\n" + vs_src);
-            D3DCheck(d3d::create_vertex_shader(d3d::VERT_EXT, code.data(), constants.data(), constants.size(), &b.vs), 2);
+
+            D3DCheck(d3d::create_vertex_shader(d3d::VERT_EXT, code.data(), constants.data(), 
+                constants.size(), &b.vs), 2);
         }
 
         if (ps_src && ps_src[0])
         {
             if (d3dcaps.pixel_shader_version < D3DPS_VERSION(1, 4))
                 throw std::runtime_error("PS 1.4 unsupported by GPU.");
+
             std::vector<BYTE> code;
             std::string err;
             if (FAILED(d3d::assemble_ps(ps_src, strlen(ps_src), code, &err)))
                 throw std::runtime_error("Shader assembly error:\r\n\r\n" + err + "\r\n\r\n" + ps_src);
+
             D3DCheck(d3d::create_pixel_shader(code.data(), &b.ps), 3);
         }
 
@@ -344,8 +337,6 @@ exp_real shader_set(double sh)
 
         ShaderBundle& b = it->second;
 
-        // VS 非空 → 绑; 空 → D3D9 ps-only 也绑透传 VS(喂 ps_3_0 v0/v1), D3D8 保持固定管线。
-        // g_vs_needed 标记自绘是否需要透传 VS —— 无 shader 时保持 FVP。
         if (b.vs)
         {
             vbuff_usevs = true;
@@ -361,9 +352,9 @@ exp_real shader_set(double sh)
             else
                 D3DCheck(d3d::set_vertex_shader(true, fvf_ext, 0), 2);
         }
-        // PS: 非空 → 绑; 空 → 固定像素管线。
+        
         D3DCheck(d3d::set_pixel_shader(b.ps), 3);
-        // 默认常量(仅 HLSL 有常量表; asm 靠 def, 跳过)。
+        
         if (b.vs_table) D3DCheck(d3d::constant_table_set_defaults(b.vs_table), 4);
         if (b.ps_table) D3DCheck(d3d::constant_table_set_defaults(b.ps_table), 5);
 
@@ -393,8 +384,6 @@ exp_real shader_current() { return (double)current_shader; }
 
 // ---- uniform 查找 ----
 
-// 按名字/寄存器拿句柄(设计 §2/§3)。asm 传数字串("0"/"ps.0"/"vs.3");
-// HLSL 传常量名("uColor"/"ps.uColor"/"vs.uWVP")。找不到返回 -1。
 exp_real shader_get_uniform(double sh, const char* uni)
 {
     int id = (int)sh;
@@ -411,8 +400,6 @@ exp_real shader_get_uniform(double sh, const char* uni)
     bool has_hlsl = (b.ps_table || b.vs_table);
     if (has_hlsl)
     {
-        // HLSL: 按名字查常量表, 取寄存器号 + 类型(设计 §3/§4.4)。
-        // 无前缀 → 先 ps 后 vs; 同名两阶段都设。
         if (prefix == 0 || prefix == 1)
         {
             uh.ps_reg = -1; uh.ps_kind = d3d::CK_FLOAT; uh.ps_count = 1;
@@ -442,15 +429,12 @@ exp_real shader_get_uniform(double sh, const char* uni)
     }
     else
     {
-        // asm: uni 是寄存器数字串(设计约定)。无前缀 → 恒两阶段同号寄存器(设计 §3)。
-        // asm 恒 float 寄存器(ps_1.x/vs_1.x 无 int/bool), kind 保持默认 CK_FLOAT。
         int reg = atoi(name);
         if (prefix == 0)      { uh.ps_reg = reg; uh.vs_reg = reg; }
         else if (prefix == 1) { uh.ps_reg = reg; uh.vs_reg = -1; }
         else                  { uh.ps_reg = -1; uh.vs_reg = reg; }
     }
 
-    // 找不到 → -1(设计 §1); 至少一个阶段命中才算有效句柄。
     if (uh.ps_reg < 0 && uh.vs_reg < 0) return gerror;
 
     int hid = uniform_counter++;
@@ -494,7 +478,7 @@ exp_real shader_get_sampler_index(double sh, const char* uni)
 
     if (!b.ps_table && !b.vs_table)
     {
-        // asm: 数字字符串转整数(设计 §1)
+        // asm: 数字字符串转整数
         return (double)atoi(name);
     }
 
@@ -587,10 +571,10 @@ exp_real shader_set_uniform_color(double h, double col, double alpha)
     simple_catch("shader_set_uniform_color", gerror)
 }
 
-// 行主序手写 4x4 乘: c = a * b(与旧代码一致, 去掉 D3DX 数学依赖)。
 static void mat_mul(float* c, const float* a, const float* b)
 {
     for (int r = 0; r < 4; r++)
+    {
         for (int col = 0; col < 4; col++)
         {
             float s = 0.0f;
@@ -598,6 +582,7 @@ static void mat_mul(float* c, const float* a, const float* b)
                 s += a[r * 4 + k] * b[k * 4 + col];
             c[r * 4 + col] = s;
         }
+    }
 }
 
 // 设矩阵 uniform。mtx_type 掩码: world=1 / view=2 / projection=4 / wvp=7(gm82dx9 式)。
@@ -637,8 +622,10 @@ exp_real shader_set_uniform_matrix(double h, double mtx_type, double size)
         }
 
         // 矩阵恒为 float4x4, 强制 float 寄存器(与声明的 float 类型一致)。
-        if (uh.ps_reg >= 0) D3DCheck(d3d::set_ps_const_typed((DWORD)uh.ps_reg, d3d::CK_FLOAT, m, (DWORD)regs), 4);
-        if (uh.vs_reg >= 0) D3DCheck(d3d::set_vs_const_typed((DWORD)uh.vs_reg, d3d::CK_FLOAT, m, (DWORD)regs), 5);
+        if (uh.ps_reg >= 0)
+            D3DCheck(d3d::set_ps_const_typed((DWORD)uh.ps_reg, d3d::CK_FLOAT, m, (DWORD)regs), 4);
+        if (uh.vs_reg >= 0)
+            D3DCheck(d3d::set_vs_const_typed((DWORD)uh.vs_reg, d3d::CK_FLOAT, m, (DWORD)regs), 5);
         return gtrue;
     }
     simple_catch("shader_set_uniform_matrix", gerror)
@@ -894,7 +881,7 @@ exp_real gpu_set_depth(double depth) { d3dcrs(D3DRS_ZBIAS, (uint)floor(clamp(dep
 // 多边形填充模式: point/wireframe/solid(GMS2 gpu_set_fillmode)。默认 solid。
 exp_real gpu_set_fillmode(double mode) { d3dcrs(D3DRS_FILLMODE, (dword)mode); }
 
-// 自动归一化法线(GMS2 无对等, gpu_ 扩展)。解决模型缩放时亮度变化。
+// 自动归一化法线。解决模型缩放时亮度变化。
 exp_real gpu_set_normal_auto(double state)
 {
     d3dcrs(D3DRS_NORMALIZENORMALS, (state > 0.0));
@@ -914,7 +901,7 @@ void vertex::begin(D3DPRIMITIVETYPE primitive, bool textured)
 
     // Zero the buffer.
     if (vbuff_use_ext)
-	    std::memset(vbuff_ext_int, 0, vb_ext_bytes);
+        std::memset(vbuff_ext_int, 0, vb_ext_bytes);
     else
         std::memset(vbuff_default_int, 0, vb_default_bytes);
 
@@ -1019,7 +1006,7 @@ void vertex::end()
 {
     try
     {
-		uint count = vbuff_c;
+        uint count = vbuff_c;
         if (!vbuff_autoinc && !vbuff_use_struct)
             count += 1;
 
@@ -1042,13 +1029,13 @@ void vertex::end()
         if (prims < 1)
             return;
 
-        // [2026-08-08] 无自定义 VS 时: 仅当 ps-only shader 激活(g_vs_needed)才绑仿固定管线
-        // 透传 VS + 与缓冲布局匹配的声明(ps_3_0 的 v0/v1 需要 VS 喂)。无 shader 时保持 FVP
-        // (SetFVF)固定管线 —— 与 gm82dx9 默认一致, 不把 passthrough VS 带进引擎 FVP 绘制。
         if (!vbuff_usevs)
         {
             if (is_d3d9() && g_vs_needed)
-                D3DCheck(d3d::set_vertex_shader_passthrough(vbuff_use_ext ? d3d::VERT_EXT : d3d::VERT_DEFAULT), 3);
+            {
+                D3DCheck(d3d::set_vertex_shader_passthrough(
+                    vbuff_use_ext ? d3d::VERT_EXT : d3d::VERT_DEFAULT), 3);
+            }
             else
                 D3DCheck(d3d::set_vertex_shader(true, vbuff_use_ext ? fvf_ext : fvf_default, 0), 3);
         }

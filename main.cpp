@@ -3,6 +3,7 @@
 #include "main.h"
 #include "texture_atlas.h"
 #include "draw_text.h"
+#include "string_make.h"
 #include "shader.h"
 
 gm::CGMAPI* gmapi;
@@ -91,11 +92,11 @@ void atlas::end_draw()
 					500.0f) / 1000.0f, 0.1f, 0.9f);
 
 				// uniform 按后端分发: DX8 asm 写 c0(scale/thickness); DX9 HLSL 写
-				// u_buffer/thickness(SDF 阈值) + u_gamma/边缘软度(反比 sharpness)。
-				// 边缘半宽 ≈ 1/(32*sharpness), 与 asm 的斜率 32*scale 同量级。
+				// u_buffer/thickness(SDF 阈值) + u_gamma/边缘软度。
 				if (d3d::version() == d3d::V9)
 				{
-					double gamma = std::clamp(1.0 / (32.0 * std::max(sharpness, 0.01)), 0.005, 0.2);
+					double scale = pt_to_px(sdf::game_font_size) / std::max(sdf::font_sharpness, 0.01f);
+					double gamma = std::clamp(0.044 / scale, 0.005, 0.2);
 					shader_set_uniform_f(sdf_shader_uniform_buffer, thickness, 0, 0, 0);
 					shader_set_uniform_f(sdf_shader_uniform_gamma,  gamma,     0, 0, 0);
 				}

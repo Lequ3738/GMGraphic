@@ -66,6 +66,7 @@ struct rich_char
 		void reset_special_value()  // 还原只应用一个字符的值
 		{
 			advance_x = 0;
+			advance_y = 0;
 		}
 	};
 
@@ -165,31 +166,57 @@ static std::optional<T> parse_attr(std::string& attr)
 			double a = clamp(std::stof(tokens[1]), 0.0, 1.0);
 			return col_d3d((int)d3dcol_to_col(*game_d3dcolor), a);
 		}
-		else if (attr.length() > 3 && attr.substr(0, 3) == "rgb")  // 从 rgb 函数转换
+		else if (attr.length() > 3 &&
+			(attr.substr(0, 3) == "rgb" || attr.substr(0, 4) == "rgba"))  // 从 rgb/rgba 函数转换
 		{
-			std::vector<std::string> tokens = string_token(attr, " ");
-			if (tokens.size() < 4)
+			// 支持 CSS 风格 rgb(r,g,b) / rgba(r,g,b,a), 也兼容空格分隔无括号写法。
+			// 统一把括号、逗号、分号归一化为空格后再切分。
+			std::string inner;
+			size_t lp = attr.find('(');
+			size_t rp = attr.rfind(')');
+			if (lp != std::string::npos && rp != std::string::npos && rp > lp)
+				inner = attr.substr(lp + 1, rp - lp - 1);
+			else
+				inner = attr.substr(attr[3] == 'a' ? 4 : 3);
+
+			for (auto& ch : inner)
+			{
+				if (ch == ',' || ch == ';')
+					ch = ' ';
+			}
+
+			std::vector<std::string> tokens = string_token(inner, " ");
+			if (tokens.size() < 3)
 				return std::nullopt;
 
-			int r = std::clamp(std::stoi(tokens[1]), 0, 255);
-			int g = std::clamp(std::stoi(tokens[2]), 0, 255);
-			int b = std::clamp(std::stoi(tokens[3]), 0, 255);
-			int a = uint(clamp(d3dcol_to_alpha(*game_d3dcolor), 0.0, 1.0) * 255.0);
-
-			return (a << 24) + (r << 16) + (g << 8) + b;
-		}
-		else if (attr.length() > 4 && attr.substr(0, 4) == "rgba")  // 从 rgba 函数转换
-		{
-			std::vector<std::string> tokens = string_token(attr, " ");
-			if (tokens.size() < 5)
+			int r, g, b;
+			double a;
+			try
+			{
+				r = std::clamp(std::stoi(tokens[0]), 0, 255);
+				g = std::clamp(std::stoi(tokens[1]), 0, 255);
+				b = std::clamp(std::stoi(tokens[2]), 0, 255);
+			}
+			catch (...)
+			{
 				return std::nullopt;
+			}
 
-			int r = std::clamp(std::stoi(tokens[1]), 0, 255);
-			int g = std::clamp(std::stoi(tokens[2]), 0, 255);
-			int b = std::clamp(std::stoi(tokens[3]), 0, 255);
-			int a = uint(clamp(std::stof(tokens[4]), 0.0, 1.0) * 255.0);
+			if (tokens.size() >= 4)
+			{
+				try
+				{
+					a = std::clamp(std::stof(tokens[3]), 0.0f, 1.0f);
+				}
+				catch (...)
+				{
+					return std::nullopt;
+				}
+			}
+			else
+				a = d3dcol_to_alpha(*game_d3dcolor);
 
-			return (a << 24) + (r << 16) + (g << 8) + b;
+			return col_d3d(col_make(r, g, b), a);
 		}
 		else if (attr.length() > 2 && attr.substr(0, 2) == "c_")  // 从颜色常量转换
 		{
@@ -624,7 +651,9 @@ static composed_rich_string composing_rich_string(const std::vector<rich_char>& 
 			}
 
 			float f_size = pt_to_px(c.char_style.size);
-			current_line.width += (cg->glaph_map[c.unicode].advance + c.char_style.advance_x + 
+			auto git = cg->glaph_map.find(c.unicode);
+			float advance = (git != cg->glaph_map.end()) ? git->second.advance : 0.0f;
+			current_line.width += (advance + c.char_style.advance_x +
 				c.char_style.gap) * f_size;
 
 			float a = cg->max_glyph_height * f_size - c.char_style.advance_y;
@@ -803,8 +832,11 @@ static void inner_draw_text_rich(composed_rich_string& str, float draw_x, float 
 			// 基于该行最大的升部确定物理基线位置
 			float baseline_y = cursor_y + line.max_ascender * yscale;
 
-			for (const auto& rc : line.chars)
+			for (size_t ci = 0; ci < line.chars.size(); ++ci)
 			{
+				const auto& rc = line.chars[ci];
+				bool is_last_char = (ci + 1 == line.chars.size());
+
 				sdf::glyphs* target_glyphs = current_sdf_glyphs;
 				if (rc.char_style.font_id != 0)  // 动态加载 <font> 的贴图
 				{
@@ -835,13 +867,19 @@ static void inner_draw_text_rich(composed_rich_string& str, float draw_x, float 
 					atlas::start_draw(target_glyphs->texture, D3DFMT_A8);
 				}
 
+				float font_size_px = pt_to_px(rc.char_style.size);
+				// 行内最后一个字符不追加字间距, 与排版时扣除的尾 gap 保持一致
+				float step_gap = is_last_char ? 0.0f : rc.char_style.gap;
+
+				// 占位符字符(<gap>/<padding>/<width>/<align>): 只推进光标, 不产生顶点
 				if (rc.unicode == 0)
+				{
+					cursor_x += (rc.char_style.advance_x + step_gap) * xscale * font_size_px;
 					continue;
+				}
 
 				auto glyph_it = target_glyphs->glaph_map.find(rc.unicode);
 				sdf::glyphs::glyph& glyph = glyph_it->second;
-
-				float font_size_px = pt_to_px(rc.char_style.size);
 
 				// 纹理坐标
 				float u0 = glyph.atlas_bound.left / (float)target_glyphs->width;
@@ -881,7 +919,7 @@ static void inner_draw_text_rich(composed_rich_string& str, float draw_x, float 
 				vertex::push_vertex_2d(x_lb, y_lb, u0, v1, col);
 
 				// 推进 X 光标
-				cursor_x += (glyph.advance + rc.char_style.advance_x + rc.char_style.gap) * 
+				cursor_x += (glyph.advance + rc.char_style.advance_x + step_gap) *
 					xscale * font_size_px;
 			}
 
@@ -906,17 +944,27 @@ static void inner_draw_text_rich(composed_rich_string& str, float draw_x, float 
 
 void sdf::draw_text_rich(double x, double y, std::string& str, double xscale, double yscale)
 {
+	rich_char::style initial_style;  // 捕获当前全局绘制状态
+
 	try
 	{
-		rich_char::style initial_style;
-
 		std::vector<rich_char> rich_chars = parse_rich_text(str);
 		composed_rich_string composed = composing_rich_string(rich_chars);
 		inner_draw_text_rich(composed, (float)x, (float)y, (float)xscale, (float)yscale);
-
-		initial_style.apply();
 	}
-	transpond_catch("sdf::draw_text_rich(double, double, std::string&, double, double)")
+	catch (const std::exception& e)
+	{
+		initial_style.apply();  // 异常时也恢复全局状态, 避免污染后续绘制
+		throw std::runtime_error("    in function sdf::draw_text_rich(double, double, "
+			"std::string&, double, double):\r\n" + std::string(e.what()));
+	}
+	catch (...)
+	{
+		initial_style.apply();
+		throw;
+	}
+
+	initial_style.apply();
 }
 
 exp_real sdf_draw_text_rich(gm_real x, gm_real y, gm_string str)

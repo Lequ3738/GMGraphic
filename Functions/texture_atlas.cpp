@@ -167,6 +167,25 @@ void texture_atlas::add_image_to_memory(std::vector<uchar>& image_data,
 		"images::sub_image&, copy_image_rect&)")
 }
 
+// 判断某帧是否为"真空帧"。cropped_rect 为 {0,0,0,0} 既可能是真空帧,
+// 也可能是恰好占据 (0,0) 的 1x1 不透明图, 需扫描 alpha 通道确认。
+static bool is_blank_frame(const gm::sprite& spr, uint i)
+{
+	if (spr.cropped_rects[i] != gm::image_rect{ 0, 0, 0, 0 })
+		return false;
+
+	if (i >= spr.data.size())
+		return true;
+
+	const std::vector<uchar>& img = spr.data[i];
+	for (size_t k = 3; k < img.size(); k += 4)
+	{
+		if (img[k] != 0)
+			return false;
+	}
+	return true;
+}
+
 int texture_atlas::add_image(gm::sprite& spr)
 {
 	try
@@ -200,7 +219,7 @@ int texture_atlas::add_image(gm::sprite& spr)
 
 		for (uint i = 0; i < spr.frame_count(); ++i)
 		{
-			if (spr.cropped_rects[i] == gm::image_rect{ 0, 0, 0, 0 })  // Is blank image
+			if (is_blank_frame(spr, i))  // Is blank image
 			{
 				result[i] = { 0, 0, 0, 0 };
 				continue;
@@ -227,7 +246,7 @@ int texture_atlas::add_image(gm::sprite& spr)
 
 		for (uint i = 0; i < spr.frame_count(); ++i)
 		{
-			bool is_blank = spr.cropped_rects[i] == gm::image_rect{ 0, 0, 0, 0 };
+			bool is_blank = is_blank_frame(spr, i);
 			if (is_blank)
 			{
 				atlas_images->frames[i] = nullptr;
@@ -380,16 +399,36 @@ void texture_atlas::save(path& file_path) const
 				"Path: " + file_path.string());
 		}
 
-		// 保存纹理图集图像文件
-		auto [d3dimage, w, h] = gm::get_image_data(texture);
-		std::vector<uchar> image(d3dimage.size());
+		// 保存纹理图集图像文件。
+		// 内存 data 还在时优先用它编码(避免从 GPU 读回可能过期的纹理),
+		// 否则从 GPU 读回。
+		std::vector<uchar> image;
+		uint w = size, h = size;
 
-		for (size_t i = 0; i < d3dimage.size(); i += 4)
+		if (!data.empty())
 		{
-			image[i] = d3dimage[i + 2];     // B -> R
-			image[i + 1] = d3dimage[i + 1]; // G
-			image[i + 2] = d3dimage[i];     // R -> B
-			image[i + 3] = d3dimage[i + 3]; // A
+			image.resize(data.size());
+			for (size_t i = 0; i < data.size(); i += 4)
+			{
+				image[i] = data[i + 2];     // B -> R
+				image[i + 1] = data[i + 1]; // G
+				image[i + 2] = data[i];     // R -> B
+				image[i + 3] = data[i + 3]; // A
+			}
+		}
+		else
+		{
+			auto [d3dimage, rw, rh] = gm::get_image_data(texture);
+			w = rw;
+			h = rh;
+			image.resize(d3dimage.size());
+			for (size_t i = 0; i < d3dimage.size(); i += 4)
+			{
+				image[i] = d3dimage[i + 2];     // B -> R
+				image[i + 1] = d3dimage[i + 1]; // G
+				image[i + 2] = d3dimage[i];     // R -> B
+				image[i + 3] = d3dimage[i + 3]; // A
+			}
 		}
 
 		lodepng::encode(file_path.string() + ".png", image.data(), w, h);
@@ -647,10 +686,19 @@ exp_real texture_atlas_load(gm_string file_path)
 {
 	try
 	{
+		// 先从 .bin 头读取图集边长, 创建对应大小的图集, 避免默认 1024 浪费
+		uint size = 1024;
+		{
+			std::ifstream ifs(std::string(file_path) + ".bin", std::ios::binary);
+			if (!ifs)
+				throw std::runtime_error("Fail to open the file " + std::string(file_path) + ".bin.");
+			ifs.read(reinterpret_cast<char*>(&size), sizeof(size));
+		}
+
 		uint id = texture_atlas_id_position++;
 		path p(file_path);
 
-		game_texture_atlas[id] = std::make_unique<texture_atlas>(1024, id);
+		game_texture_atlas[id] = std::make_unique<texture_atlas>(size, id);
 		auto images = game_texture_atlas[id]->load(p);
 
 		int result = gm::ds_map_create();
@@ -865,7 +913,11 @@ exp_real atlas_sprite_get_texture(gm_real spr, gm_real subimg)
 			return gm::sprite_get_texture((int)spr, (int)subimg);
 
 		texture_atlas::images* image = game_images.at((uint)spr);
+		if ((uint)subimg >= image->frames.size())
+			return -1;
 		texture_atlas::images::sub_image* sub_image = image->frames.at((uint)subimg).get();
+		if (sub_image == nullptr)  // 空白帧
+			return -1;
 		return sub_image->texture_id;
 	}
 	simple_catch("sprite_get_texture", -1)
@@ -879,7 +931,11 @@ exp_real atlas_background_get_texture(gm_real back)
 			return gm::background_get_texture((int)back);
 
 		texture_atlas::images* image = game_images.at((uint)back);
+		if (image->frames.empty())
+			return -1;
 		texture_atlas::images::sub_image* sub_image = image->frames.at(0).get();
+		if (sub_image == nullptr)  // 空白帧
+			return -1;
 		return sub_image->texture_id;
 	}
 	simple_catch("sprite_get_texture", -1)
@@ -945,10 +1001,9 @@ exp_real atlas_texture_get_width(gm_real id)
 			return gm::texture_get_width((int)id);
 
 		texture_atlas::images::sub_image* subimg = game_textures.at((uint)id);
-		texture_atlas::images* image = game_images.at(subimg->image_id);
-		texture_atlas* atlas = game_texture_atlas.at(image->atlas_id).get();
-
-		return (gm_real)subimg->texture_width / (gm_real)atlas->size;
+		if (subimg == nullptr)  // 空白帧
+			return 0;
+		return (gm_real)subimg->texture_width;
 	}
 	simple_catch("atlas_texture_get_width", 0)
 }
@@ -961,10 +1016,9 @@ exp_real atlas_texture_get_height(gm_real id)
 			return gm::texture_get_height((int)id);
 
 		texture_atlas::images::sub_image* subimg = game_textures.at((uint)id);
-		texture_atlas::images* image = game_images.at(subimg->image_id);
-		texture_atlas* atlas = game_texture_atlas.at(image->atlas_id).get();
-
-		return (gm_real)subimg->texture_height / (gm_real)atlas->size;
+		if (subimg == nullptr)  // 空白帧
+			return 0;
+		return (gm_real)subimg->texture_height;
 	}
 	simple_catch("atlas_texture_get_width", 0)
 }
@@ -977,10 +1031,9 @@ exp_real texture_get_atlas_x(gm_real id)
 			return 0;
 
 		texture_atlas::images::sub_image* subimg = game_textures.at((uint)id);
-		texture_atlas::images* image = game_images.at(subimg->image_id);
-		texture_atlas* atlas = game_texture_atlas.at(image->atlas_id).get();
-
-		return (gm_real)subimg->texture_left / (gm_real)atlas->size;
+		if (subimg == nullptr)  // 空白帧
+			return 0;
+		return (gm_real)subimg->texture_left;
 	}
 	simple_catch("texture_get_atlas_x", -1)
 }
@@ -993,10 +1046,9 @@ exp_real texture_get_atlas_y(gm_real id)
 			return 0;
 
 		texture_atlas::images::sub_image* subimg = game_textures.at((uint)id);
-		texture_atlas::images* image = game_images.at(subimg->image_id);
-		texture_atlas* atlas = game_texture_atlas.at(image->atlas_id).get();
-
-		return (gm_real)subimg->texture_top / (gm_real)atlas->size;
+		if (subimg == nullptr)  // 空白帧
+			return 0;
+		return (gm_real)subimg->texture_top;
 	}
 	simple_catch("texture_get_atlas_y", -1)
 }

@@ -188,7 +188,7 @@ gm::sprite gm::decode_gmspr(const std::string& file)
 
 		if (count <= 0)
 		{
-			gm::buffer_destroy(buffer);
+			gm::buffer_destroy(data);  // 注意: buffer 在此前已销毁, 这里只销毁 data
 			throw std::runtime_error("This GMSPR file does not contain any image frames.\n"
 				"File: " + std::string(file));
 		}
@@ -366,10 +366,33 @@ gm::sprite gm::get_sprite_data(uint id)
 		std::vector<std::vector<uchar>> images(spr.Subimages.GetCount());
 		std::vector<gm::image_rect> cropped_rects(spr.Subimages.GetCount());
 
+		uint logical_width = (uint)spr.GetWidth();
+		uint logical_height = (uint)spr.GetHeight();
+
 		for (uint i = 0; i < (uint)spr.Subimages.GetCount(); ++i)
 		{
-			void* texture = (void*)spr.Subimages[id].GetTexture();   // 不透明: 只用于读回
+			void* texture = (void*)spr.Subimages[i].GetTexture();   // 不透明: 只用于读回
 			gm::image_data data = get_image_data(texture);
+			std::vector<uchar>& pixels = std::get<0>(data);
+			uint tex_width = std::get<1>(data);
+			uint tex_height = std::get<2>(data);
+
+			// GM 纹理通常按 2 的幂填充(内容位于左上角), 读回数据按物理尺寸
+			// 存储, 而图集打包按逻辑宽高索引数据。这里先紧凑化去掉填充行距
+			uint img_width = std::min(tex_width, logical_width);
+			uint img_height = std::min(tex_height, logical_height);
+			if (img_width != tex_width || img_height != tex_height)
+			{
+				std::vector<uchar> compact(img_width * img_height * 4);
+				for (uint y = 0; y < img_height; ++y)
+				{
+					std::memcpy(compact.data() + y * img_width * 4,
+						pixels.data() + y * tex_width * 4, img_width * 4);
+				}
+				pixels = std::move(compact);
+			}
+			std::get<1>(data) = img_width;
+			std::get<2>(data) = img_height;
 
 			// 进行空白裁剪计算
 			if (crop_blank)
@@ -385,16 +408,19 @@ gm::sprite gm::get_sprite_data(uint id)
 			else
 			{
 				cropped_rects[i] = { 0, 0,
-					(int)std::get<1>(data) - 1,  // width
-					(int)std::get<2>(data) - 1   // height
+					(int)img_width - 1,
+					(int)img_height - 1
 				};
 			}
 
-			images[i] = std::move(std::get<0>(data));
+			// 与 png/gmspr 路径一致, 对裁剪边缘做颜色膨胀, 避免插值黑边
+			apply_color_bleeding(pixels, img_width, img_height, cropped_rects[i]);
+
+			images[i] = std::move(pixels);
 		}
 
 		return gm::sprite {
-			.width = (uint)spr.GetWidth(), .height = (uint)spr.GetHeight(),
+			.width = logical_width, .height = logical_height,
 			.xorig = spr.GetOffsetX(), .yorig = spr.GetOffsetY(),
 
 			.data = std::move(images),

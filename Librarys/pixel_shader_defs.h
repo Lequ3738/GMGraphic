@@ -14,9 +14,7 @@ constexpr const char* ps_sdf = ""
 "mad_x8_sat r1.a, r1_x2.a, r2.x, c1.x"													"\r\n"
 ""																						"\r\n"
 "mov		r0.rgb, v0"																	"\r\n"
-"+mul		r0.a, r1.a, v0.a	// final_alpha = sdf_alpha * alpha"						"\r\n"
-""																						"\r\n"
-"mul		r0,      r0, v0		// Blend"												"\r\n";
+"+mul		r0.a, r1.a, v0.a	// final_alpha = sdf_alpha * alpha"						"\r\n";
 
 constexpr const char* ps_sdf_premul = ""
 "ps.1.4"																				"\r\n"
@@ -34,13 +32,7 @@ constexpr const char* ps_sdf_premul = ""
 "mov		r0.rgb, v0"																	"\r\n"
 "+mul		r0.a, r1.a, v0.a	// final_alpha = sdf_alpha * alpha"						"\r\n"
 ""																						"\r\n"
-"mul		r0,      r0, v0		// Blend"												"\r\n"
 "mul		r0.rgb,  r0, r0.a	// Pre-multiplied alpha"								"\r\n";
-
-// ============================================================================
-// DX9 专用: MapLibre 风格 smoothstep SDF 像素着色器(ps-only, HLSL)。
-// 与 asm 版(ps_sdf)差异仅在阈值公式: asm=sat(32*scale*(dist-thickness)+0.0625), HLSL=smoothstep(u_buffer±u_gamma,dist)。
-// ============================================================================
 
 constexpr const char* ps_sdf_hlsl = ""
 "sampler2D u_texture;"															"\r\n"
@@ -65,6 +57,6 @@ constexpr const char* ps_sdf_hlsl_premul = ""
 "{"																				"\r\n"
 "    float dist = tex2D(u_texture, v_texcoord).a;"								"\r\n"
 "    float alpha = smoothstep(u_buffer - u_gamma, u_buffer + u_gamma, dist);"	"\r\n"
-"    float a = alpha * v_color.a;   // 与 asm premul(mul r0,r0,v0 后 rgb*=a)一致"	"\r\n"
+"    float a = alpha * v_color.a;"												"\r\n"
 "    return float4(v_color.rgb * a, a);"										"\r\n"
 "}"																				"\r\n";
