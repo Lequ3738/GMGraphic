@@ -438,6 +438,9 @@
     <ClInclude Include="Functions\vertex.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="Functions\gpart.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
     <ClInclude Include="Librarys\math_s.h">
       <Filter>头文件</Filter>
     </ClInclude>
@@ -624,6 +627,9 @@
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="Functions\vertex.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Functions\gpart.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="Librarys\string_make.cpp">

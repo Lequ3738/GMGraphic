@@ -18,6 +18,7 @@ namespace d3d
         DWORD vertex_shader_version;   // HLSL vs profile 自适应(ps_2_0/3_0 同理)
         DWORD max_tex_w, max_tex_h, max_tex_stages, max_aniso;
         DWORD prim_misc_caps, raster_caps;
+        DWORD vertex_tex_filter_caps;   // D3D9 VertexTextureFilterCaps(VTF); D3D8 恒 0
         char  adapter_desc[512];
     };
 
@@ -40,7 +41,9 @@ namespace d3d
     namespace impl8
     {
         HRESULT set_render_state(DWORD, DWORD);
+        HRESULT get_render_state(DWORD, DWORD*);
         HRESULT set_tex_stage_state(DWORD, DWORD, DWORD);
+        HRESULT get_tex_stage_state(DWORD, DWORD, DWORD*);
         HRESULT get_transform(DWORD, float*);
         HRESULT draw_primitive_up(DWORD, DWORD, const void*, DWORD);
         UINT    get_available_tex_mem();
@@ -70,6 +73,7 @@ namespace d3d
         int     constant_table_get_sampler_register(void*, void*);
 
         HRESULT set_texture(DWORD, void*);
+        HRESULT get_texture(DWORD, void**);
         HRESULT create_texture(UINT, UINT, UINT, DWORD, DWORD, DWORD, void**);
         HRESULT upload_texture(void*, UINT, UINT, DWORD, const void*, UINT);
         void    release(void*);
@@ -91,13 +95,23 @@ namespace d3d
         // Bind passthrough VS onto a custom decl (vertex_submit with no VS); also refreshes WVP.
         HRESULT set_vertex_shader_passthrough_decl(void*);
 
+        // ---- render-target bridge (gpart evolution pass; D3D8 stubs return E_FAIL) ----
+        HRESULT get_surface_level(void*, UINT, void**);
+        HRESULT get_render_target(DWORD, void**);
+        HRESULT set_render_target(DWORD, void*);
+        HRESULT clear_target(DWORD);
+        HRESULT set_viewport(UINT, UINT);
+        HRESULT get_viewport(UINT*, UINT*);
+
         std::string error_text(HRESULT);
         bool get_caps(Caps&);
     }
     namespace impl9
     {
         HRESULT set_render_state(DWORD, DWORD);
+        HRESULT get_render_state(DWORD, DWORD*);
         HRESULT set_tex_stage_state(DWORD, DWORD, DWORD);
+        HRESULT get_tex_stage_state(DWORD, DWORD, DWORD*);
         HRESULT get_transform(DWORD, float*);
         HRESULT draw_primitive_up(DWORD, DWORD, const void*, DWORD);
         UINT    get_available_tex_mem();
@@ -129,6 +143,7 @@ namespace d3d
         int     constant_table_get_sampler_register(void* table, void* handle);  // 采样器寄存器号(sN), 非采样器返回 -1
 
         HRESULT set_texture(DWORD, void*);
+        HRESULT get_texture(DWORD, void**);
         HRESULT create_texture(UINT, UINT, UINT, DWORD, DWORD, DWORD, void**);
         HRESULT upload_texture(void*, UINT, UINT, DWORD, const void*, UINT);
         void    release(void*);
@@ -148,6 +163,14 @@ namespace d3d
         HRESULT create_vertex_declaration(const void*, UINT, void**);
         HRESULT set_vertex_shader_passthrough_decl(void*);
 
+        // ---- render-target bridge (gpart evolution pass; D3D8 stubs return E_FAIL) ----
+        HRESULT get_surface_level(void*, UINT, void**);
+        HRESULT get_render_target(DWORD, void**);
+        HRESULT set_render_target(DWORD, void*);
+        HRESULT clear_target(DWORD);
+        HRESULT set_viewport(UINT, UINT);
+        HRESULT get_viewport(UINT*, UINT*);
+
         std::string error_text(HRESULT);
         bool get_caps(Caps&);
     }
@@ -155,8 +178,12 @@ namespace d3d
     // ---- 公共 API(运行时按后端分发, 每处一行) ----
     inline HRESULT set_render_state(DWORD s, DWORD v)
     { return version() == V9 ? impl9::set_render_state(s, v) : impl8::set_render_state(s, v); }
+    inline HRESULT get_render_state(DWORD s, DWORD* v)
+    { return version() == V9 ? impl9::get_render_state(s, v) : impl8::get_render_state(s, v); }
     inline HRESULT set_tex_stage_state(DWORD stage, DWORD type, DWORD v)
     { return version() == V9 ? impl9::set_tex_stage_state(stage, type, v) : impl8::set_tex_stage_state(stage, type, v); }
+    inline HRESULT get_tex_stage_state(DWORD stage, DWORD type, DWORD* v)
+    { return version() == V9 ? impl9::get_tex_stage_state(stage, type, v) : impl8::get_tex_stage_state(stage, type, v); }
     inline HRESULT get_transform(DWORD state, float* m16)
     { return version() == V9 ? impl9::get_transform(state, m16) : impl8::get_transform(state, m16); }
     inline HRESULT draw_primitive_up(DWORD prim, DWORD count, const void* verts, DWORD stride)
@@ -206,6 +233,8 @@ namespace d3d
 
     inline HRESULT set_texture(DWORD stage, void* tex)
     { return version() == V9 ? impl9::set_texture(stage, tex) : impl8::set_texture(stage, tex); }
+    inline HRESULT get_texture(DWORD stage, void** tex)
+    { return version() == V9 ? impl9::get_texture(stage, tex) : impl8::get_texture(stage, tex); }
     inline HRESULT create_texture(UINT w, UINT h, UINT levels, DWORD usage, DWORD fmt, DWORD pool, void** out)
     { return version() == V9 ? impl9::create_texture(w, h, levels, usage, fmt, pool, out) : impl8::create_texture(w, h, levels, usage, fmt, pool, out); }
     inline HRESULT upload_texture(void* tex, UINT w, UINT h, DWORD fmt, const void* px, UINT pitch)
@@ -240,6 +269,20 @@ namespace d3d
     { return version() == V9 ? impl9::create_vertex_declaration(elems, count, out) : impl8::create_vertex_declaration(elems, count, out); }
     inline HRESULT set_vertex_shader_passthrough_decl(void* decl)
     { return version() == V9 ? impl9::set_vertex_shader_passthrough_decl(decl) : impl8::set_vertex_shader_passthrough_decl(decl); }
+
+    // ---- render-target bridge (gpart evolution pass; D3D8 stubs return E_FAIL) ----
+    inline HRESULT get_surface_level(void* tex, UINT level, void** surface)
+    { return version() == V9 ? impl9::get_surface_level(tex, level, surface) : impl8::get_surface_level(tex, level, surface); }
+    inline HRESULT get_render_target(DWORD index, void** surface)
+    { return version() == V9 ? impl9::get_render_target(index, surface) : impl8::get_render_target(index, surface); }
+    inline HRESULT set_render_target(DWORD index, void* surface)
+    { return version() == V9 ? impl9::set_render_target(index, surface) : impl8::set_render_target(index, surface); }
+    inline HRESULT clear_target(DWORD color)
+    { return version() == V9 ? impl9::clear_target(color) : impl8::clear_target(color); }
+    inline HRESULT set_viewport(UINT w, UINT h)
+    { return version() == V9 ? impl9::set_viewport(w, h) : impl8::set_viewport(w, h); }
+    inline HRESULT get_viewport(UINT* w, UINT* h)
+    { return version() == V9 ? impl9::get_viewport(w, h) : impl8::get_viewport(w, h); }
 
     // 错误码 → 可读文本(D3D8 用 DXGetErrorDescription8A, D3D9 用内置错误表)。
     inline std::string error_text(HRESULT hr)

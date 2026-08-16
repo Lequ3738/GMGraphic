@@ -357,12 +357,14 @@
     <ClInclude Include="pch.h" />
     <ClInclude Include="Functions\shader.h" />
     <ClInclude Include="Functions\vertex.h" />
+    <ClInclude Include="Functions\gpart.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Functions\draw_atlas.cpp" />
     <ClCompile Include="Functions\draw_text.cpp" />
     <ClCompile Include="Functions\rich_text.cpp" />
     <ClCompile Include="Functions\vertex.cpp" />
+    <ClCompile Include="Functions\gpart.cpp" />
     <ClCompile Include="GMAPI\Gmapi3DGraphics.cpp" />
     <ClCompile Include="GMAPI\GmapiConsts.cpp" />
     <ClCompile Include="GMAPI\GmapiDataStructures.cpp" />

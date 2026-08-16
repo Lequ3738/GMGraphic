@@ -44,8 +44,12 @@ namespace d3d
         // ---- 同签名转发(与 D3D8 签名逐字相同, 仅 vtable 槽位不同) ----
         HRESULT set_render_state(DWORD s, DWORD v)
         { return dev()->SetRenderState((D3DRENDERSTATETYPE)s, v); }
+        HRESULT get_render_state(DWORD s, DWORD* v)
+        { return dev()->GetRenderState((D3DRENDERSTATETYPE)s, v); }
         HRESULT set_tex_stage_state(DWORD stage, DWORD type, DWORD v)
         { return dev()->SetTextureStageState(stage, (D3DTEXTURESTAGESTATETYPE)type, v); }
+        HRESULT get_tex_stage_state(DWORD stage, DWORD type, DWORD* v)
+        { return dev()->GetTextureStageState(stage, (D3DTEXTURESTAGESTATETYPE)type, v); }
         HRESULT get_transform(DWORD state, float* m16)
         { return dev()->GetTransform((D3DTRANSFORMSTATETYPE)state, (D3DMATRIX*)m16); }
         HRESULT draw_primitive_up(DWORD prim, DWORD count, const void* verts, DWORD stride)
@@ -300,6 +304,28 @@ namespace d3d
             if (FAILED(hr)) return hr;
             return dev()->SetVertexShader(s_passthrough_vs);
         }
+
+        // ---- render-target bridge (gpart evolution pass) ----
+        HRESULT get_surface_level(void* tex, UINT level, void** surface)
+        { return ((IDirect3DTexture9*)tex)->GetSurfaceLevel(level, (IDirect3DSurface9**)surface); }
+        HRESULT get_render_target(DWORD index, void** surface)
+        { return dev()->GetRenderTarget(index, (IDirect3DSurface9**)surface); }
+        HRESULT set_render_target(DWORD index, void* surface)
+        { return dev()->SetRenderTarget(index, (IDirect3DSurface9*)surface); }
+        HRESULT clear_target(DWORD color)
+        { return dev()->Clear(0, nullptr, D3DCLEAR_TARGET, color, 0.0f, 0); }
+        HRESULT set_viewport(UINT w, UINT h)
+        {
+            D3DVIEWPORT9 vp = { 0, 0, w, h, 0.0f, 1.0f };
+            return dev()->SetViewport(&vp);
+        }
+        HRESULT get_viewport(UINT* w, UINT* h)
+        {
+            D3DVIEWPORT9 vp{};
+            HRESULT hr = dev()->GetViewport(&vp);
+            if (SUCCEEDED(hr)) { *w = vp.Width; *h = vp.Height; }
+            return hr;
+        }
         HRESULT set_vs_const_typed(DWORD reg, ConstKind kind, const float* v, DWORD count)
         {
             switch (kind)
@@ -394,6 +420,8 @@ namespace d3d
         // ---- 纹理桥 ----
         HRESULT set_texture(DWORD stage, void* tex)
         { return dev()->SetTexture(stage, (IDirect3DBaseTexture9*)tex); }
+        HRESULT get_texture(DWORD stage, void** tex)
+        { return dev()->GetTexture(stage, (IDirect3DBaseTexture9**)tex); }
         HRESULT create_texture(UINT w, UINT h, UINT levels, DWORD usage, DWORD fmt, DWORD pool, void** out)
         {
             IDirect3DTexture9* tex = nullptr;
@@ -503,6 +531,7 @@ namespace d3d
             out.max_aniso            = caps.MaxAnisotropy;
             out.prim_misc_caps       = caps.PrimitiveMiscCaps;
             out.raster_caps          = caps.RasterCaps;
+            out.vertex_tex_filter_caps = caps.VertexTextureFilterCaps;
             strncpy(out.adapter_desc, aid.Description, sizeof(out.adapter_desc) - 1);
             out.adapter_desc[sizeof(out.adapter_desc) - 1] = 0;
             return true;

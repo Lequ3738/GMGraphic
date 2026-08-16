@@ -16,8 +16,12 @@ namespace d3d
         // ---- 同签名转发(与 D3D9 签名逐字相同, 仅 vtable 槽位不同) ----
         HRESULT set_render_state(DWORD s, DWORD v)
         { return dev()->SetRenderState((D3DRENDERSTATETYPE)s, v); }
+        HRESULT get_render_state(DWORD s, DWORD* v)
+        { return dev()->GetRenderState((D3DRENDERSTATETYPE)s, v); }
         HRESULT set_tex_stage_state(DWORD stage, DWORD type, DWORD v)
         { return dev()->SetTextureStageState(stage, (D3DTEXTURESTAGESTATETYPE)type, v); }
+        HRESULT get_tex_stage_state(DWORD stage, DWORD type, DWORD* v)
+        { return dev()->GetTextureStageState(stage, (D3DTEXTURESTAGESTATETYPE)type, v); }
         HRESULT get_transform(DWORD state, float* m16)
         { return dev()->GetTransform((D3DTRANSFORMSTATETYPE)state, (D3DMATRIX*)m16); }
         HRESULT draw_primitive_up(DWORD prim, DWORD count, const void* verts, DWORD stride)
@@ -139,6 +143,8 @@ namespace d3d
         // ---- 纹理桥(纹理一律不透明 void*) ----
         HRESULT set_texture(DWORD stage, void* tex)
         { return dev()->SetTexture(stage, (IDirect3DBaseTexture8*)tex); }
+        HRESULT get_texture(DWORD stage, void** tex)
+        { return dev()->GetTexture(stage, (IDirect3DBaseTexture8**)tex); }
         HRESULT create_texture(UINT w, UINT h, UINT levels, DWORD usage, DWORD fmt, DWORD pool, void** out)
         {
             IDirect3DTexture8* tex = nullptr;
@@ -213,6 +219,14 @@ namespace d3d
         HRESULT create_vertex_declaration(const void*, UINT, void**) { return E_FAIL; }
         HRESULT set_vertex_shader_passthrough_decl(void*) { return E_FAIL; }
 
+        // ---- render-target bridge (gpart evolution pass; D3D8 stubs) ----
+        HRESULT get_surface_level(void*, UINT, void**) { return E_FAIL; }
+        HRESULT get_render_target(DWORD, void**) { return E_FAIL; }
+        HRESULT set_render_target(DWORD, void*) { return E_FAIL; }
+        HRESULT clear_target(DWORD) { return E_FAIL; }
+        HRESULT set_viewport(UINT, UINT) { return E_FAIL; }
+        HRESULT get_viewport(UINT*, UINT*) { return E_FAIL; }
+
         // ---- 错误文本(D3D8 全表来自 DXGetErrorDescription8A) ----
         std::string error_text(HRESULT hr)
         {
@@ -236,6 +250,7 @@ namespace d3d
             out.max_aniso            = caps.MaxAnisotropy;
             out.prim_misc_caps       = caps.PrimitiveMiscCaps;
             out.raster_caps          = caps.RasterCaps;
+            out.vertex_tex_filter_caps = 0;   // D3D8 无 VTF
             strncpy(out.adapter_desc, aid.Description, sizeof(out.adapter_desc) - 1);
             out.adapter_desc[sizeof(out.adapter_desc) - 1] = 0;
             return true;
