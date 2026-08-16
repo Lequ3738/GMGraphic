@@ -75,6 +75,22 @@ namespace d3d
         void    release(void*);
         HRESULT read_texture(void*, std::vector<BYTE>&, UINT&, UINT&);
 
+        // ---- vertex_* vertex-buffer pipeline (D3D9 only; D3D8 stubs return E_FAIL) ----
+        HRESULT set_vertex_declaration(void*);
+        HRESULT get_vertex_declaration(void**);
+        HRESULT get_vertex_shader(DWORD*);
+        HRESULT set_vertex_shader_handle(DWORD);
+        HRESULT get_fvf(DWORD*);
+        HRESULT set_fvf(DWORD);
+        HRESULT draw_primitive(DWORD, DWORD, DWORD);
+        HRESULT create_vertex_buffer(UINT, void**);
+        HRESULT upload_vertex_buffer(void*, const void*, UINT);
+        HRESULT set_stream_source(DWORD, void*, DWORD);
+        // elems = D3DVERTEXELEMENT9-layout array (see vertex.h); count excludes D3DDECL_END.
+        HRESULT create_vertex_declaration(const void*, UINT, void**);
+        // Bind passthrough VS onto a custom decl (vertex_submit with no VS); also refreshes WVP.
+        HRESULT set_vertex_shader_passthrough_decl(void*);
+
         std::string error_text(HRESULT);
         bool get_caps(Caps&);
     }
@@ -117,6 +133,20 @@ namespace d3d
         HRESULT upload_texture(void*, UINT, UINT, DWORD, const void*, UINT);
         void    release(void*);
         HRESULT read_texture(void*, std::vector<BYTE>&, UINT&, UINT&);
+
+        // ---- vertex_* vertex-buffer pipeline (D3D9 only; D3D8 stubs return E_FAIL) ----
+        HRESULT set_vertex_declaration(void*);
+        HRESULT get_vertex_declaration(void**);
+        HRESULT get_vertex_shader(DWORD*);
+        HRESULT set_vertex_shader_handle(DWORD);
+        HRESULT get_fvf(DWORD*);
+        HRESULT set_fvf(DWORD);
+        HRESULT draw_primitive(DWORD, DWORD, DWORD);
+        HRESULT create_vertex_buffer(UINT, void**);
+        HRESULT upload_vertex_buffer(void*, const void*, UINT);
+        HRESULT set_stream_source(DWORD, void*, DWORD);
+        HRESULT create_vertex_declaration(const void*, UINT, void**);
+        HRESULT set_vertex_shader_passthrough_decl(void*);
 
         std::string error_text(HRESULT);
         bool get_caps(Caps&);
@@ -184,6 +214,32 @@ namespace d3d
     { if (version() == V9) impl9::release(com); else impl8::release(com); }
     inline HRESULT read_texture(void* tex, std::vector<BYTE>& dest, UINT& width, UINT& height)
     { return version() == V9 ? impl9::read_texture(tex, dest, width, height) : impl8::read_texture(tex, dest, width, height); }
+
+    // ---- vertex_* vertex-buffer pipeline (D3D9 only; D3D8 stubs return E_FAIL) ----
+    inline HRESULT set_vertex_declaration(void* decl)
+    { return version() == V9 ? impl9::set_vertex_declaration(decl) : impl8::set_vertex_declaration(decl); }
+    inline HRESULT get_vertex_declaration(void** decl)
+    { return version() == V9 ? impl9::get_vertex_declaration(decl) : impl8::get_vertex_declaration(decl); }
+    inline HRESULT get_vertex_shader(DWORD* handle)
+    { return version() == V9 ? impl9::get_vertex_shader(handle) : impl8::get_vertex_shader(handle); }
+    inline HRESULT set_vertex_shader_handle(DWORD handle)
+    { return version() == V9 ? impl9::set_vertex_shader_handle(handle) : impl8::set_vertex_shader_handle(handle); }
+    inline HRESULT get_fvf(DWORD* fvf)
+    { return version() == V9 ? impl9::get_fvf(fvf) : impl8::get_fvf(fvf); }
+    inline HRESULT set_fvf(DWORD fvf)
+    { return version() == V9 ? impl9::set_fvf(fvf) : impl8::set_fvf(fvf); }
+    inline HRESULT draw_primitive(DWORD prim, DWORD count, DWORD start)
+    { return version() == V9 ? impl9::draw_primitive(prim, count, start) : impl8::draw_primitive(prim, count, start); }
+    inline HRESULT create_vertex_buffer(UINT size, void** vb)
+    { return version() == V9 ? impl9::create_vertex_buffer(size, vb) : impl8::create_vertex_buffer(size, vb); }
+    inline HRESULT upload_vertex_buffer(void* vb, const void* data, UINT size)
+    { return version() == V9 ? impl9::upload_vertex_buffer(vb, data, size) : impl8::upload_vertex_buffer(vb, data, size); }
+    inline HRESULT set_stream_source(DWORD stream, void* vb, DWORD stride)
+    { return version() == V9 ? impl9::set_stream_source(stream, vb, stride) : impl8::set_stream_source(stream, vb, stride); }
+    inline HRESULT create_vertex_declaration(const void* elems, UINT count, void** out)
+    { return version() == V9 ? impl9::create_vertex_declaration(elems, count, out) : impl8::create_vertex_declaration(elems, count, out); }
+    inline HRESULT set_vertex_shader_passthrough_decl(void* decl)
+    { return version() == V9 ? impl9::set_vertex_shader_passthrough_decl(decl) : impl8::set_vertex_shader_passthrough_decl(decl); }
 
     // 错误码 → 可读文本(D3D8 用 DXGetErrorDescription8A, D3D9 用内置错误表)。
     inline std::string error_text(HRESULT hr)

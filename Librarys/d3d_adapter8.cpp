@@ -199,6 +199,20 @@ namespace d3d
             return hr;
         }
 
+        // ---- vertex_* vertex-buffer pipeline (D3D9 only, D3D8 stubs return E_FAIL) ----
+        HRESULT set_vertex_declaration(void*) { return E_FAIL; }
+        HRESULT get_vertex_declaration(void**) { return E_FAIL; }
+        HRESULT get_vertex_shader(DWORD*) { return E_FAIL; }
+        HRESULT set_vertex_shader_handle(DWORD) { return E_FAIL; }
+        HRESULT get_fvf(DWORD*) { return E_FAIL; }
+        HRESULT set_fvf(DWORD) { return E_FAIL; }
+        HRESULT draw_primitive(DWORD, DWORD, DWORD) { return E_FAIL; }
+        HRESULT create_vertex_buffer(UINT, void**) { return E_FAIL; }
+        HRESULT upload_vertex_buffer(void*, const void*, UINT) { return E_FAIL; }
+        HRESULT set_stream_source(DWORD, void*, DWORD) { return E_FAIL; }
+        HRESULT create_vertex_declaration(const void*, UINT, void**) { return E_FAIL; }
+        HRESULT set_vertex_shader_passthrough_decl(void*) { return E_FAIL; }
+
         // ---- 错误文本(D3D8 全表来自 DXGetErrorDescription8A) ----
         std::string error_text(HRESULT hr)
         {

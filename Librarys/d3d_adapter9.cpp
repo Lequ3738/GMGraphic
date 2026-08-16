@@ -231,6 +231,75 @@ namespace d3d
         // 到当前投影(surface_set_target 重设投影后不失真)。懒创建: 首次 shader_set ps-only 才非空,
         // 槽始终有效(存的是变量地址, 值创建后自动可见)。
         void* get_passthrough_vs_ptr() { return &s_passthrough_vs; }
+
+        // ---- vertex_* vertex-buffer pipeline (D3D9 only) ----
+        // vertex_submit needs: custom decl + arbitrary VS (or passthrough VS) + save/restore
+        // of the engine's VS / decl / FVF.
+        HRESULT set_vertex_declaration(void* decl)
+        { return dev()->SetVertexDeclaration((IDirect3DVertexDeclaration9*)decl); }
+        HRESULT get_vertex_declaration(void** decl)
+        { return dev()->GetVertexDeclaration((IDirect3DVertexDeclaration9**)decl); }
+        HRESULT get_vertex_shader(DWORD* handle)
+        { return dev()->GetVertexShader((IDirect3DVertexShader9**)handle); }
+        HRESULT set_vertex_shader_handle(DWORD handle)
+        { return dev()->SetVertexShader((IDirect3DVertexShader9*)handle); }
+        HRESULT get_fvf(DWORD* fvf) { return dev()->GetFVF(fvf); }
+        HRESULT set_fvf(DWORD fvf)  { return dev()->SetFVF(fvf); }
+        HRESULT draw_primitive(DWORD prim, DWORD count, DWORD start)
+        { return dev()->DrawPrimitive((D3DPRIMITIVETYPE)prim, start, count); }
+        // Static read-only VB (freeze): D3DUSAGE_WRITEONLY + default pool, uploaded once.
+        HRESULT create_vertex_buffer(UINT size, void** vb)
+        {
+            return dev()->CreateVertexBuffer(size, D3DUSAGE_WRITEONLY, 0, D3DPOOL_DEFAULT,
+                (IDirect3DVertexBuffer9**)vb, nullptr);
+        }
+        HRESULT upload_vertex_buffer(void* vb, const void* data, UINT size)
+        {
+            void* p = nullptr;
+            HRESULT hr = ((IDirect3DVertexBuffer9*)vb)->Lock(0, size, &p, D3DLOCK_DISCARD);
+            if (FAILED(hr)) return hr;
+            memcpy(p, data, size);
+            return ((IDirect3DVertexBuffer9*)vb)->Unlock();
+        }
+        HRESULT set_stream_source(DWORD stream, void* vb, DWORD stride)
+        { return dev()->SetStreamSource(stream, (IDirect3DVertexBuffer9*)vb, 0, stride); }
+        // elems = D3DVERTEXELEMENT9-layout array (see vertex.h); count excludes D3DDECL_END().
+        HRESULT create_vertex_declaration(const void* elems, UINT count, void** out)
+        {
+            return dev()->CreateVertexDeclaration((const D3DVERTEXELEMENT9*)elems,
+                (IDirect3DVertexDeclaration9**)out);
+        }
+        // Passthrough VS onto a custom decl (vertex_submit with no VS): reuse s_passthrough_vs
+        // (lazy), only swap the decl and refresh WVP. Same shape as set_vertex_shader_passthrough.
+        HRESULT set_vertex_shader_passthrough_decl(void* decl)
+        {
+            if (!s_passthrough_vs)
+            {
+                if (!load_d3dx9()) return E_FAIL;
+                LPD3DXBUFFER shader = nullptr, errors = nullptr;
+                HRESULT hr = s_compile(s_passthrough_vs_hlsl, (UINT)sizeof(s_passthrough_vs_hlsl) - 1,
+                    nullptr, nullptr, "main", "vs_3_0", 0, &shader, &errors, nullptr);
+                if (FAILED(hr))
+                {
+                    if (errors) errors->Release();
+                    return hr;
+                }
+                hr = dev()->CreateVertexShader((const DWORD*)shader->GetBufferPointer(), &s_passthrough_vs);
+                shader->Release();
+                if (FAILED(hr)) return hr;
+            }
+            HRESULT hr = dev()->SetVertexDeclaration((IDirect3DVertexDeclaration9*)decl);
+            if (FAILED(hr)) return hr;
+            float world[16], view[16], proj[16], wv[16], wvp[16];
+            dev()->GetTransform(D3DTS_WORLD, (D3DMATRIX*)world);
+            dev()->GetTransform(D3DTS_VIEW, (D3DMATRIX*)view);
+            dev()->GetTransform(D3DTS_PROJECTION, (D3DMATRIX*)proj);
+            mul4x4(world, view, wv);
+            mul4x4(wv, proj, wvp);
+            hr = dev()->SetVertexShaderConstantF(0, wvp, 4);
+            if (FAILED(hr)) return hr;
+            return dev()->SetVertexShader(s_passthrough_vs);
+        }
         HRESULT set_vs_const_typed(DWORD reg, ConstKind kind, const float* v, DWORD count)
         {
             switch (kind)

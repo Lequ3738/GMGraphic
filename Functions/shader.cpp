@@ -382,6 +382,16 @@ exp_real shader_reset()
 // 当前绑定 shader, 无则 -1。
 exp_real shader_current() { return (double)current_shader; }
 
+// vertex_* submit: whether current shader has a VS (used to pick VS for custom decl).
+bool vertex_current_vs(dword* vs_out)
+{
+    if (current_shader < 0) return false;
+    auto it = shaders.find(current_shader);
+    if (it == shaders.end() || !it->second.vs) return false;
+    *vs_out = it->second.vs;
+    return true;
+}
+
 // ---- uniform 查找 ----
 
 exp_real shader_get_uniform(double sh, const char* uni)

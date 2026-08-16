@@ -19,6 +19,9 @@ extern int sdf_shader_uniform;          // DX8: c0(scale/thickness) 句柄 = sha
 extern int sdf_shader_uniform_buffer;   // DX9: "u_buffer"(thickness) 句柄
 extern int sdf_shader_uniform_gamma;    // DX9: "u_gamma"(边缘软度) 句柄
 
+// vertex_* submit: return current shader's VS handle (false = no VS / no shader).
+bool vertex_current_vs(dword* vs_out);
+
 namespace gm
 {
 	extern int argument_list;
