@@ -46,7 +46,7 @@ sdf::glyphs::glyphs(std::string& image_path, std::string& csv_path)
 			alp_image[i] = image[i * 4];
 
 		// 建纹理 + 上传像素(整链经适配器, 双后端通用)
-		D3DCheck(d3d::create_texture(width, height, 1, 0, D3DFMT_A8, D3DPOOL_DEFAULT,
+		D3DCheck(d3d::create_texture(width, height, 1, 0, D3DFMT_A8, D3DPOOL_MANAGED,
 			&texture), 0);
 		D3DCheck(d3d::upload_texture(texture, width, height, D3DFMT_A8,
 			alp_image.data(), width), 1);

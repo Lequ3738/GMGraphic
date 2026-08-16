@@ -346,11 +346,10 @@ bool texture_atlas::burn(bool del_memdata)
 		if (read_only())
 			return false;
 
-		// 首次调用时创建 GPU 纹理, 之后每次只做像素上传。
 		if (texture == nullptr)
 		{
 			D3DCheck(d3d::create_texture(size, size, 1, 0, D3DFMT_A8R8G8B8,
-				D3DPOOL_DEFAULT, &texture), 0);
+				D3DPOOL_MANAGED, &texture), 0);
 		}
 		D3DCheck(d3d::upload_texture(texture, size, size, D3DFMT_A8R8G8B8,
 			data.data(), size * 4), 1);
@@ -590,7 +589,7 @@ std::vector<texture_atlas::images*> texture_atlas::load(path& file_path)
 		if (texture == nullptr)
 		{
 			D3DCheck(d3d::create_texture(width, height, 1, 0, D3DFMT_A8R8G8B8,
-				D3DPOOL_DEFAULT, &texture), 0);
+				D3DPOOL_MANAGED, &texture), 0);
 		}
 		D3DCheck(d3d::upload_texture(texture, width, height, D3DFMT_A8R8G8B8,
 			d3dimage.data(), width * 4), 1);
