@@ -268,10 +268,15 @@ namespace d3d
         HRESULT set_stream_source(DWORD stream, void* vb, DWORD stride)
         { return dev()->SetStreamSource(stream, (IDirect3DVertexBuffer9*)vb, 0, stride); }
         // elems = D3DVERTEXELEMENT9-layout array (see vertex.h); count excludes D3DDECL_END().
+        // D3D9 的 CreateVertexDeclaration 要求数组以 D3DDECL_END() 结尾, 否则返回 E_FAIL,
+        // 这里统一补上(调用方传的是不含结束标记的普通元素数组)。
         HRESULT create_vertex_declaration(const void* elems, UINT count, void** out)
         {
-            return dev()->CreateVertexDeclaration((const D3DVERTEXELEMENT9*)elems,
-                (IDirect3DVertexDeclaration9**)out);
+            std::vector<D3DVERTEXELEMENT9> v(
+                (const D3DVERTEXELEMENT9*)elems,
+                (const D3DVERTEXELEMENT9*)elems + count);
+            v.push_back(D3DDECL_END());
+            return dev()->CreateVertexDeclaration(v.data(), (IDirect3DVertexDeclaration9**)out);
         }
         // Passthrough VS onto a custom decl (vertex_submit with no VS): reuse s_passthrough_vs
         // (lazy), only swap the decl and refresh WVP. Same shape as set_vertex_shader_passthrough.
@@ -325,6 +330,13 @@ namespace d3d
             HRESULT hr = dev()->GetViewport(&vp);
             if (SUCCEEDED(hr)) { *w = vp.Width; *h = vp.Height; }
             return hr;
+        }
+        // 顶点处理模式查询(诊断 VTF 用): TRUE = 软件顶点处理(SWVP, 不支持 VTF)
+        HRESULT get_software_vertex_processing(BOOL* swvp)
+        {
+            if (!swvp) return E_INVALIDARG;
+            *swvp = dev()->GetSoftwareVertexProcessing();
+            return S_OK;
         }
         HRESULT set_vs_const_typed(DWORD reg, ConstKind kind, const float* v, DWORD count)
         {
@@ -503,7 +515,75 @@ namespace d3d
             return hr;
         }
 
-        // ---- 错误文本(D3D9 精简表: 覆盖 GMGraphic 实际会遇到的错误码) ----
+                // half -> float(浮点读回用)
+        static float h2f(unsigned short h)
+        {
+            unsigned int sign = (unsigned int)(h & 0x8000u) << 16;
+            unsigned int exp = (h >> 10) & 0x1f;
+            unsigned int mant = h & 0x3ff;
+            unsigned int f;
+            if (exp == 0)
+            {
+                if (mant == 0) f = sign;
+                else
+                {
+                    exp = 127 - 15 + 1;
+                    while (!(mant & 0x400)) { mant <<= 1; exp--; }
+                    mant &= 0x3ff;
+                    f = sign | (exp << 23) | (mant << 13);
+                }
+            }
+            else if (exp == 0x1f)
+                f = sign | 0x7f800000u | (mant << 13);
+            else
+                f = sign | ((exp - 15 + 127) << 23) | (mant << 13);
+            float out;
+            memcpy(&out, &f, 4);
+            return out;
+        }
+        // 浮点读回: 输出 RGBA float 序列(dest 按像素 R,G,B,A 排列)
+        HRESULT read_texture_float(void* tex_, std::vector<float>& dest, UINT& width, UINT& height)
+        {
+            if (!load_d3dx9()) return E_FAIL;
+            IDirect3DTexture9* tex = (IDirect3DTexture9*)tex_;
+            IDirect3DSurface9* surface = nullptr, * surface_mem = nullptr;
+            D3DSURFACE_DESC desc{};
+            HRESULT hr = tex->GetLevelDesc(0, &desc);
+            if (SUCCEEDED(hr)) { width = desc.Width; height = desc.Height; hr = tex->GetSurfaceLevel(0, &surface); }
+            if (SUCCEEDED(hr))
+                hr = dev()->CreateOffscreenPlainSurface(width, height, D3DFMT_A16B16G16R16F,
+                    D3DPOOL_SYSTEMMEM, &surface_mem, nullptr);
+            if (SUCCEEDED(hr))
+                hr = s_load_surf(surface_mem, nullptr, nullptr, surface,
+                    nullptr, nullptr, D3DX_FILTER_NONE, 0);
+            if (SUCCEEDED(hr))
+            {
+                D3DLOCKED_RECT lock{};
+                hr = surface_mem->LockRect(&lock, nullptr, 0);
+                if (SUCCEEDED(hr))
+                {
+                    dest.resize((size_t)width * height * 4);
+                    const unsigned short* src = (const unsigned short*)lock.pBits;
+                    size_t sp = 0, dp = 0;
+                    for (UINT y = 0; y < height; ++y)
+                    {
+                        for (UINT x = 0; x < width; ++x)
+                        {
+                            for (int c = 0; c < 4; ++c)
+                                dest[dp + c] = h2f(src[sp + c]);
+                            sp += 4;
+                            dp += 4;
+                        }
+                        sp += (lock.Pitch - width * 8) / 2;
+                    }
+                    surface_mem->UnlockRect();
+                }
+            }
+            if (surface_mem) surface_mem->Release();
+            if (surface) surface->Release();
+            return hr;
+        }
+// ---- 错误文本(D3D9 精简表: 覆盖 GMGraphic 实际会遇到的错误码) ----
         // 不引入 DX SDK 的 dxerr.cpp(3967 行, 依赖 d3d10/11 等头), 用 switch 表即可。
         std::string error_text(HRESULT hr)
         {
@@ -552,6 +632,18 @@ namespace d3d
             strncpy(out.adapter_desc, aid.Description, sizeof(out.adapter_desc) - 1);
             out.adapter_desc[sizeof(out.adapter_desc) - 1] = 0;
             return true;
+        }
+
+        // ---- 顶点纹理采样格式支持(D3D9 VTF) ----
+        bool check_vtf_format(DWORD fmt)
+        {
+            IDirect3D9* ifc = intf();
+            if (!ifc) return false;
+            D3DDISPLAYMODE dm;
+            if (FAILED(ifc->GetAdapterDisplayMode(0, &dm)))
+                dm.Format = D3DFMT_X8R8G8B8;
+            return SUCCEEDED(ifc->CheckDeviceFormat(0, D3DDEVTYPE_HAL, dm.Format,
+                D3DUSAGE_QUERY_VERTEXTEXTURE, D3DRTYPE_TEXTURE, (D3DFORMAT)fmt));
         }
     }
 }

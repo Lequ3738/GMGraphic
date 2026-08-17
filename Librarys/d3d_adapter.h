@@ -79,6 +79,7 @@ namespace d3d
         HRESULT upload_texture_rect(void*, UINT, UINT, UINT, UINT, DWORD, const void*, UINT);
         void    release(void*);
         HRESULT read_texture(void*, std::vector<BYTE>&, UINT&, UINT&);
+        HRESULT read_texture_float(void*, std::vector<float>&, UINT&, UINT&);
 
         // ---- vertex_* vertex-buffer pipeline (D3D9 only; D3D8 stubs return E_FAIL) ----
         HRESULT set_vertex_declaration(void*);
@@ -103,9 +104,12 @@ namespace d3d
         HRESULT clear_target(DWORD);
         HRESULT set_viewport(UINT, UINT);
         HRESULT get_viewport(UINT*, UINT*);
+        HRESULT get_software_vertex_processing(BOOL*);
 
         std::string error_text(HRESULT);
         bool get_caps(Caps&);
+        // D3D9: CheckDeviceFormat(D3DUSAGE_QUERY_VERTEXTEXTURE) 查顶点纹理采样格式支持; D3D8 恒 false。
+        bool check_vtf_format(DWORD fmt);
     }
     namespace impl9
     {
@@ -150,6 +154,7 @@ namespace d3d
         HRESULT upload_texture_rect(void*, UINT, UINT, UINT, UINT, DWORD, const void*, UINT);
         void    release(void*);
         HRESULT read_texture(void*, std::vector<BYTE>&, UINT&, UINT&);
+        HRESULT read_texture_float(void*, std::vector<float>&, UINT&, UINT&);
 
         // ---- vertex_* vertex-buffer pipeline (D3D9 only; D3D8 stubs return E_FAIL) ----
         HRESULT set_vertex_declaration(void*);
@@ -172,9 +177,11 @@ namespace d3d
         HRESULT clear_target(DWORD);
         HRESULT set_viewport(UINT, UINT);
         HRESULT get_viewport(UINT*, UINT*);
+        HRESULT get_software_vertex_processing(BOOL*);
 
         std::string error_text(HRESULT);
         bool get_caps(Caps&);
+        bool check_vtf_format(DWORD fmt);
     }
 
     // ---- 公共 API(运行时按后端分发, 每处一行) ----
@@ -247,6 +254,9 @@ namespace d3d
     { if (version() == V9) impl9::release(com); else impl8::release(com); }
     inline HRESULT read_texture(void* tex, std::vector<BYTE>& dest, UINT& width, UINT& height)
     { return version() == V9 ? impl9::read_texture(tex, dest, width, height) : impl8::read_texture(tex, dest, width, height); }
+    // 浮点读回(RGBA float 序列, 供 gpart 调试日志用; D3D8 桩)
+    inline HRESULT read_texture_float(void* tex, std::vector<float>& dest, UINT& width, UINT& height)
+    { return version() == V9 ? impl9::read_texture_float(tex, dest, width, height) : impl8::read_texture_float(tex, dest, width, height); }
 
     // ---- vertex_* vertex-buffer pipeline (D3D9 only; D3D8 stubs return E_FAIL) ----
     inline HRESULT set_vertex_declaration(void* decl)
@@ -287,6 +297,8 @@ namespace d3d
     { return version() == V9 ? impl9::set_viewport(w, h) : impl8::set_viewport(w, h); }
     inline HRESULT get_viewport(UINT* w, UINT* h)
     { return version() == V9 ? impl9::get_viewport(w, h) : impl8::get_viewport(w, h); }
+    inline HRESULT get_software_vertex_processing(BOOL* swvp)
+    { return version() == V9 ? impl9::get_software_vertex_processing(swvp) : impl8::get_software_vertex_processing(swvp); }
 
     // 错误码 → 可读文本(D3D8 用 DXGetErrorDescription8A, D3D9 用内置错误表)。
     inline std::string error_text(HRESULT hr)
@@ -294,4 +306,7 @@ namespace d3d
 
     inline bool get_caps(Caps& out)
     { return version() == V9 ? impl9::get_caps(out) : impl8::get_caps(out); }
+
+    inline bool check_vtf_format(DWORD fmt)
+    { return version() == V9 ? impl9::check_vtf_format(fmt) : impl8::check_vtf_format(fmt); }
 }

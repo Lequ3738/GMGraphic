@@ -215,6 +215,7 @@ namespace d3d
         HRESULT get_fvf(DWORD*) { return E_FAIL; }
         HRESULT set_fvf(DWORD) { return E_FAIL; }
         HRESULT draw_primitive(DWORD, DWORD, DWORD) { return E_FAIL; }
+        HRESULT read_texture_float(void*, std::vector<float>&, UINT&, UINT&) { return E_FAIL; }
         HRESULT create_vertex_buffer(UINT, void**) { return E_FAIL; }
         HRESULT upload_vertex_buffer(void*, const void*, UINT) { return E_FAIL; }
         HRESULT set_stream_source(DWORD, void*, DWORD) { return E_FAIL; }
@@ -226,6 +227,7 @@ namespace d3d
         HRESULT get_render_target(DWORD, void**) { return E_FAIL; }
         HRESULT set_render_target(DWORD, void*) { return E_FAIL; }
         HRESULT clear_target(DWORD) { return E_FAIL; }
+        HRESULT get_software_vertex_processing(BOOL*) { return E_FAIL; }
         HRESULT set_viewport(UINT, UINT) { return E_FAIL; }
         HRESULT get_viewport(UINT*, UINT*) { return E_FAIL; }
 
@@ -237,6 +239,7 @@ namespace d3d
         }
 
         // ---- 设备能力 ----
+        bool check_vtf_format(DWORD) { return false; }   // D3D8 无顶点纹理采样
         bool get_caps(Caps& out)
         {
             D3DCAPS8 caps{};

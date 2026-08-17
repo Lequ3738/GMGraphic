@@ -94,7 +94,7 @@ exp_real gpart_type_life(double type, double min, double max);
 exp_real gpart_type_size(double type, double min, double max);
 exp_real gpart_type_speed(double type, double min, double max);
 exp_real gpart_type_direction(double type, double min, double max);
-exp_real gpart_type_gravity(double type, double dir, double force);
+exp_real gpart_type_gravity(double type, double force, double dir);
 exp_real gpart_type_drag(double type, double coeff);
 exp_real gpart_type_colour1(double type, double c1);
 exp_real gpart_type_colour2(double type, double c1, double c2);
