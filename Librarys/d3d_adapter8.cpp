@@ -145,6 +145,8 @@ namespace d3d
         { return dev()->SetTexture(stage, (IDirect3DBaseTexture8*)tex); }
         HRESULT get_texture(DWORD stage, void** tex)
         { return dev()->GetTexture(stage, (IDirect3DBaseTexture8**)tex); }
+        HRESULT upload_texture_rect(void*, UINT, UINT, UINT, UINT, DWORD, const void*, UINT)
+        { return E_FAIL; }
         HRESULT create_texture(UINT w, UINT h, UINT levels, DWORD usage, DWORD fmt, DWORD pool, void** out)
         {
             IDirect3DTexture8* tex = nullptr;

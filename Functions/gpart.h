@@ -59,8 +59,11 @@ constexpr int GP_GRID = 256;              // state texture grid size (256x256 = 
 constexpr int GP_MAX_CAPACITY = 65536;    // hard cap
 constexpr int GP_MAX_BATCHES = 16;        // spawn batches per evolution pass run
 constexpr int GP_TYPE_TEX_W = 256;        // type table texture width (max 256 types)
-constexpr int GP_TYPE_TEX_H = 9;          // float4 texels per type (0..8)
+constexpr int GP_TYPE_TEX_H = 10;         // float4 texels per type (0..8 params, 9 = atlas rect)
 constexpr int GP_MAX_FRAMES = 32;         // max sprite frames resolved per type
+constexpr int GP_ATLAS_SIZE = 1024;       // particle atlas texture size (px)
+constexpr int GP_ATLAS_TILE = 64;         // built-in shape tile size (px, 16 per row)
+constexpr int GP_RECT_TEX_FRAMES = 32;    // rect table rows per type (max sprite frames)
 
 // ---- exports: system (9) ----
 exp_real gpart_system_create(double capacity);

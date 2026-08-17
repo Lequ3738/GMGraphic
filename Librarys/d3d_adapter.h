@@ -76,6 +76,7 @@ namespace d3d
         HRESULT get_texture(DWORD, void**);
         HRESULT create_texture(UINT, UINT, UINT, DWORD, DWORD, DWORD, void**);
         HRESULT upload_texture(void*, UINT, UINT, DWORD, const void*, UINT);
+        HRESULT upload_texture_rect(void*, UINT, UINT, UINT, UINT, DWORD, const void*, UINT);
         void    release(void*);
         HRESULT read_texture(void*, std::vector<BYTE>&, UINT&, UINT&);
 
@@ -146,6 +147,7 @@ namespace d3d
         HRESULT get_texture(DWORD, void**);
         HRESULT create_texture(UINT, UINT, UINT, DWORD, DWORD, DWORD, void**);
         HRESULT upload_texture(void*, UINT, UINT, DWORD, const void*, UINT);
+        HRESULT upload_texture_rect(void*, UINT, UINT, UINT, UINT, DWORD, const void*, UINT);
         void    release(void*);
         HRESULT read_texture(void*, std::vector<BYTE>&, UINT&, UINT&);
 
@@ -239,6 +241,8 @@ namespace d3d
     { return version() == V9 ? impl9::create_texture(w, h, levels, usage, fmt, pool, out) : impl8::create_texture(w, h, levels, usage, fmt, pool, out); }
     inline HRESULT upload_texture(void* tex, UINT w, UINT h, DWORD fmt, const void* px, UINT pitch)
     { return version() == V9 ? impl9::upload_texture(tex, w, h, fmt, px, pitch) : impl8::upload_texture(tex, w, h, fmt, px, pitch); }
+    inline HRESULT upload_texture_rect(void* tex, UINT x, UINT y, UINT w, UINT h, DWORD fmt, const void* px, UINT pitch)
+    { return version() == V9 ? impl9::upload_texture_rect(tex, x, y, w, h, fmt, px, pitch) : impl8::upload_texture_rect(tex, x, y, w, h, fmt, px, pitch); }
     inline void release(void* com)
     { if (version() == V9) impl9::release(com); else impl8::release(com); }
     inline HRESULT read_texture(void* tex, std::vector<BYTE>& dest, UINT& width, UINT& height)

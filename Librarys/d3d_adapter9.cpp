@@ -444,6 +444,23 @@ namespace d3d
             surf->Release();
             return hr;
         }
+        // 图集子矩形上传: dst rect 由调用方指定, src 取整张源图。
+        HRESULT upload_texture_rect(void* tex_, UINT x, UINT y, UINT w, UINT h,
+                                    DWORD fmt, const void* px, UINT pitch)
+        {
+            if (!load_d3dx9()) return E_FAIL;
+            IDirect3DTexture9* tex = (IDirect3DTexture9*)tex_;
+            IDirect3DSurface9* surf = nullptr;
+            HRESULT hr = tex->GetSurfaceLevel(0, &surf);
+            if (FAILED(hr)) return hr;
+            RECT src = { 0, 0, (LONG)w, (LONG)h };
+            RECT dst = { (LONG)x, (LONG)y, (LONG)(x + w), (LONG)(y + h) };
+            hr = s_load_mem(surf, nullptr, &dst, px, (D3DFORMAT)fmt, pitch,
+                            nullptr, &src, D3DX_FILTER_NONE, 0);
+            if (SUCCEEDED(hr)) tex->AddDirtyRect(&dst);
+            surf->Release();
+            return hr;
+        }
         void release(void* com)
         { if (com) ((IUnknown*)com)->Release(); }
         HRESULT read_texture(void* tex_, std::vector<BYTE>& dest, UINT& width, UINT& height)
