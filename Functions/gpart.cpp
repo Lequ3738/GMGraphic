@@ -250,16 +250,25 @@ static const char* EVO_PS_HLSL =
     "static const float TWO_PI = 6.283185307179586;\n"
     "static const float DEG2RAD = 0.017453292519943295;\n"
     "static const float GRID = 256.0;\n"
-    "float h1(float a) { return frac(43758.5453 * frac(a * 0.1031)); }\n"
+
+    "float h1(float a) {\n"
+    "  // 高熵 1D hash: 二次项打破 frac(a*k) 的线性周期(否则相邻 id 方向相关 → 射线)\n"
+    "  a = frac(a * 0.1031);\n"
+    "  a = frac(a * (a + 19.19));\n"
+    "  a = frac(a * (a + 33.33));\n"
+    "  return frac(a * 43758.5453);\n"
+    "}\n"
     "float3 h3(float a) {\n"
     "  float3 r;\n"
     "  r.x = h1(a); r.y = h1(a + 57.13); r.z = h1(a + 161.7);\n"
     "  return r;\n"
     "}\n"
+
     "float3 hsv2rgb(float3 c) {\n"
     "  float3 p = abs(frac(c.x + float3(0.0, 2.0/3.0, 1.0/3.0)) * 6.0 - 3.0);\n"
     "  return c.z * lerp(float3(1,1,1), clamp(p - 1.0, 0.0, 1.0), c.y);\n"
     "}\n"
+
     "struct PS_OUT { float4 c0 : COLOR0; float4 c1 : COLOR1; float4 c2 : COLOR2; };\n"
     "PS_OUT main(float4 vpos : VPOS) {\n"
     "  PS_OUT o;\n"
@@ -268,6 +277,7 @@ static const char* EVO_PS_HLSL =
     "  float4 prev = tex2D(sPos, uv);\n"
     "  float4 st = tex2D(sLife, uv);\n"
     "  float4 ov = tex2D(sOvr, uv);\n"
+
     "  float4 b0 = 0; float4 b1 = 0; float4 b2 = 0; float4 b3 = 0;\n"
     "  float seeded = 0.0;\n"
     "  for (int b = 0; b < 16; ++b) {\n"
@@ -285,6 +295,7 @@ static const char* EVO_PS_HLSL =
     "  float3 base;\n"
     "  float has_ovr;\n"
     "  float frame;\n"
+
     "  if (seeded > 0.5 && dead < 0.5) {\n"
     "    type = b0.z;\n"
     "    float seed = b0.w;\n"
@@ -323,6 +334,7 @@ static const char* EVO_PS_HLSL =
     "      } else { p = lerp(b1.xy, b1.zw, float2(u, u)); }\n"
     "    }\n"
     "    pos = p;\n"
+
     "    float4 T0 = tex2D(sType, float2((type + 0.5) / 256.0, 0.5 / 10.0));\n"
     "    float4 T1 = tex2D(sType, float2((type + 0.5) / 256.0, 1.5 / 10.0));\n"
     "    float4 T3 = tex2D(sType, float2((type + 0.5) / 256.0, 3.5 / 10.0));\n"
@@ -334,6 +346,7 @@ static const char* EVO_PS_HLSL =
     "    vel = spd * float2(cos(rad), -sin(rad));\n"
     "    age = 0.0;\n"
     "    life = lerp(T0.x, T0.y, rnd.x);\n"
+
     "    if (b3.w > 0.5) { base = b3.rgb; }\n"
     "    else if (T3.z > 3.5) {\n"
     "      if (T3.z < 4.5) { base = lerp(T4.rgb, float3(T4.w, T5.x, T5.y), rnd.z); }\n"
@@ -398,7 +411,14 @@ static const char* RND_VS_HLSL =
     "  float2 tinfo : TEXCOORD1;  // type, frame\n"
     "  float4 col : COLOR0;       // rgb = 颜色, a = alpha\n"
     "};\n"
-    "float h1(float a) { return frac(43758.5453 * frac(a * 0.1031)); }\n"
+
+    "float h1(float a) {\n"
+    "  a = frac(a * 0.1031);\n"
+    "  a = frac(a * (a + 19.19));\n"
+    "  a = frac(a * (a + 33.33));\n"
+    "  return frac(a * 43758.5453);\n"
+    "}\n"
+
     "VSOUT main(VSIN v) {\n"
     "  VSOUT o;\n"
     "  float id = v.c.z;\n"
@@ -432,6 +452,7 @@ static const char* RND_VS_HLSL =
     "  o.pos = dead > 0.5 ? float4(2.0, 2.0, 0.5, 1.0) : clip;   // 死亡: 全部角点同点 → 零面积三角形被剔除\n"
     "  o.cuv = v.c.xy;\n"
     "  o.tinfo = float2(type, frame);\n"
+
     "  float t = life > 0.0001 ? clamp(age / life, 0.0, 1.0) : 1.0;\n"
     "  float3 col;\n"
     "  float mode = T3.z;\n"
