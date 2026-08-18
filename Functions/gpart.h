@@ -57,13 +57,16 @@ enum gpart_alpha_mode : int
 // ---- internal constants ----
 constexpr int GP_GRID = 256;              // state texture grid size (256x256 = 65536 slots max)
 constexpr int GP_MAX_CAPACITY = 65536;    // hard cap
-constexpr int GP_MAX_BATCHES = 48;        // spawn batches per evolution pass run(ps_3_0 常量上限 224: 8 + 48*4 = 200)
+constexpr int GP_MAX_BATCHES = 16;        // spawn batches per evolution pass chunk(ps_3_0 指令预算限制循环展开, 实测仅 ~24 批; 16 保守, 多块演化兜底)
 constexpr int GP_TYPE_TEX_W = 256;        // type table texture width (max 256 types)
 constexpr int GP_TYPE_TEX_H = 13;         // float4 texels per type (0..9 参数, 10/11 = step/death, 12 = 渲染尺寸)
 constexpr int GP_MAX_FRAMES = 32;         // max sprite frames resolved per type
 constexpr int GP_ATLAS_SIZE = 1024;       // particle atlas texture size (px)
 constexpr int GP_ATLAS_TILE = 64;         // built-in shape tile size (px, 16 per row)
 constexpr int GP_RECT_TEX_FRAMES = 32;    // rect table rows per type (max sprite frames)
+
+// ---- exports: gpu init (1) ----
+exp_real gpart_gpu_init();              // 立即完成 GPU 初始化(懒初始化之外的手动预热), 成功 1 / 失败 -1
 
 // ---- exports: system (9) ----
 exp_real gpart_system_create(double capacity);
