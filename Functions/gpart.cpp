@@ -1,11 +1,9 @@
 #include "gpart.h"
 #include "vertex.h"
 #include "../Librarys/math_s.h"
-#include <cstdint>
 #include <cstring>
 #include <cmath>
 #include <algorithm>
-#include <map>
 
 static const float GP_PI = 3.14159265358979323846f;
 // GP_FMT_16F / GP_FMT_32F 是 D3D9 专属格式常量(113/116), d3d8.h 里没有; gpart 仅 D3D9 运行。
@@ -41,13 +39,33 @@ static const DWORD GP_VTS0 = 257;      // D3DVERTEXTEXTURESAMPLER0
 // ---- internal shader constant registers ----
 static const int EVO_C_GLOBAL = 0;    // (now, dt, invGrid, capacity)
 static const int EVO_C_BATCHN = 4;    // (.x = batch count)
-static const int EVO_C_BATCHES = 8;   // 16 batches * 4 float4
+static const int EVO_C_MODE = 5;      // (.x = 1 → 仅出生不老化)
+static const int EVO_C_BATCHES = 8;   // 48 batches * 4 float4(ps_3_0 常量上限 224)
 static const int RND_C_WVP = 0;       // float4x4 (c0..c3)
 static const int RND_C_SYS = 4;       // (sys_x, sys_y, invGrid, capacity)
 static const int RND_C_BLEND = 5;     // (当前遍混合模式: 0=普通, 1=加法)
 
-static const int GP_TYPE_ROWS = GP_TYPE_TEX_H;   // 类型表纹理行数(与 gpart.h 一致, 10)
+static const int GP_TYPE_ROWS = GP_TYPE_TEX_H;   // 类型表纹理行数(与 gpart.h 一致)
 static const int GP_QUAD_VERTS = 4;
+
+// The GPU table is still a compact float4 matrix. Keep its physical layout in
+// one named enum so the CPU-side code does not depend on unexplained row ids.
+enum class GTypeRow : size_t
+{
+    LifeSize = 0,
+    SpeedDirection = 1,
+    GravityDragBlend = 2,
+    ScaleModes = 3,
+    ColorA = 4,
+    ColorB = 5,
+    ColorCAndAlpha = 6,
+    Orientation = 7,
+    Animation = 8,
+    RandomFrame = 9,
+    StepDeath = 10,
+    FeatureFlags = 11,
+    RenderSize = 12,
+};
 
 // ============================================================================
 // 确定性 hash(CPU/GPU 同公式, 无超越函数): frac(43758.5453 * frac(x * 0.1031))
@@ -96,10 +114,100 @@ struct GType
 {
     struct FRect { float u0, v0, u1, v1; };
 
-    float t[GP_TYPE_TEX_H][4] = {};   // 与类型表纹理行一一对应(行 9 = random_frame 标志)
+    float t[GP_TYPE_TEX_H][4] = {};   // 与 GPU 类型表一一对应；字段名见 GTypeRow
     std::vector<FRect> frame_rect;    // 精灵各帧在粒子图集中的矩形(CPU 侧记录)
     int shape = PT_SHAPE_PIXEL;       // 无精灵时的形状
     bool animat = false, stretch = false, random_frame = false;
+
+    float* row(GTypeRow r) { return t[static_cast<size_t>(r)]; }
+    const float* row(GTypeRow r) const { return t[static_cast<size_t>(r)]; }
+    float& field(GTypeRow r, size_t column) { return row(r)[column]; }
+    const float& field(GTypeRow r, size_t column) const { return row(r)[column]; }
+
+    float& life_min() { return field(GTypeRow::LifeSize, 0); }
+    float& life_max() { return field(GTypeRow::LifeSize, 1); }
+    float& size_min() { return field(GTypeRow::LifeSize, 2); }
+    float& size_max() { return field(GTypeRow::LifeSize, 3); }
+    const float& life_min() const { return field(GTypeRow::LifeSize, 0); }
+    const float& life_max() const { return field(GTypeRow::LifeSize, 1); }
+    const float& size_min() const { return field(GTypeRow::LifeSize, 2); }
+    const float& size_max() const { return field(GTypeRow::LifeSize, 3); }
+
+    float& speed_min() { return field(GTypeRow::SpeedDirection, 0); }
+    float& speed_max() { return field(GTypeRow::SpeedDirection, 1); }
+    float& direction_min() { return field(GTypeRow::SpeedDirection, 2); }
+    float& direction_max() { return field(GTypeRow::SpeedDirection, 3); }
+
+    float& gravity_direction() { return field(GTypeRow::GravityDragBlend, 0); }
+    float& gravity_amount() { return field(GTypeRow::GravityDragBlend, 1); }
+    float& drag() { return field(GTypeRow::GravityDragBlend, 2); }
+    float& additive() { return field(GTypeRow::GravityDragBlend, 3); }
+    const float& gravity_direction() const { return field(GTypeRow::GravityDragBlend, 0); }
+    const float& gravity_amount() const { return field(GTypeRow::GravityDragBlend, 1); }
+    const float& drag() const { return field(GTypeRow::GravityDragBlend, 2); }
+    const float& additive() const { return field(GTypeRow::GravityDragBlend, 3); }
+
+    float& scale_x() { return field(GTypeRow::ScaleModes, 0); }
+    float& scale_y() { return field(GTypeRow::ScaleModes, 1); }
+    float& colour_mode() { return field(GTypeRow::ScaleModes, 2); }
+    float& alpha_mode() { return field(GTypeRow::ScaleModes, 3); }
+    const float& scale_x() const { return field(GTypeRow::ScaleModes, 0); }
+    const float& scale_y() const { return field(GTypeRow::ScaleModes, 1); }
+    const float& colour_mode() const { return field(GTypeRow::ScaleModes, 2); }
+    const float& alpha_mode() const { return field(GTypeRow::ScaleModes, 3); }
+
+    float& relative_angle() { return field(GTypeRow::Animation, 0); }
+    float& frame_count() { return field(GTypeRow::Animation, 1); }
+    float& animation_enabled() { return field(GTypeRow::Animation, 2); }
+    float& stretch_animation() { return field(GTypeRow::Animation, 3); }
+    float& random_frame_flag() { return field(GTypeRow::RandomFrame, 0); }
+
+    float& step_number() { return field(GTypeRow::StepDeath, 0); }
+    float& step_type_id() { return field(GTypeRow::StepDeath, 1); }
+    float& death_number() { return field(GTypeRow::StepDeath, 2); }
+    float& death_type_id() { return field(GTypeRow::StepDeath, 3); }
+    const float& step_number() const { return field(GTypeRow::StepDeath, 0); }
+    const float& step_type_id() const { return field(GTypeRow::StepDeath, 1); }
+    const float& death_number() const { return field(GTypeRow::StepDeath, 2); }
+    const float& death_type_id() const { return field(GTypeRow::StepDeath, 3); }
+    bool has_step() const { return field(GTypeRow::FeatureFlags, 0) > 0.5f; }
+    bool has_death() const { return field(GTypeRow::FeatureFlags, 1) > 0.5f; }
+
+    float& pixel_scale() { return field(GTypeRow::RenderSize, 0); }
+    float& size_increment() { return field(GTypeRow::RenderSize, 1); }
+    float& size_wiggle() { return field(GTypeRow::RenderSize, 2); }
+
+    void set_defaults()
+    {
+        life_min() = life_max() = 100;
+        size_min() = 0;
+        size_max() = 1;
+        speed_min() = speed_max() = 0;
+        direction_min() = direction_max() = 0;
+        gravity_direction() = 270;
+        gravity_amount() = drag() = additive() = 0;
+        scale_x() = scale_y() = 1;
+        colour_mode() = GP_COLOUR_ONE;
+        alpha_mode() = GP_ALPHA_ONE;
+        for (int c = 0; c < 4; ++c)
+        {
+            row(GTypeRow::ColorA)[c] = 1;
+            row(GTypeRow::ColorB)[c] = 1;
+            row(GTypeRow::ColorCAndAlpha)[c] = 1;
+        }
+        relative_angle() = 0;
+        frame_count() = animation_enabled() = stretch_animation() = 0;
+        random_frame_flag() = 0;
+        step_number() = step_type_id() = death_number() = death_type_id() = 0;
+        field(GTypeRow::FeatureFlags, 0) = field(GTypeRow::FeatureFlags, 1) = 0;
+        pixel_scale() = 32;
+        size_increment() = size_wiggle() = 0;
+    }
+
+    float step_num() const { return step_number(); }
+    float step_type() const { return step_type_id(); }
+    float death_num() const { return death_number(); }
+    float death_type() const { return death_type_id(); }
 
     // 形状矩形(内置形状烘焙在固定网格): (u0,v0,u1,v1)
     FRect shape_rect() const
@@ -136,6 +244,7 @@ struct GType
 
 static std::unordered_map<int, GType> g_types;
 static int g_type_counter = 1;
+static bool g_any_step_death = false;   // 有类型配置了 step/death → update 事件检测开关
 
 // ============================================================================
 // 发射批次 / 发射器 / 系统
@@ -203,7 +312,7 @@ static int g_system_counter = 1;
 // ============================================================================
 // GPU 资源(全局, 惰性创建)
 // ============================================================================
-static void* g_type_tex = nullptr;         // 类型表纹理 256x10 A16B16G16R16F
+static void* g_type_tex = nullptr;         // 类型表纹理 256x13 A16B16G16R16F
 static void* g_atlas_tex = nullptr;        // 粒子图集 1024x1024 A8R8G8B8(形状+精灵帧)
 static int g_atlas_x = 0, g_atlas_y = 0, g_atlas_row_h = 0;   // 图集 shelf 分配器
 static void* g_quad_vb = nullptr;          // 全屏四边形(剪辑空间, 4 顶点)
@@ -246,18 +355,21 @@ static const char* EVO_PS_HLSL =
     "sampler sType : register(s3);\n"
     "float4 uGlobal : register(c0);\n"
     "float4 uBatchCount : register(c4);\n"
+    "float4 uMode : register(c5);\n"      // .x = 1 → 仅出生不老化(多块演化用)
     "float4 uBatches[64] : register(c8);\n"
+
     "static const float TWO_PI = 6.283185307179586;\n"
     "static const float DEG2RAD = 0.017453292519943295;\n"
     "static const float GRID = 256.0;\n"
 
+    // 高熵 1D hash: 二次项打破 frac(a*k) 的线性周期(否则相邻 id 方向相关 → 射线)
     "float h1(float a) {\n"
-    "  // 高熵 1D hash: 二次项打破 frac(a*k) 的线性周期(否则相邻 id 方向相关 → 射线)\n"
     "  a = frac(a * 0.1031);\n"
     "  a = frac(a * (a + 19.19));\n"
     "  a = frac(a * (a + 33.33));\n"
     "  return frac(a * 43758.5453);\n"
     "}\n"
+
     "float3 h3(float a) {\n"
     "  float3 r;\n"
     "  r.x = h1(a); r.y = h1(a + 57.13); r.z = h1(a + 161.7);\n"
@@ -270,6 +382,7 @@ static const char* EVO_PS_HLSL =
     "}\n"
 
     "struct PS_OUT { float4 c0 : COLOR0; float4 c1 : COLOR1; float4 c2 : COLOR2; };\n"
+
     "PS_OUT main(float4 vpos : VPOS) {\n"
     "  PS_OUT o;\n"
     "  float id = vpos.x + vpos.y * GRID;\n"
@@ -280,7 +393,7 @@ static const char* EVO_PS_HLSL =
 
     "  float4 b0 = 0; float4 b1 = 0; float4 b2 = 0; float4 b3 = 0;\n"
     "  float seeded = 0.0;\n"
-    "  for (int b = 0; b < 16; ++b) {\n"
+    "  for (int b = 0; b < 48; ++b) {\n"
     "    if (b >= uBatchCount.x) break;\n"
     "    float4 bb0 = uBatches[b * 4 + 0];\n"
     "    float hit = (id >= bb0.x && id < bb0.x + bb0.y) ? 1.0 : 0.0;\n"
@@ -289,6 +402,7 @@ static const char* EVO_PS_HLSL =
     "      b0 = bb0; b1 = uBatches[b*4+1]; b2 = uBatches[b*4+2]; b3 = uBatches[b*4+3];\n"
     "    }\n"
     "  }\n"
+
     "  float dead = (id >= uGlobal.w) ? 1.0 : 0.0;\n"
     "  float age, life, type;\n"
     "  float2 pos, vel;\n"
@@ -301,25 +415,31 @@ static const char* EVO_PS_HLSL =
     "    float seed = b0.w;\n"
     "    float3 rnd = h3(id + seed * 17.0);\n"
     "    float2 p;\n"
-    "    if (b2.x < -0.5) {\n"
+
+    "    if (b2.x < -1.5) {\n"
+    "      // 源槽位生成(step/death): 位置 = 源粒子当前位置(读上一帧状态)\n"
+    "      float src = floor(b2.z + 0.5);\n"
+    "      float2 suv = (float2(fmod(src, 256.0), floor(src / 256.0)) + 0.5) * uGlobal.z;\n"
+    "      p = tex2D(sPos, suv).xy;\n"
+    "    } else if (b2.x < -0.5) {\n"
     "      p = b2.zw;\n"
     "    } else {\n"
     "      float shape = floor(b2.x + 0.5);\n"
     "      float distr = b2.y;\n"
     "      float u = rnd.x, v = rnd.y;\n"
-    "      if (distr > 1.5) {\n"
-    "        // ps_distr_invgaussian: 边缘密集(均匀盘半径)\n"
+
+    "      if (distr > 1.5) {\n"  // ps_distr_invgaussian: 边缘密集(均匀盘半径)
     "        float r = sqrt(v);\n"
     "        float a = TWO_PI * u;\n"
     "        u = clamp(0.5 + 0.5 * r * cos(a), 0.0, 1.0);\n"
     "        v = clamp(0.5 + 0.5 * r * sin(a), 0.0, 1.0);\n"
-    "      } else if (distr > 0.5) {\n"
-    "        // ps_distr_gaussian: 中心密集(Box-Muller)\n"
+    "      } else if (distr > 0.5) {\n"  // ps_distr_gaussian: 中心密集(Box-Muller)
     "        float r = sqrt(-2.0 * log(max(1.0 - u, 0.0001)));\n"
     "        float a = TWO_PI * v;\n"
     "        u = clamp(0.5 + 0.5 * r * cos(a), 0.0, 1.0);\n"
     "        v = clamp(0.5 + 0.5 * r * sin(a), 0.0, 1.0);\n"
     "      }\n"
+
     "      if (shape < 0.5) { p = lerp(b1.xy, b1.zw, float2(u, v)); }\n"
     "      else if (shape < 1.5) {\n"
     "        float ang = TWO_PI * u;\n"
@@ -335,11 +455,11 @@ static const char* EVO_PS_HLSL =
     "    }\n"
     "    pos = p;\n"
 
-    "    float4 T0 = tex2D(sType, float2((type + 0.5) / 256.0, 0.5 / 10.0));\n"
-    "    float4 T1 = tex2D(sType, float2((type + 0.5) / 256.0, 1.5 / 10.0));\n"
-    "    float4 T3 = tex2D(sType, float2((type + 0.5) / 256.0, 3.5 / 10.0));\n"
-    "    float4 T4 = tex2D(sType, float2((type + 0.5) / 256.0, 4.5 / 10.0));\n"
-    "    float4 T5 = tex2D(sType, float2((type + 0.5) / 256.0, 5.5 / 10.0));\n"
+    "    float4 T0 = tex2D(sType, float2((type + 0.5) / 256.0, 0.5 / 13.0));\n"
+    "    float4 T1 = tex2D(sType, float2((type + 0.5) / 256.0, 1.5 / 13.0));\n"
+    "    float4 T3 = tex2D(sType, float2((type + 0.5) / 256.0, 3.5 / 13.0));\n"
+    "    float4 T4 = tex2D(sType, float2((type + 0.5) / 256.0, 4.5 / 13.0));\n"
+    "    float4 T5 = tex2D(sType, float2((type + 0.5) / 256.0, 5.5 / 13.0));\n"
     "    float spd = lerp(T1.x, T1.y, rnd.y);\n"
     "    float dir = lerp(T1.z, T1.w, rnd.z);\n"
     "    float rad = dir * DEG2RAD;\n"
@@ -357,8 +477,9 @@ static const char* EVO_PS_HLSL =
     "      }\n"
     "    } else { base = T4.rgb; }\n"
     "    has_ovr = b3.w;\n"
-    "    float4 T8 = tex2D(sType, float2((type + 0.5) / 256.0, 8.5 / 10.0));\n"
-    "    float4 T9 = tex2D(sType, float2((type + 0.5) / 256.0, 9.5 / 10.0));\n"
+
+    "    float4 T8 = tex2D(sType, float2((type + 0.5) / 256.0, 8.5 / 13.0));\n"
+    "    float4 T9 = tex2D(sType, float2((type + 0.5) / 256.0, 9.5 / 13.0));\n"
     "    float nf = T8.y;\n"
     "    frame = (T9.x > 0.5 && nf > 1.0) ? floor(h1(id + seed * 17.0 + 9.0) * nf) : 0.0;\n"
     "  } else if (dead < 0.5) {\n"
@@ -369,15 +490,15 @@ static const char* EVO_PS_HLSL =
     "    type = st.z;\n"
     "    base = ov.rgb;\n"
     "    has_ovr = ov.w;\n"
-    "    float dt = uGlobal.y;\n"
-    "    float4 T2 = tex2D(sType, float2((type + 0.5) / 256.0, 2.5 / 10.0));\n"
+    "    float dt = uMode.x > 0.5 ? 0.0 : uGlobal.y;   // 仅出生 pass: 不推进物理/老化\n"
+    "    float4 T2 = tex2D(sType, float2((type + 0.5) / 256.0, 2.5 / 13.0));\n"
     "    float g = T2.y;\n"
     "    float ga = T2.x * DEG2RAD;\n"
     "    vel += g * dt * float2(cos(ga), -sin(ga));\n"
     "    vel *= max(1.0 - clamp(T2.z, 0.0, 1.0) * dt, 0.0);\n"
     "    pos += vel * dt;\n"
     "    age += dt;\n"
-    "    float4 T8 = tex2D(sType, float2((type + 0.5) / 256.0, 8.5 / 10.0));\n"
+    "    float4 T8 = tex2D(sType, float2((type + 0.5) / 256.0, 8.5 / 13.0));\n"
     "    float nf = T8.y;\n"
     "    frame = st.w;\n"
     "    if (T8.z > 0.5 && nf > 1.0)\n"
@@ -395,8 +516,6 @@ static const char* EVO_PS_HLSL =
     "}\n";
 
 static const char* RND_VS_HLSL =
-    // 四边形渲染(对齐 GMParty/GMS2 架构): 每粒子 6 顶点(2 三角形),
-    // 角点位置/旋转在 VS 里算, UV 与颜色插值给 PS — 完全不依赖点精灵光栅化。
     "sampler sOvr : register(s0);\n"
     "sampler sPos : register(s1);\n"
     "sampler sLife : register(s2);\n"
@@ -404,12 +523,12 @@ static const char* RND_VS_HLSL =
     "float4x4 uWVP : register(c0);\n"
     "float4 uSys : register(c4);\n"
     "float4 uBlend : register(c5);\n"
-    "struct VSIN { float3 c : TEXCOORD0; };   // c.xy = 角点{0,1}, c.z = 粒子 id\n"
+    "struct VSIN { float3 c : TEXCOORD0; };\n"   // c.xy = 角点{0,1}, c.z = 粒子 id
     "struct VSOUT {\n"
     "  float4 pos : POSITION;\n"
-    "  float2 cuv : TEXCOORD0;    // 角点 uv(插值 = 粒子内 0..1)\n"
-    "  float2 tinfo : TEXCOORD1;  // type, frame\n"
-    "  float4 col : COLOR0;       // rgb = 颜色, a = alpha\n"
+    "  float2 cuv : TEXCOORD0;\n"    // 角点 uv(插值 = 粒子内 0..1)
+    "  float2 tinfo : TEXCOORD1;\n"  // type, frame
+    "  float4 col : COLOR0;\n"       // rgb = 颜色, a = alpha
     "};\n"
 
     "float h1(float a) {\n"
@@ -430,17 +549,20 @@ static const char* RND_VS_HLSL =
     "  float frame = st.w;\n"
     "  float dead = (age >= life) ? 1.0 : 0.0;\n"
     "  float2 tuv = float2((type + 0.5) / 256.0, 0.0);\n"
-    "  float4 T0 = tex2Dlod(sType, float4(tuv.x, 0.5 / 10.0, 0, 0));\n"
-    "  float4 T2 = tex2Dlod(sType, float4(tuv.x, 2.5 / 10.0, 0, 0));\n"
-    "  float4 T3 = tex2Dlod(sType, float4(tuv.x, 3.5 / 10.0, 0, 0));\n"
-    "  float4 T4 = tex2Dlod(sType, float4(tuv.x, 4.5 / 10.0, 0, 0));\n"
-    "  float4 T5 = tex2Dlod(sType, float4(tuv.x, 5.5 / 10.0, 0, 0));\n"
-    "  float4 T6 = tex2Dlod(sType, float4(tuv.x, 6.5 / 10.0, 0, 0));\n"
-    "  float4 T7 = tex2Dlod(sType, float4(tuv.x, 7.5 / 10.0, 0, 0));\n"
-    "  float4 T8 = tex2Dlod(sType, float4(tuv.x, 8.5 / 10.0, 0, 0));\n"
+    "  float4 T0 = tex2Dlod(sType, float4(tuv.x, 0.5 / 13.0, 0, 0));\n"
+    "  float4 T2 = tex2Dlod(sType, float4(tuv.x, 2.5 / 13.0, 0, 0));\n"
+    "  float4 T3 = tex2Dlod(sType, float4(tuv.x, 3.5 / 13.0, 0, 0));\n"
+    "  float4 T4 = tex2Dlod(sType, float4(tuv.x, 4.5 / 13.0, 0, 0));\n"
+    "  float4 T5 = tex2Dlod(sType, float4(tuv.x, 5.5 / 13.0, 0, 0));\n"
+    "  float4 T6 = tex2Dlod(sType, float4(tuv.x, 6.5 / 13.0, 0, 0));\n"
+    "  float4 T7 = tex2Dlod(sType, float4(tuv.x, 7.5 / 13.0, 0, 0));\n"
+    "  float4 T8 = tex2Dlod(sType, float4(tuv.x, 8.5 / 13.0, 0, 0));\n"
     "  float4 ov = tex2Dlod(sOvr, float4(uv, 0, 0));\n"
-    "  float size = lerp(T0.z, T0.w, h1(id + 3.0));\n"
-    "  float psize = size * T3.x;\n"
+    "  float4 T12 = tex2Dlod(sType, float4(tuv.x, 12.5 / 13.0, 0, 0));\n"
+    "  // GM8 尺寸语义: size = 随机[min,max] + incr*age, 摆动 ±wiggle;\n"
+    "  // 屏幕像素 = size * scale * 形状像素(内置形状 32px, 精灵用精灵宽)\n"
+    "  float size = lerp(T0.z, T0.w, h1(id + 3.0)) + T12.y * age + (h1(id + 9.0) * 2.0 - 1.0) * T12.z;\n"
+    "  float psize = size * T3.x * T12.x;\n"
     "  float ang = lerp(T7.x, T7.y, h1(id + 5.0)) + T7.z * age;\n"
     "  ang += (h1(id + floor(age) * 7.31) - 0.5) * 2.0 * T7.w;\n"
     "  if (T8.x > 0.5) ang += atan2(-pl.w, pl.z) * 57.29577951308232;\n"
@@ -449,7 +571,7 @@ static const char* RND_VS_HLSL =
     "  float2 corner = (v.c.xy * 2.0 - 1.0) * psize * 0.5;\n"
     "  float2 off = float2(ca * corner.x - sa * corner.y, sa * corner.x + ca * corner.y);\n"
     "  float4 clip = mul(uWVP, float4(pl.xy + uSys.xy + off, 0, 1));\n"
-    "  o.pos = dead > 0.5 ? float4(2.0, 2.0, 0.5, 1.0) : clip;   // 死亡: 全部角点同点 → 零面积三角形被剔除\n"
+    "  o.pos = dead > 0.5 ? float4(2.0, 2.0, 0.5, 1.0) : clip;\n" // 全部角点同点，零面积三角形被剔除
     "  o.cuv = v.c.xy;\n"
     "  o.tinfo = float2(type, frame);\n"
 
@@ -460,13 +582,13 @@ static const char* RND_VS_HLSL =
     "  else if (mode < 1.5) col = T4.rgb;\n"
     "  else if (mode < 2.5) col = lerp(T4.rgb, float3(T4.w, T5.x, T5.y), t);\n"
     "  else col = t < 0.5 ? lerp(T4.rgb, float3(T4.w, T5.x, T5.y), t * 2.0)\n"
-    "                    : lerp(float3(T4.w, T5.x, T5.y), float3(T5.z, T5.w, T6.x), (t - 0.5) * 2.0);\n"
+    "    : lerp(float3(T4.w, T5.x, T5.y), float3(T5.z, T5.w, T6.x), (t - 0.5) * 2.0);\n"
     "  float a;\n"
     "  float am = T3.w;\n"
     "  if (am < 1.5) a = T6.y;\n"
     "  else if (am < 2.5) a = lerp(T6.y, T6.z, t);\n"
     "  else a = t < 0.5 ? lerp(T6.y, T6.z, t * 2.0) : lerp(T6.z, T6.w, (t - 0.5) * 2.0);\n"
-    "  if (abs(T2.w - uBlend.x) > 0.5) a = 0.0;   // 混合模式不匹配当前遍 → 零贡献\n"
+    "  if (abs(T2.w - uBlend.x) > 0.5) a = 0.0;\n"   // 混合模式不匹配当前遍 → 零贡献
     "  o.col = float4(col, a);\n"
     "  return o;\n"
     "}\n";
@@ -626,134 +748,7 @@ static void gen_shape_tex(int shape, BYTE* px, int size)
 // ============================================================================
 // GPU 资源初始化(惰性, 失败置 g_gpu_failed)
 // ============================================================================
-// 调试日志(C++ 侧): 写入 OutputDebugString + gpart_debug.log
-// ============================================================================
-static void gpart_log(const std::string& msg)
-{
-    OutputDebugStringA(("gpart: " + msg + "\n").c_str());
-    FILE* f = fopen("gpart_debug.log", "a");
-    if (f) { fputs((msg + "\n").c_str(), f); fclose(f); }
-}
-// ============================================================================
-// ============================================================================
-static void probe_point_size()
-{
-    try
-    {
-        dword s_vs = 0, s_ps = 0, s_fvf = 0, s_psen = 0, s_pssc = 0, s_pmin = 0, s_pmax = 0, s_psz = 0;
-        void* s_decl = nullptr, * s_rt = nullptr;
-        UINT s_vw = 0, s_vh = 0;
-        d3d::get_vertex_shader(&s_vs);
-        d3d::get_pixel_shader(&s_ps);
-        d3d::get_fvf(&s_fvf);
-        d3d::get_vertex_declaration(&s_decl);
-        d3d::get_render_target(0, &s_rt);
-        d3d::get_viewport(&s_vw, &s_vh);
-        d3d::get_render_state(D3DRS_POINTSPRITEENABLE, &s_psen);
-        d3d::get_render_state(D3DRS_POINTSCALEENABLE, &s_pssc);
-        d3d::get_render_state(D3DRS_POINTSIZE_MIN, &s_pmin);
-        d3d::get_render_state(D3DRS_POINTSIZE_MAX, &s_pmax);
-        d3d::get_render_state(D3DRS_POINTSIZE, &s_psz);
 
-        void* ptex = nullptr, * psurf = nullptr;
-        D3DCheck(d3d::create_texture(128, 128, 1, D3DUSAGE_RENDERTARGET, GP_FMT_16F,
-            D3DPOOL_DEFAULT, &ptex), 1);
-        D3DCheck(d3d::get_surface_level(ptex, 0, &psurf), 2);
-        D3DCheck(d3d::set_render_target(0, psurf), 3);
-        D3DCheck(d3d::set_viewport(128, 128), 4);
-        D3DCheck(d3d::clear_target(0), 5);
-        D3DCheck(d3d::set_render_state(D3DRS_ALPHABLENDENABLE, FALSE), 6);
-        D3DCheck(d3d::set_render_state(D3DRS_ZENABLE, FALSE), 7);
-        D3DCheck(d3d::set_render_state(D3DRS_POINTSPRITEENABLE, TRUE), 8);
-        D3DCheck(d3d::set_render_state(D3DRS_POINTSCALEENABLE, FALSE), 9);
-        float zmin = 0.0f, zmax = 256.0f;
-        D3DCheck(d3d::set_render_state(D3DRS_POINTSIZE_MIN, d3dvar(zmin)), 10);
-        D3DCheck(d3d::set_render_state(D3DRS_POINTSIZE_MAX, d3dvar(zmax)), 11);
-
-        std::vector<BYTE> code;
-        std::string err;
-        void* table = nullptr;
-        static const char* PVS =
-            "struct VSIN { float4 pos : POSITION; };\n"
-            "struct VSOUT { float4 pos : POSITION; float psize : PSIZE; };\n"
-            "VSOUT main(VSIN v) { VSOUT o; o.pos = v.pos; o.psize = 16; return o; }\n";
-        static const char* PPS =
-            "float4 main() : COLOR0 { return float4(1, 1, 1, 1); }\n";
-        D3DCheck(d3d::compile_hlsl(PVS, strlen(PVS), "main", "vs_3_0", code, &table, &err), 12);
-        if (table) d3d::release(table);
-        dword pvs = 0;
-        D3DCheck(d3d::create_vertex_shader(d3d::VERT_DEFAULT, code.data(), nullptr, 0, &pvs), 13);
-        code.clear();
-        D3DCheck(d3d::compile_hlsl(PPS, strlen(PPS), "main", "ps_3_0", code, &table, &err), 14);
-        if (table) d3d::release(table);
-        dword pps = 0;
-        D3DCheck(d3d::create_pixel_shader(code.data(), &pps), 15);
-
-        D3DCheck(d3d::set_vertex_declaration(g_quad_decl), 16);
-        D3DCheck(d3d::set_vertex_shader_handle(pvs), 17);
-        D3DCheck(d3d::set_pixel_shader(pps), 18);
-        // 两个点: 视口中心 + 左上角(位置依赖检测)
-        float pts[8] = { 0, 0, 0, 1,  -0.5f, -0.5f, 0, 1 };
-        void* pvb = nullptr;
-        D3DCheck(d3d::create_vertex_buffer(sizeof(pts), &pvb), 19);
-        D3DCheck(d3d::upload_vertex_buffer(pvb, pts, sizeof(pts)), 20);
-        D3DCheck(d3d::set_stream_source(0, pvb, 16), 21);
-        D3DCheck(d3d::draw_primitive(D3DPT_POINTLIST, 2, 0), 22);
-
-        std::vector<float> rb;
-        UINT rw = 0, rh = 0;
-        if (SUCCEEDED(d3d::read_texture_float(ptex, rb, rw, rh)) && rw == 128 && rh == 128)
-        {
-            auto bbox = [&](int cx, int cy) {
-                int x0 = 999, x1 = -1, y0 = 999, y1 = -1;
-                for (int y = cy - 26; y <= cy + 26; ++y)
-                    for (int x = cx - 26; x <= cx + 26; ++x)
-                    {
-                        if (x < 0 || y < 0 || x >= 128 || y >= 128) continue;
-                        if (rb[((size_t)y * 128 + x) * 4] > 0.5f)
-                        {
-                            if (x < x0) x0 = x;
-                            if (x > x1) x1 = x;
-                            if (y < y0) y0 = y;
-                            if (y > y1) y1 = y;
-                        }
-                    }
-                char buf[160];
-                sprintf(buf, "gpart probe_psize at(%d,%d) bbox=(%d..%d, %d..%d) size=(%d x %d)",
-                    cx, cy, x0, x1, y0, y1, x1 - x0 + 1, y1 - y0 + 1);
-                gpart_log(buf);
-            };
-            bbox(64, 64);   // 视口中心点
-            bbox(32, 32);   // 角点(NDC -0.5,-0.5)
-        }
-        else gpart_log("gpart probe_psize = READ_FAILED");
-
-        d3d::set_render_target(0, s_rt);
-        if (s_rt) d3d::release(s_rt);
-        d3d::set_viewport(s_vw, s_vh);
-        d3d::set_render_state(D3DRS_POINTSPRITEENABLE, s_psen);
-        d3d::set_render_state(D3DRS_POINTSCALEENABLE, s_pssc);
-        d3d::set_render_state(D3DRS_POINTSIZE_MIN, s_pmin);
-        d3d::set_render_state(D3DRS_POINTSIZE_MAX, s_pmax);
-        d3d::set_render_state(D3DRS_POINTSIZE, s_psz);
-        d3d::set_vertex_shader_handle(s_vs);
-        d3d::set_pixel_shader(s_ps);
-        d3d::set_vertex_declaration(s_decl);
-        d3d::set_fvf(s_fvf);
-        d3d::set_stream_source(0, nullptr, 0);
-        if (pvb) d3d::release(pvb);
-        if (pvs) d3d::delete_vertex_shader(pvs);
-        if (pps) d3d::delete_pixel_shader(pps);
-        if (psurf) d3d::release(psurf);
-        if (ptex) d3d::release(ptex);
-    }
-    catch (const std::exception&)
-    {
-        gpart_log("gpart probe_psize = FAILED");
-    }
-}
-
-// ============================================================================
 static bool gpart_gpu_init()
 {
     if (g_gpu_ready || g_gpu_failed) return g_gpu_ready;
@@ -765,36 +760,13 @@ static bool gpart_gpu_init()
         if (caps.vertex_tex_filter_caps == 0)
             throw std::runtime_error("显卡不支持顶点纹理采样(VTF), gpart 不可用。");
 
-        // 设备顶点处理模式与 VTF 能力日志(诊断 VTF 失效用)。
-        // SWVP(软件顶点处理)下 texldl 不可用 —— GMDirectX9 补丁把 runner 的
-        // 0x22(SWVP|FPU) 改 0x42(HWVP), 失败会回退 SWVP。
-        {
-            BOOL swvp = FALSE;
-            if (SUCCEEDED(d3d::get_software_vertex_processing(&swvp)))
-                gpart_log(std::string("device software_vertex_processing = ") + (swvp ? "TRUE (VTF broken)" : "FALSE (hardware VP)"));
-            else
-                gpart_log("device software_vertex_processing = UNKNOWN");
-            char buf[160];
-            sprintf(buf, "caps: vs=0x%X ps=0x%X vtf_caps=0x%X max_point_size=%.1f",
-                caps.vertex_shader_version, caps.pixel_shader_version,
-                caps.vertex_tex_filter_caps, caps.max_point_size);
-            gpart_log(buf);
-        }
 
-        // 类型表纹理 256x10 A16B16G16R16F
+        // 类型表纹理 256x13 A16B16G16R16F
         D3DCheck(d3d::create_texture(GP_TYPE_TEX_W, GP_TYPE_ROWS, 1, 0,
             GP_FMT_16F, D3DPOOL_DEFAULT, &g_type_tex), 1);
         std::vector<unsigned short> zero((size_t)GP_TYPE_TEX_W * GP_TYPE_ROWS * 4, 0);
         D3DCheck(d3d::upload_texture(g_type_tex, GP_TYPE_TEX_W, GP_TYPE_ROWS,
             GP_FMT_16F, zero.data(), GP_TYPE_TEX_W * 8), 2);
-        // VTF 哨兵: 类型表 texel (0,0) 预填 0.5 —— 探针采样它, 读到 (0.5,0.5,0.5,0.5)
-        // 即证明 VTF 正常(与图集内容/部署无关)。
-        {
-            std::vector<unsigned short> sent(4);
-            sent[0] = f2h(0.5f); sent[1] = f2h(0.5f); sent[2] = f2h(0.5f); sent[3] = f2h(0.5f);
-            D3DCheck(d3d::upload_texture_rect(g_type_tex, 0, 0, 1, 1, GP_FMT_16F,
-                sent.data(), 4 * 2), 3);
-        }
 
         // 粒子图集 1024x1024 A8R8G8B8: 先烘焙 14 个内置形状(固定网格 64x64)
         D3DCheck(d3d::create_texture(GP_ATLAS_SIZE, GP_ATLAS_SIZE, 1, 0,
@@ -855,218 +827,6 @@ static bool gpart_gpu_init()
         compile(RND_PS_HLSL, "main", "ps_3_0", code);
         D3DCheck(d3d::create_pixel_shader(code.data(), &g_rnd_ps), 12);
 
-        // ---- VTF/渲染链路自检(双测试, 完整保存/恢复引擎状态) ----
-        // 控制组: PS 输出恒定色, VS 不采样 → 验证"清RT→绘制→16F读回→h2f"整条链。
-        // VTF 组: VS tex2Dlod 采样已知白点(disk 形状 tile 1 中心) → 验证顶点纹理采样。
-        auto probe_run = [&](const char* vs_src, const char* ps_src, void* bindtex, DWORD bindstage, float out[4]) -> bool {
-            std::vector<BYTE> pcode;
-            std::string perr;
-            void* ptable = nullptr;
-            HRESULT phr = d3d::compile_hlsl(vs_src, strlen(vs_src), "main", "vs_3_0",
-                pcode, &ptable, &perr);
-            if (ptable) d3d::release(ptable);
-            dword pvs = 0, pps = 0;
-            if (SUCCEEDED(phr))
-                phr = d3d::create_vertex_shader(d3d::VERT_DEFAULT, pcode.data(), nullptr, 0, &pvs);
-            if (SUCCEEDED(phr))
-            {
-                pcode.clear();
-                phr = d3d::compile_hlsl(ps_src, strlen(ps_src), "main", "ps_3_0",
-                    pcode, &ptable, &perr);
-                if (ptable) d3d::release(ptable);
-            }
-            if (SUCCEEDED(phr))
-                phr = d3d::create_pixel_shader(pcode.data(), &pps);
-            if (FAILED(phr)) { if (pvs) d3d::delete_vertex_shader(pvs); return false; }
-
-            // 保存引擎状态
-            dword s_vs = 0, s_ps = 0, s_fvf = 0, s_blend = 0, s_z = 0;
-            void* s_decl = nullptr, * s_rt = nullptr, * s_tex0 = nullptr, * s_vtex0 = nullptr;
-            UINT s_vw = 0, s_vh = 0;
-            d3d::get_vertex_shader(&s_vs);
-            d3d::get_pixel_shader(&s_ps);
-            d3d::get_fvf(&s_fvf);
-            d3d::get_vertex_declaration(&s_decl);
-            d3d::get_render_target(0, &s_rt);
-            d3d::get_render_state(D3DRS_ALPHABLENDENABLE, &s_blend);
-            d3d::get_render_state(D3DRS_ZENABLE, &s_z);
-            d3d::get_viewport(&s_vw, &s_vh);
-            d3d::get_texture(0, &s_tex0);
-            d3d::get_texture(GP_VTS0, &s_vtex0);
-
-            void* ptex = nullptr, * psurf = nullptr;
-            phr = d3d::create_texture(1, 1, 1, D3DUSAGE_RENDERTARGET, GP_FMT_16F,
-                D3DPOOL_DEFAULT, &ptex);
-            if (SUCCEEDED(phr)) phr = d3d::get_surface_level(ptex, 0, &psurf);
-            if (SUCCEEDED(phr)) phr = d3d::set_render_target(0, psurf);
-            if (SUCCEEDED(phr)) phr = d3d::set_viewport(1, 1);
-            if (SUCCEEDED(phr)) phr = d3d::set_render_state(D3DRS_ALPHABLENDENABLE, FALSE);
-            if (SUCCEEDED(phr)) phr = d3d::set_render_state(D3DRS_ZENABLE, FALSE);
-            if (SUCCEEDED(phr)) phr = d3d::clear_target(0);
-            if (SUCCEEDED(phr)) phr = d3d::set_vertex_declaration(g_quad_decl);
-            if (SUCCEEDED(phr)) phr = d3d::set_vertex_shader_handle(pvs);
-            if (SUCCEEDED(phr)) phr = d3d::set_pixel_shader(pps);
-            if (SUCCEEDED(phr)) phr = d3d::set_stream_source(0, g_quad_vb, 16);
-            if (SUCCEEDED(phr)) phr = d3d::set_texture(bindstage, bindtex);
-            if (SUCCEEDED(phr)) phr = d3d::set_tex_stage_state(0, D3DTSS_MINFILTER, D3DTEXF_POINT);
-            if (SUCCEEDED(phr)) phr = d3d::set_tex_stage_state(0, D3DTSS_MAGFILTER, D3DTEXF_POINT);
-            if (SUCCEEDED(phr)) phr = d3d::set_tex_stage_state(bindstage, D3DTSS_MINFILTER, D3DTEXF_POINT);
-            if (SUCCEEDED(phr)) phr = d3d::set_tex_stage_state(bindstage, D3DTSS_MAGFILTER, D3DTEXF_POINT);
-            if (SUCCEEDED(phr)) phr = d3d::draw_primitive(D3DPT_TRIANGLESTRIP, 2, 0);
-            if (SUCCEEDED(phr))
-            {
-                std::vector<float> rb;
-                UINT rw = 0, rh = 0;
-                phr = d3d::read_texture_float(ptex, rb, rw, rh);
-                if (SUCCEEDED(phr) && rb.size() >= 4)
-                { out[0]=rb[0]; out[1]=rb[1]; out[2]=rb[2]; out[3]=rb[3]; }
-            }
-
-            // 恢复引擎状态
-            d3d::set_render_target(0, s_rt);
-            if (s_rt) d3d::release(s_rt);
-            d3d::set_render_target(1, nullptr);
-            d3d::set_render_target(2, nullptr);
-            d3d::set_viewport(s_vw, s_vh);
-            d3d::set_render_state(D3DRS_ALPHABLENDENABLE, s_blend);
-            d3d::set_render_state(D3DRS_ZENABLE, s_z);
-            d3d::set_vertex_shader_handle(s_vs);
-            d3d::set_pixel_shader(s_ps);
-            d3d::set_vertex_declaration(s_decl);
-            d3d::set_fvf(s_fvf);
-            d3d::set_stream_source(0, nullptr, 0);
-            d3d::set_texture(0, s_tex0);
-            if (s_tex0) d3d::release(s_tex0);
-            d3d::set_texture(GP_VTS0, s_vtex0);
-            if (s_vtex0) d3d::release(s_vtex0);
-            if (psurf) d3d::release(psurf);
-            if (ptex) d3d::release(ptex);
-            if (pvs) d3d::delete_vertex_shader(pvs);
-            if (pps) d3d::delete_pixel_shader(pps);
-            return true;
-        };
-
-        // 控制组: PS 恒定色 (1,0,1,1), VS 不采样
-        {
-            static const char* C_VS =
-                "struct VSIN { float4 pos : POSITION; };\n"
-                "struct VSOUT { float4 pos : POSITION; float4 col : COLOR0; };\n"
-                "VSOUT main(VSIN v) { VSOUT o; o.pos = v.pos; o.col = float4(1,0,1,1); return o; }\n";
-            static const char* C_PS =
-                "float4 main(float4 col : COLOR0) : COLOR0 { return col; }\n";
-            float v[4] = { -1,-1,-1,-1 };
-            if (probe_run(C_VS, C_PS, g_atlas_tex, 0, v))
-            {
-                char buf[160];
-                sprintf(buf, "gpart probe_ctrl = (%.3f, %.3f, %.3f, %.3f)", v[0], v[1], v[2], v[3]);
-                gpart_log(buf);
-            }
-            else gpart_log("gpart probe_ctrl = FAILED");
-        }
-        // VTF 组 1: VS tex2Dlod 采样 disk 形状(tile 1)中心 = 白色(内容相关)
-        {
-            static const char* V_VS =
-                "sampler sProbe : register(s0);\n"
-                "struct VSIN { float4 pos : POSITION; };\n"
-                "struct VSOUT { float4 pos : POSITION; float4 col : COLOR0; };\n"
-                "VSOUT main(VSIN v) {\n"
-                "  VSOUT o; o.pos = v.pos;\n"
-                "  o.col = tex2Dlod(sProbe, float4(96.5 / 1024.0, 32.5 / 1024.0, 0, 0));\n"
-                "  return o;\n"
-                "}\n";
-            static const char* V_PS =
-                "float4 main(float4 col : COLOR0) : COLOR0 { return col; }\n";
-            float v[4] = { -1,-1,-1,-1 };
-            if (probe_run(V_VS, V_PS, g_atlas_tex, GP_VTS0, v))
-            {
-                char buf[160];
-                sprintf(buf, "gpart probe_vtf_atlas = (%.3f, %.3f, %.3f, %.3f)", v[0], v[1], v[2], v[3]);
-                gpart_log(buf);
-            }
-            else gpart_log("gpart probe_vtf_atlas = FAILED");
-        }
-        // VTF 组 2: VS 采样类型表哨兵 texel (0,0) = 0.5(内容无关, 决定性)
-        {
-            static const char* V_VS =
-                "sampler sProbe : register(s0);\n"
-                "struct VSIN { float4 pos : POSITION; };\n"
-                "struct VSOUT { float4 pos : POSITION; float4 col : COLOR0; };\n"
-                "VSOUT main(VSIN v) {\n"
-                "  VSOUT o; o.pos = v.pos;\n"
-                "  o.col = tex2Dlod(sProbe, float4(0.5 / 256.0, 0.5 / 10.0, 0, 0));\n"
-                "  return o;\n"
-                "}\n";
-            static const char* V_PS =
-                "float4 main(float4 col : COLOR0) : COLOR0 { return col; }\n";
-            float v[4] = { -1,-1,-1,-1 };
-            if (probe_run(V_VS, V_PS, g_type_tex, GP_VTS0, v))
-            {
-                char buf[160];
-                sprintf(buf, "gpart probe_vtf_sentinel = (%.3f, %.3f, %.3f, %.3f)", v[0], v[1], v[2], v[3]);
-                gpart_log(buf);
-                if (v[0] < 0.49f && v[1] < 0.49f && v[2] < 0.49f)
-                    gpart_log("WARNING: VTF sentinel probe wrong - render VS state sampling broken");
-            }
-            else gpart_log("gpart probe_vtf_sentinel = FAILED");
-        }
-        // 驱动声明的 VTF 格式支持(CheckDeviceFormat + D3DUSAGE_QUERY_VERTEXTEXTURE)
-        {
-            struct FmtName { DWORD fmt; const char* name; };
-            static const FmtName fmts[] = {
-                { 21,  "A8R8G8B8" },     // D3DFMT_A8R8G8B8
-                { GP_FMT_16F, "A16B16G16R16F" },
-                { 114, "R32F" },         // D3DFMT_R32F
-                { GP_FMT_32F, "A32B32G32R32F" },
-            };
-            char buf[256];
-            int off = sprintf(buf, "gpart vtf_formats: ");
-            for (int i = 0; i < 4; ++i)
-                off += sprintf(buf + off, "%s=%s ", fmts[i].name,
-                    d3d::check_vtf_format(fmts[i].fmt) ? "OK" : "no");
-            gpart_log(buf);
-        }
-        // VTF 决定性组: 1x1 A32B32G32R32F 哨兵(预填 0.5), VS 采样 → 读到 0.5 即 VTF 真可用
-        {
-            void* p32 = nullptr;
-            float sent[4] = { 0.5f, 0.5f, 0.5f, 0.5f };
-            if (SUCCEEDED(d3d::create_texture(1, 1, 1, 0, GP_FMT_32F, D3DPOOL_DEFAULT, &p32)))
-            {
-                if (FAILED(d3d::upload_texture_rect(p32, 0, 0, 1, 1, GP_FMT_32F,
-                    sent, (UINT)sizeof(sent))))
-                {
-                    gpart_log("gpart probe_vtf_32f_sentinel = UPLOAD_FAILED");
-                }
-                else
-                {
-                    static const char* V_VS =
-                        "sampler sProbe : register(s0);\n"
-                        "struct VSIN { float4 pos : POSITION; };\n"
-                        "struct VSOUT { float4 pos : POSITION; float4 col : COLOR0; };\n"
-                        "VSOUT main(VSIN v) {\n"
-                        "  VSOUT o; o.pos = v.pos;\n"
-                        "  o.col = tex2Dlod(sProbe, float4(0.5, 0.5, 0, 0));\n"
-                        "  return o;\n"
-                        "}\n";
-                    static const char* V_PS =
-                        "float4 main(float4 col : COLOR0) : COLOR0 { return col; }\n";
-                    float v[4] = { -1,-1,-1,-1 };
-                    if (probe_run(V_VS, V_PS, p32, GP_VTS0, v))
-                    {
-                        char buf[160];
-                        sprintf(buf, "gpart probe_vtf_32f_sentinel = (%.3f, %.3f, %.3f, %.3f)",
-                            v[0], v[1], v[2], v[3]);
-                        gpart_log(buf);
-                        if (v[0] < 0.49f)
-                            gpart_log("WARNING: 32F VTF sentinel wrong - VTF truly unavailable");
-                    }
-                    else gpart_log("gpart probe_vtf_32f_sentinel = FAILED");
-                }
-                d3d::release(p32);
-            }
-            else gpart_log("gpart probe_vtf_32f_sentinel = CREATE_FAILED");
-        }
-
-
         g_gpu_ready = true;
     }
     catch (const std::exception& e)
@@ -1088,7 +848,8 @@ static void type_table_upload()
         const GType& gt = kv.second;
         for (int r = 0; r < GP_TYPE_ROWS; ++r)
             for (int c = 0; c < 4; ++c)
-                px[((size_t)r * GP_TYPE_TEX_W + id) * 4 + c] = f2h(gt.t[r][c]);
+                px[((size_t)r * GP_TYPE_TEX_W + id) * 4 + c] =
+                    f2h(gt.row(static_cast<GTypeRow>(r))[c]);
     }
     if (g_type_tex)
         D3DCheck(d3d::upload_texture(g_type_tex, GP_TYPE_TEX_W, GP_TYPE_ROWS,
@@ -1181,7 +942,8 @@ static void queue_spawn(GSystem& s, int type, int n, const SpawnBatch& tmpl)
         if (it != g_types.end())
         {
             const GType& gt = it->second;
-            float life = (float)lerp(gt.t[0][0], gt.t[0][1], gphashf((float)slot + b.seed * 17.0f));
+            float life = (float)lerp(gt.life_min(), gt.life_max(),
+                gphashf((float)slot + b.seed * 17.0f));
             s.s_life[slot] = life;
             int frames = (int)gt.frame_rect.size();
             if (gt.random_frame && frames > 0)
@@ -1189,7 +951,7 @@ static void queue_spawn(GSystem& s, int type, int n, const SpawnBatch& tmpl)
             else
                 s.s_frame[slot] = 0;
             // 系统混合掩码(静态路径判定用)
-            s.blend_mask |= (gt.t[2][3] > 0.5f) ? 2 : 1;
+            s.blend_mask |= (gt.additive() > 0.5f) ? 2 : 1;
             s.mix_dirty = true;
         }
         else
@@ -1200,6 +962,17 @@ static void queue_spawn(GSystem& s, int type, int n, const SpawnBatch& tmpl)
     }
     s.cursor = (s.cursor + n) % s.capacity;
     s.mix_dirty = true;
+}
+
+// 源槽位生成批次(part_type_step/death): 目的地槽位的新粒子位置 = 源粒子当前位置(GPU 读取)
+static void queue_source_spawn(GSystem& s, int type, int source_slot, int n)
+{
+    if (n <= 0 || s.capacity <= 0) return;
+    SpawnBatch b;
+    b.shape = -2.0f;                 // 源槽位模式(b2.x < -1.5)
+    b.distr = 0;
+    b.px = (float)source_slot;
+    queue_spawn(s, type, n, b);
 }
 
 // ============================================================================
@@ -1300,7 +1073,7 @@ static void stages_set_point()
     }
 }
 
-static void run_evolution(GSystem& s, const std::vector<SpawnBatch>& batches, int count)
+static void run_evolution(GSystem& s, const std::vector<SpawnBatch>& batches, int count, bool spawn_only = false)
 {
     if (count < 0) return;   // count == 0 合法: 纯老化 pass(无出生分支)
     RsSave rs;
@@ -1335,9 +1108,11 @@ static void run_evolution(GSystem& s, const std::vector<SpawnBatch>& batches, in
     D3DCheck(d3d::set_ps_const_typed(EVO_C_GLOBAL, d3d::CK_FLOAT, glob, 1), 17);
     float bn[4] = { (float)count, 0, 0, 0 };
     D3DCheck(d3d::set_ps_const_typed(EVO_C_BATCHN, d3d::CK_FLOAT, bn, 1), 18);
+    float mode[4] = { spawn_only ? 1.0f : 0.0f, 0, 0, 0 };
+    D3DCheck(d3d::set_ps_const_typed(EVO_C_MODE, d3d::CK_FLOAT, mode, 1), 19);
 
     for (int b = 0; b < count; ++b)
-        D3DCheck(d3d::set_ps_const_typed(EVO_C_BATCHES + b * 4, d3d::CK_FLOAT, (const float*)&batches[b], 4), 19);
+        D3DCheck(d3d::set_ps_const_typed(EVO_C_BATCHES + b * 4, d3d::CK_FLOAT, (const float*)&batches[b], 4), 20);
 
     D3DCheck(d3d::draw_primitive(D3DPT_TRIANGLESTRIP, 2, 0), 20);
 
@@ -1488,21 +1263,6 @@ static void run_render(GSystem& s)
 }
 
 
-// GPU 端存活数(浮点读回状态纹理, 仅供日志诊断)
-static int gpu_alive_count(GSystem& s)
-{
-    std::vector<float> px;
-    UINT w = 0, h = 0;
-    HRESULT hr = d3d::read_texture_float(s.tex[1][s.cur], px, w, h);
-    if (FAILED(hr)) return -1;
-    int n = 0;
-    for (size_t i = 0; i < px.size(); i += 4)
-    {
-        float age = px[i + 0], life = px[i + 1];
-        if (life > 0.0f && age < life) n++;
-    }
-    return n;
-}
 // ============================================================================
 // 导出: 系统
 // ============================================================================
@@ -1600,153 +1360,51 @@ exp_real gpart_system_update()
                 const LiveEntry& e = win[i];
                 if (e.birth != s.s_birth[e.slot]) continue;
                 float age = s.now - e.birth;
-                if (age < 0.0f || age >= s.s_life[e.slot]) continue;
+                if (age < 0.0f || age >= s.s_life[e.slot])
+                {
+                    // 自然死亡 → part_type_death 事件(CPU 版本, 位置由 GPU 按源槽位读取)
+                    if (g_any_step_death)
+                    {
+                        auto it = g_types.find(s.s_type[e.slot]);
+                        if (it != g_types.end())
+                        {
+                            const GType& gt = it->second;
+                            if (gt.death_num() != 0.0f && gt.death_type() >= 1.0f
+                                && g_types.count((int)gt.death_type()))
+                            {
+                                if (gt.death_num() > 0.0f)
+                                    queue_source_spawn(s, (int)gt.death_type(), e.slot,
+                                        (int)gt.death_num());
+                                else if (gphashf((float)e.slot + s.now * 3.71f + 17.0f)
+                                    < 1.0f / -gt.death_num())
+                                    queue_source_spawn(s, (int)gt.death_type(), e.slot, 1);
+                            }
+                        }
+                    }
+                    continue;
+                }
                 win[w++] = e;
             }
             win.resize(w);
 
-            // 一次性诊断转储: 首次出现活跃粒子时, 记录 shader 各输入的真实数据。
-            // CPU 侧(g_types 即类型表/矩形表上传源) + GPU 读回(状态纹理)双重核对。
-            static bool g_diag_dumped = false;
-            if (!g_diag_dumped && !s.live_window.empty())
+            // part_type_step 事件: 每个带 step 配置的存活粒子, 每步按数量(或 1/|n| 概率)生成
+            if (g_any_step_death)
             {
-                g_diag_dumped = true;
-                char buf[512];
-                for (auto& kv : g_types)
+                for (auto& e : win)
                 {
-                    const GType& gt = kv.second;
-                    auto r = gt.shape_rect();
-                    sprintf(buf, "diag type=%d shape=%d size=(%.2f,%.2f) scale=(%.2f,%.2f) "
-                        "rect=(%.4f,%.4f,%.4f,%.4f) frames=%d blend=%d",
-                        kv.first, gt.shape, gt.t[0][2], gt.t[0][3], gt.t[3][0], gt.t[3][1],
-                        r.u0, r.v0, r.u1, r.v1, (int)gt.frame_rect.size(),
-                        (gt.t[2][3] > 0.5f) ? 1 : 0);
-                    gpart_log(buf);
-                }
-                std::vector<float> px;
-                UINT tw = 0, th = 0;
-                if (SUCCEEDED(d3d::read_texture_float(s.tex[1][s.cur], px, tw, th)) && tw > 0)
-                {
-                    int shown = 0;
-                    for (size_t i = 0; i < s.live_window.size() && shown < 6; ++i)
+                    auto it = g_types.find(s.s_type[e.slot]);
+                    if (it == g_types.end()) continue;
+                    const GType& gt = it->second;
+                    if (gt.step_num() != 0.0f && gt.step_type() >= 1.0f
+                        && g_types.count((int)gt.step_type()))
                     {
-                        int slot = s.live_window[i].slot;
-                        if (slot < 0 || slot >= (int)s.capacity) continue;
-                        int k = ((slot / 256) * (int)tw + (slot % 256)) * 4;
-                        if (k + 3 >= (int)px.size()) continue;
-                        sprintf(buf, "diag slot=%d age=%.1f life=%.1f type=%.1f frame=%.1f",
-                            slot, px[k + 0], px[k + 1], px[k + 2], px[k + 3]);
-                        gpart_log(buf);
-                        shown++;
+                        if (gt.step_num() > 0.0f)
+                            queue_source_spawn(s, (int)gt.step_type(), e.slot,
+                                (int)gt.step_num());
+                        else if (gphashf((float)e.slot + s.now * 7.31f)
+                            < 1.0f / -gt.step_num())
+                            queue_source_spawn(s, (int)gt.step_type(), e.slot, 1);
                     }
-                }
-                // 位置读回(tex[0] = pos.xy, vel.xy) + 系统/发射器配置 + 渲染变换
-                std::vector<float> pp;
-                UINT pw = 0, ph = 0;
-                if (SUCCEEDED(d3d::read_texture_float(s.tex[0][s.cur], pp, pw, ph)) && pw > 0)
-                {
-                    int shown = 0;
-                    for (size_t i = 0; i < s.live_window.size() && shown < 6; ++i)
-                    {
-                        int slot = s.live_window[i].slot;
-                        if (slot < 0 || slot >= (int)s.capacity) continue;
-                        int k = ((slot / 256) * (int)pw + (slot % 256)) * 4;
-                        if (k + 3 >= (int)pp.size()) continue;
-                        sprintf(buf, "diag pos slot=%d pos=(%.1f,%.1f) vel=(%.2f,%.2f)",
-                            slot, pp[k + 0], pp[k + 1], pp[k + 2], pp[k + 3]);
-                        gpart_log(buf);
-                        shown++;
-                    }
-                }
-                {
-                    sprintf(buf, "diag sys pos=(%.1f,%.1f) capacity=%d",
-                        s.pos_x, s.pos_y, s.capacity);
-                    gpart_log(buf);
-                    for (auto& ekv : s.emitters)
-                    {
-                        const GEmitter& g = ekv.second;
-                        sprintf(buf, "diag emitter region=(%.1f,%.1f,%.1f,%.1f) rate=%.1f type=%d",
-                            g.xmin, g.ymin, g.xmax, g.ymax, g.stream_rate, g.stream_type);
-                        gpart_log(buf);
-                    }
-                }
-                // 视口 + WVP 关键元素(核对坐标映射) + 最老粒子位置
-                {
-                    UINT vw = 0, vh = 0;
-                    d3d::get_viewport(&vw, &vh);
-                    sprintf(buf, "diag viewport=(%u x %u)", vw, vh);
-                    gpart_log(buf);
-                    float wm[16], vm[16], pm[16];
-                    d3d::get_transform(D3DTS_WORLD, wm);
-                    d3d::get_transform(D3DTS_VIEW, vm);
-                    d3d::get_transform(D3DTS_PROJECTION, pm);
-                    sprintf(buf, "diag world m0=(%.2f,%.2f) t=(%.1f,%.1f) | view m0=(%.2f,%.2f) t=(%.1f,%.1f) | proj m0=(%.4f,%.4f) t=(%.1f,%.1f)",
-                        wm[0], wm[5], wm[12], wm[13],
-                        vm[0], vm[5], vm[12], vm[13],
-                        pm[0], pm[5], pm[12], pm[13]);
-                    gpart_log(buf);
-                }
-                if (SUCCEEDED(d3d::read_texture_float(s.tex[0][s.cur], pp, pw, ph)) && pw > 0)
-                {
-                    int shown = 0;
-                    for (size_t i = s.live_window.size(); i-- > 0 && shown < 6;)
-                    {
-                        int slot = s.live_window[i].slot;
-                        if (slot < 0 || slot >= (int)s.capacity) continue;
-                        int k = ((slot / 256) * (int)pw + (slot % 256)) * 4;
-                        if (k + 3 >= (int)pp.size()) continue;
-                        sprintf(buf, "diag oldpos slot=%d pos=(%.1f,%.1f) vel=(%.2f,%.2f)",
-                            slot, pp[k + 0], pp[k + 1], pp[k + 2], pp[k + 3]);
-                        gpart_log(buf);
-                        shown++;
-                    }
-                }
-                // GPU 侧类型表/矩形表读回(核对 shader 实际采样的内容)
-                {
-                    std::vector<float> tt;
-                    UINT tw = 0, th = 0;
-                    if (SUCCEEDED(d3d::read_texture_float(g_type_tex, tt, tw, th)) && tw >= 256)
-                    {
-                        int c = 1;   // 测试类型 id = 1
-                        int k0 = (0 * 256 + c) * 4, k3 = (3 * 256 + c) * 4;
-                        sprintf(buf, "diag gpu_type col=%d row0(life,size)=(%.1f,%.1f,%.1f,%.1f) row3(scale,..)=(%.2f,%.2f,%.0f,%.0f)",
-                            c, tt[k0 + 0], tt[k0 + 1], tt[k0 + 2], tt[k0 + 3],
-                            tt[k3 + 0], tt[k3 + 1], tt[k3 + 2], tt[k3 + 3]);
-                        gpart_log(buf);
-                    }
-                    else gpart_log("diag gpu_type = READ_FAILED");
-                }
-                {
-                    std::vector<float> rt;
-                    UINT rw = 0, rh = 0;
-                    if (SUCCEEDED(d3d::read_texture_float(g_rect_tex, rt, rw, rh)) && rw >= 256)
-                    {
-                        int c = 1;
-                        int k = (0 * 256 + c) * 4;
-                        sprintf(buf, "diag gpu_rect col=%d row0=(%.4f,%.4f,%.4f,%.4f)",
-                            c, rt[k + 0], rt[k + 1], rt[k + 2], rt[k + 3]);
-                        gpart_log(buf);
-                    }
-                    else gpart_log("diag gpu_rect = READ_FAILED");
-                }
-                // 图集球体瓦片(tile 7, 448..511 x 0..63)内容核对
-                {
-                    std::vector<BYTE> ab;
-                    UINT aw = 0, ah = 0;
-                    if (SUCCEEDED(d3d::read_texture(g_atlas_tex, ab, aw, ah)) && aw >= 512)
-                    {
-                        auto px = [&](int x, int y) -> const BYTE* {
-                            return &ab[((size_t)y * aw + x) * 4];
-                        };
-                        const BYTE* c0 = px(480, 32);   // 球体中心
-                        const BYTE* e0 = px(448, 32);   // 球体左缘
-                        const BYTE* o0 = px(0, 100);    // 图集空白区(tile 0 下方)
-                        sprintf(buf, "diag atlas sphere center=(%d,%d,%d,%d) edge=(%d,%d,%d,%d) blank=(%d,%d,%d,%d)",
-                            c0[0], c0[1], c0[2], c0[3], e0[0], e0[1], e0[2], e0[3],
-                            o0[0], o0[1], o0[2], o0[3]);
-                        gpart_log(buf);
-                    }
-                    else gpart_log("diag atlas = READ_FAILED");
                 }
             }
 
@@ -1774,33 +1432,22 @@ exp_real gpart_system_update()
             }
             else
             {
+                // 分块演化: 第一块正常(老化+该块出生), 其余块仅出生不老化,
+                // 避免多块时粒子被多次老化(时钟加速)。
                 size_t off = 0;
+                bool first_chunk = true;
                 while (off < s.pending.size())
                 {
                     size_t n = std::min((size_t)GP_MAX_BATCHES, s.pending.size() - off);
                     std::vector<SpawnBatch> chunk(s.pending.begin() + off, s.pending.begin() + off + n);
-                    run_evolution(s, chunk, (int)n);
+                    run_evolution(s, chunk, (int)n, !first_chunk);
                     off += n;
+                    first_chunk = false;
                 }
                 s.pending.clear();
             }
             s.now += 1.0f;   // 一次 update = 一步
 
-            // 调试日志: 每 30 步输出一次 CPU/GPU 存活对照
-            if ((int)s.now % 30 == 0)
-            {
-                int cpu = 0;
-                for (auto& e : s.live_window)
-                    if (e.birth == s.s_birth[e.slot])
-                    {
-                        float a = s.now - e.birth;
-                        if (a >= 0.0f && a < s.s_life[e.slot]) cpu++;
-                    }
-                gpart_log("sys=" + std::to_string(kv.first) +
-                    " step=" + std::to_string((int)s.now) +
-                    " cpu_alive=" + std::to_string(cpu) +
-                    " gpu_alive=" + std::to_string(gpu_alive_count(s)));
-            }
         }
         return gtrue;
     }
@@ -1931,14 +1578,7 @@ exp_real gpart_type_create()
         if ((int)g_types.size() >= GP_TYPE_TEX_W - 1)
             throw std::runtime_error("类型数量已达上限(255)。");
         GType t;
-        // GM8 默认: life 30, size 64, speed 0, dir 0, 无重力, 白, alpha 1, 形状 pixel
-        t.t[0][0] = 30; t.t[0][1] = 30; t.t[0][2] = 64; t.t[0][3] = 64;
-        t.t[1][0] = 0;  t.t[1][1] = 0;  t.t[1][2] = 0;  t.t[1][3] = 0;
-        t.t[2][0] = 270; t.t[2][1] = 0; t.t[2][2] = 0; t.t[2][3] = 0;
-        t.t[3][0] = 1; t.t[3][1] = 1; t.t[3][2] = GP_COLOUR_ONE; t.t[3][3] = GP_ALPHA_ONE;
-        t.t[4][0] = 1; t.t[4][1] = 1; t.t[4][2] = 1; t.t[4][3] = 1;
-        t.t[5][0] = 1; t.t[5][1] = 1; t.t[5][2] = 1; t.t[5][3] = 1;
-        t.t[6][0] = 1; t.t[6][1] = 1; t.t[6][2] = 1; t.t[6][3] = 1;
+        t.set_defaults();
         int id = g_type_counter++;
         g_types.emplace(id, t);
         type_table_upload();
@@ -1988,18 +1628,12 @@ exp_real gpart_type_clear(double type)
         GType* t = type_at((int)type);
         if (!t) return gfalse;
         GType fresh;
+        fresh.set_defaults();
         *t = fresh;
-        t->t[0][0] = 30; t->t[0][1] = 30; t->t[0][2] = 64; t->t[0][3] = 64;
-        t->t[1][0] = 0;  t->t[1][1] = 0;  t->t[1][2] = 0;  t->t[1][3] = 0;
-        t->t[2][0] = 270; t->t[2][1] = 0; t->t[2][2] = 0; t->t[2][3] = 0;
-        t->t[3][0] = 1; t->t[3][1] = 1; t->t[3][2] = GP_COLOUR_ONE; t->t[3][3] = GP_ALPHA_ONE;
-        t->t[4][0] = 1; t->t[4][1] = 1; t->t[4][2] = 1; t->t[4][3] = 1;
-        t->t[5][0] = 1; t->t[5][1] = 1; t->t[5][2] = 1; t->t[5][3] = 1;
-        t->t[6][0] = 1; t->t[6][1] = 1; t->t[6][2] = 1; t->t[6][3] = 1;
         t->frame_rect.clear();
         t->shape = PT_SHAPE_PIXEL;
         t->animat = t->stretch = t->random_frame = false;
-        t->t[9][0] = 0;
+        t->random_frame_flag() = 0;
         type_table_upload();
         t->upload_rect_table((int)type);
         return gtrue;
@@ -2047,15 +1681,17 @@ exp_real gpart_type_sprite(double type, double sprite, double animat, double str
             t->frame_rect.push_back(r);
         }
         if (t->frame_rect.empty()) return gfalse;
+        // 精灵像素宽作为尺寸基准(GM8: 屏幕像素 = size × scale × 精灵宽)
+        t->pixel_scale() = t->frame_rect[0].u1 * (float)GP_ATLAS_SIZE;
 
         t->animat = animat > 0.5;
         t->stretch = stretch > 0.5;
         t->random_frame = random > 0.5;
         t->shape = -1;                 // 有精灵 → 形状路径失效
-        t->t[8][1] = (float)t->frame_rect.size();
-        t->t[8][2] = t->animat ? 1.0f : 0.0f;
-        t->t[8][3] = t->stretch ? 1.0f : 0.0f;
-        t->t[9][0] = t->random_frame ? 1.0f : 0.0f;
+        t->frame_count() = (float)t->frame_rect.size();
+        t->animation_enabled() = t->animat ? 1.0f : 0.0f;
+        t->stretch_animation() = t->stretch ? 1.0f : 0.0f;
+        t->random_frame_flag() = t->random_frame ? 1.0f : 0.0f;
         type_table_upload();
         t->upload_rect_table((int)type);
         return gtrue;
@@ -2073,10 +1709,11 @@ exp_real gpart_type_shape(double type, double shape)
         if (s < 0 || s >= PT_SHAPE_COUNT) return gfalse;
         t->shape = s;
         t->frame_rect.clear();
-        t->t[8][1] = 0;
-        t->t[8][2] = 0;
-        t->t[8][3] = 0;
-        t->t[9][0] = 0;
+        t->frame_count() = 0;
+        t->animation_enabled() = 0;
+        t->stretch_animation() = 0;
+        t->random_frame_flag() = 0;
+        t->pixel_scale() = 32;   // 内置形状 32px
         type_table_upload();
         t->upload_rect_table((int)type);
         return gtrue;
@@ -2090,8 +1727,8 @@ exp_real gpart_type_scale(double type, double xscale, double yscale)
     {
         GType* t = type_at((int)type);
         if (!t) return gfalse;
-        t->t[3][0] = (float)xscale;
-        t->t[3][1] = (float)yscale;
+        t->scale_x() = (float)xscale;
+        t->scale_y() = (float)yscale;
         type_table_upload();
         return gtrue;
     }
@@ -2104,22 +1741,24 @@ exp_real gpart_type_life(double type, double min, double max)
     {
         GType* t = type_at((int)type);
         if (!t) return gfalse;
-        t->t[0][0] = (float)std::min(min, max);
-        t->t[0][1] = (float)std::max(min, max);
+        t->life_min() = (float)std::min(min, max);
+        t->life_max() = (float)std::max(min, max);
         type_table_upload();
         return gtrue;
     }
     simple_catch("gpart_type_life", gerror)
 }
 
-exp_real gpart_type_size(double type, double min, double max)
+exp_real gpart_type_size(double type, double min, double max, double incr, double wiggle)
 {
     try
     {
         GType* t = type_at((int)type);
         if (!t) return gfalse;
-        t->t[0][2] = (float)std::min(min, max);
-        t->t[0][3] = (float)std::max(min, max);
+        t->size_min() = (float)std::min(min, max);
+        t->size_max() = (float)std::max(min, max);
+        t->size_increment() = (float)incr;
+        t->size_wiggle() = (float)wiggle;
         type_table_upload();
         return gtrue;
     }
@@ -2132,8 +1771,8 @@ exp_real gpart_type_speed(double type, double min, double max)
     {
         GType* t = type_at((int)type);
         if (!t) return gfalse;
-        t->t[1][0] = (float)std::min(min, max);
-        t->t[1][1] = (float)std::max(min, max);
+        t->speed_min() = (float)std::min(min, max);
+        t->speed_max() = (float)std::max(min, max);
         type_table_upload();
         return gtrue;
     }
@@ -2146,8 +1785,8 @@ exp_real gpart_type_direction(double type, double min, double max)
     {
         GType* t = type_at((int)type);
         if (!t) return gfalse;
-        t->t[1][2] = (float)std::min(min, max);
-        t->t[1][3] = (float)std::max(min, max);
+        t->direction_min() = (float)std::min(min, max);
+        t->direction_max() = (float)std::max(min, max);
         type_table_upload();
         return gtrue;
     }
@@ -2160,8 +1799,8 @@ exp_real gpart_type_gravity(double type, double force, double dir)
     {
         GType* t = type_at((int)type);
         if (!t) return gfalse;
-        t->t[2][0] = (float)dir;
-        t->t[2][1] = (float)force;
+        t->gravity_direction() = (float)dir;
+        t->gravity_amount() = (float)force;
         type_table_upload();
         return gtrue;
     }
@@ -2174,11 +1813,47 @@ exp_real gpart_type_drag(double type, double coeff)
     {
         GType* t = type_at((int)type);
         if (!t) return gfalse;
-        t->t[2][2] = (float)std::clamp(coeff, 0.0, 1.0);
+        t->drag() = (float)std::clamp(coeff, 0.0, 1.0);
         type_table_upload();
         return gtrue;
     }
     simple_catch("gpart_type_drag", gerror)
+}
+
+exp_real gpart_type_step(double type, double step_number, double step_type)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        GType* t = type_at((int)type);
+        if (!t) return gfalse;
+        t->step_number() = (float)step_number;
+        t->step_type_id() = (float)step_type;
+        t->field(GTypeRow::FeatureFlags, 0) =
+            (step_number != 0.0 && step_type >= 1.0) ? 1.0f : 0.0f;
+        g_any_step_death = true;
+        type_table_upload();
+        return gtrue;
+    }
+    simple_catch("gpart_type_step", gerror)
+}
+
+exp_real gpart_type_death(double type, double death_number, double death_type)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        GType* t = type_at((int)type);
+        if (!t) return gfalse;
+        t->death_number() = (float)death_number;
+        t->death_type_id() = (float)death_type;
+        t->field(GTypeRow::FeatureFlags, 1) =
+            (death_number != 0.0 && death_type >= 1.0) ? 1.0f : 0.0f;
+        g_any_step_death = true;
+        type_table_upload();
+        return gtrue;
+    }
+    simple_catch("gpart_type_death", gerror)
 }
 
 exp_real gpart_type_blend(double type, double additive)
@@ -2187,7 +1862,7 @@ exp_real gpart_type_blend(double type, double additive)
     {
         GType* t = type_at((int)type);
         if (!t) return gfalse;
-        t->t[2][3] = additive > 0.5 ? 1.0f : 0.0f;
+        t->additive() = additive > 0.5 ? 1.0f : 0.0f;
         type_table_upload();
         return gtrue;
     }
@@ -2197,11 +1872,14 @@ exp_real gpart_type_blend(double type, double additive)
 // 颜色模式统一入口: mode + 颜色分量(0..1)
 static void type_set_colour(GType* t, int mode, const float c[9])
 {
-    t->t[3][2] = (float)mode;
+    t->colour_mode() = (float)mode;
     // T4: c1.r c1.g c1.b c2.r; T5: c2.g c2.b c3.r c3.g; T6.x: c3.b
-    t->t[4][0] = c[0]; t->t[4][1] = c[1]; t->t[4][2] = c[2]; t->t[4][3] = c[3];
-    t->t[5][0] = c[4]; t->t[5][1] = c[5]; t->t[5][2] = c[6]; t->t[5][3] = c[7];
-    t->t[6][0] = c[8];
+    float* color_a = t->row(GTypeRow::ColorA);
+    float* color_b = t->row(GTypeRow::ColorB);
+    float* color_c_alpha = t->row(GTypeRow::ColorCAndAlpha);
+    color_a[0] = c[0]; color_a[1] = c[1]; color_a[2] = c[2]; color_a[3] = c[3];
+    color_b[0] = c[4]; color_b[1] = c[5]; color_b[2] = c[6]; color_b[3] = c[7];
+    color_c_alpha[0] = c[8];
 }
 
 static void col_pack3(int c1, int c2, int c3, float out[9])
@@ -2327,10 +2005,11 @@ exp_real gpart_type_colour_hsv(double type, double hmin, double hmax,
 
 static void type_set_alpha(GType* t, int mode, float a1, float a2, float a3)
 {
-    t->t[3][3] = (float)mode;
-    t->t[6][1] = a1;
-    t->t[6][2] = a2;
-    t->t[6][3] = a3;
+    t->alpha_mode() = (float)mode;
+    float* color_c_alpha = t->row(GTypeRow::ColorCAndAlpha);
+    color_c_alpha[1] = a1;
+    color_c_alpha[2] = a2;
+    color_c_alpha[3] = a3;
 }
 
 exp_real gpart_type_alpha1(double type, double a1)
@@ -2381,11 +2060,12 @@ exp_real gpart_type_orientation(double type, double ang_min, double ang_max,
     {
         GType* t = type_at((int)type);
         if (!t) return gfalse;
-        t->t[7][0] = (float)ang_min;
-        t->t[7][1] = (float)ang_max;
-        t->t[7][2] = (float)ang_incr;
-        t->t[7][3] = (float)ang_wiggle;
-        t->t[8][0] = ang_relative > 0.5 ? 1.0f : 0.0f;
+        float* orientation = t->row(GTypeRow::Orientation);
+        orientation[0] = (float)ang_min;
+        orientation[1] = (float)ang_max;
+        orientation[2] = (float)ang_incr;
+        orientation[3] = (float)ang_wiggle;
+        t->relative_angle() = ang_relative > 0.5 ? 1.0f : 0.0f;
         type_table_upload();
         return gtrue;
     }

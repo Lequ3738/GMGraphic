@@ -57,9 +57,9 @@ enum gpart_alpha_mode : int
 // ---- internal constants ----
 constexpr int GP_GRID = 256;              // state texture grid size (256x256 = 65536 slots max)
 constexpr int GP_MAX_CAPACITY = 65536;    // hard cap
-constexpr int GP_MAX_BATCHES = 16;        // spawn batches per evolution pass run
+constexpr int GP_MAX_BATCHES = 48;        // spawn batches per evolution pass run(ps_3_0 常量上限 224: 8 + 48*4 = 200)
 constexpr int GP_TYPE_TEX_W = 256;        // type table texture width (max 256 types)
-constexpr int GP_TYPE_TEX_H = 10;         // float4 texels per type (0..8 params, 9 = atlas rect)
+constexpr int GP_TYPE_TEX_H = 13;         // float4 texels per type (0..9 参数, 10/11 = step/death, 12 = 渲染尺寸)
 constexpr int GP_MAX_FRAMES = 32;         // max sprite frames resolved per type
 constexpr int GP_ATLAS_SIZE = 1024;       // particle atlas texture size (px)
 constexpr int GP_ATLAS_TILE = 64;         // built-in shape tile size (px, 16 per row)
@@ -91,11 +91,13 @@ exp_real gpart_type_sprite(double type, double sprite, double animat, double str
 exp_real gpart_type_shape(double type, double shape);
 exp_real gpart_type_scale(double type, double xscale, double yscale);
 exp_real gpart_type_life(double type, double min, double max);
-exp_real gpart_type_size(double type, double min, double max);
+exp_real gpart_type_size(double type, double min, double max, double incr, double wiggle);
 exp_real gpart_type_speed(double type, double min, double max);
 exp_real gpart_type_direction(double type, double min, double max);
 exp_real gpart_type_gravity(double type, double force, double dir);
 exp_real gpart_type_drag(double type, double coeff);
+exp_real gpart_type_step(double type, double step_number, double step_type);
+exp_real gpart_type_death(double type, double death_number, double death_type);
 exp_real gpart_type_colour1(double type, double c1);
 exp_real gpart_type_colour2(double type, double c1, double c2);
 exp_real gpart_type_colour3(double type, double c1, double c2, double c3);
