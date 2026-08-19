@@ -40,12 +40,16 @@ static const int EVO_C_GLOBAL = 0;    // (now, dt, invGrid, capacity)
 static const int EVO_C_BATCHN = 4;    // (.x = batch count)
 static const int EVO_C_MODE = 5;      // (.x = 1 → 仅出生不老化)
 static const int EVO_C_BATCHES = 8;   // 48 batches * 4 float4(ps_3_0 常量上限 224)
+static const int EVO_C_EFF = 6;       // (.x=attractor 数, .y=destroyer 数, .z=deflector 数)
 static const int RND_C_WVP = 0;       // float4x4 (c0..c3)
 static const int RND_C_SYS = 4;       // (sys_x, sys_y, invGrid, capacity)
 static const int RND_C_BLEND = 5;     // (当前遍混合模式: 0=普通, 1=加法)
 
 static const int GP_TYPE_ROWS = GP_TYPE_TEX_H;   // 类型表纹理行数(与 gpart.h 一致)
 static const int GP_QUAD_VERTS = 4;
+static const int GP_EFF_TEX_W = 64;              // 特效器表宽(每行一特效器)
+static const int GP_EFF_TEX_H = 6;               // 特效器表高(3 类 × 2 行)
+static const int GP_EFF_MAX = 4;                 // 每类最多生效特效器(ps_3_0 展开预算)
 
 // The GPU table is still a compact float4 matrix. Keep its physical layout in
 // one named enum so the CPU-side code does not depend on unexplained row ids.
@@ -306,6 +310,12 @@ static SpawnBatch emitter_batch(const GEmitter& g)
 
 struct LiveEntry { int slot; float birth; };   // 活跃窗口项(带出生快照, 防槽复用冲突)
 
+// 区域特效器(GM8 part_attractor_/part_destroyer_/part_deflector_ 语义)。
+// 坐标相对粒子系统(与粒子 pos/emitter region 同坐标系, 原样比较)。
+struct GAttractor { float x = 0, y = 0, force = 0, dist = 0; int kind = 0; bool additive = false; };
+struct GDestroyer { float xmin = 0, xmax = 0, ymin = 0, ymax = 0; int shape = 0; };
+struct GDeflector { float xmin = 0, xmax = 0, ymin = 0, ymax = 0; int kind = 0; float friction = 0; };
+
 struct GSystem
 {
     int capacity = 4096;
@@ -327,6 +337,12 @@ struct GSystem
     void* id_vb = nullptr;
     // 系统内已使用过的混合类型掩码: 位 0=普通, 位 1=加法(静态路径判定)
     int blend_mask = 0;
+    // 区域特效器(attractor/destroyer/deflector), id 自增分配(GM8 复用空槽, 自增即可)
+    std::unordered_map<int, GAttractor> attractors;
+    std::unordered_map<int, GDestroyer> destroyers;
+    std::unordered_map<int, GDeflector> deflectors;
+    int att_counter = 1, des_counter = 1, def_counter = 1;
+    void* eff_tex = nullptr;          // 特效器表 64x6 A16B16G16R16F(每特效器 2 行)
 };
 
 static std::unordered_map<int, GSystem> g_systems;
@@ -397,9 +413,11 @@ static const char* EVO_PS_HLSL =
     "sampler sLife : register(s1);\n"
     "sampler sOvr : register(s2);\n"
     "sampler sType : register(s3);\n"
+    "sampler sEff : register(s4);\n"      // 特效器表 64x6(每特效器 2 行: 行0/1=attractor, 行2/3=destroyer, 行4/5=deflector)
     "float4 uGlobal : register(c0);\n"
     "float4 uBatchCount : register(c4);\n"
     "float4 uMode : register(c5);\n"      // .x = 1 → 仅出生不老化(多块演化用)
+    "float4 uEff : register(c6);\n"       // .x=attractor 数, .y=destroyer 数, .z=deflector 数
     "float4 uBatches[64] : register(c8);\n"
 
     "static const float TWO_PI = 6.283185307179586;\n"
@@ -554,6 +572,24 @@ static const char* EVO_PS_HLSL =
     // tri(x) = x>2 ? 4-x : x; 两 wave 均 -1 → 值域 [-1,1) 对称平均 0(摆动无漂移)。
     "    float len = max(length(vel) + T13.z * dt, 0.0);\n"
     "    vel = vel * (len / max(length(vel), 0.0001));\n"
+    // attractor 力(引擎 sub_4BDA50): 距离 ≤dist 内加力; kind 0=恒定 1=线性 2=二次衰减;
+    // additive=true 叠加到速度, false 只做位置修正。最多 4 个(ps_3_0 展开预算)。
+    "    float2 acc_pos = 0;\n"
+    "    for (int aa = 0; aa < 4; ++aa) {\n"
+    "      if (aa >= uEff.x) break;\n"
+    "      float2 ac = tex2D(sEff, float2((aa + 0.5) / 64.0, 0.5 / 6.0)).xy;\n"
+    "      float2 af = tex2D(sEff, float2((aa + 0.5) / 64.0, 0.5 / 6.0)).zw;\n"
+    "      float4 as = tex2D(sEff, float2((aa + 0.5) / 64.0, 1.5 / 6.0));\n"
+    "      if (as.x < 0.5) continue;\n"
+    "      float2 d = ac - pos;\n"
+    "      float dist = length(d);\n"
+    "      if (dist <= af.y && dist > 0.0 && af.x != 0.0 && af.y != 0.0) {\n"
+    "        float2 f = af.x * d / dist;\n"
+    "        if (as.y > 0.5 && as.y < 1.5) { float k = (af.y - dist) / af.y; f *= k; }\n"
+    "        else if (as.y > 1.5) { float k = (af.y - dist) / af.y; f *= k * k; }\n"
+    "        if (as.z > 0.5) vel += f; else acc_pos += f;\n"
+    "      }\n"
+    "    }\n"
     // 速度摆动: 每步随机 ±wiggle, 当步位移抖动(不进速度状态, 无累积/整流; GMParty 同模式)
     "    float swing = (h1(id + floor(age) * 7.31) * 2.0 - 1.0) * T13.w * dt;\n"
     // 方向摆动: 三角波(部分和有界 ±3×wiggle, 与引擎 sub_4BDA50 的 waveA 一致)
@@ -563,7 +599,40 @@ static const char* EVO_PS_HLSL =
     "    da *= DEG2RAD;\n"
     "    float ca2 = cos(da), sa2 = sin(da);\n"
     "    vel = float2(vel.x * ca2 + vel.y * sa2, -vel.x * sa2 + vel.y * ca2);\n"
-    "    pos += vel * dt + (vel / max(length(vel), 0.0001)) * swing;\n"
+    "    pos += vel * dt + (vel / max(length(vel), 0.0001)) * swing + acc_pos;\n"
+    // deflector(引擎 sub_4BDED4): 区域内方向反射 + 位置镜像 + friction 减速。
+    // kind==1 horizontal(偏转水平速度): direction=180-dir → vel.x 取反 + x 镜像;
+    // kind!=1 vertical(偏转垂直速度): direction=360-dir → vel.y 取反 + y 镜像。
+    "    for (int de = 0; de < 4; ++de) {\n"
+    "      if (de >= uEff.z) break;\n"
+    "      float4 dr = tex2D(sEff, float2((de + 0.5) / 64.0, 4.5 / 6.0));\n"
+    "      float4 ds = tex2D(sEff, float2((de + 0.5) / 64.0, 5.5 / 6.0));\n"
+    "      if (ds.x < 0.5) continue;\n"
+    "      if (dr.x >= dr.y || dr.z >= dr.w) continue;\n"
+    "      if (pos.x >= dr.x && pos.x <= dr.y && pos.y >= dr.z && pos.y <= dr.w) {\n"
+    "        float cl = length(vel);\n"
+    "        if (ds.y > 0.5) { vel.x = -vel.x; pos.x = prev.x - (pos.x - prev.x); }\n"
+    "        else { vel.y = -vel.y; pos.y = prev.y - (pos.y - prev.y); }\n"
+    "        float nl = max(cl - ds.z, 0.0);\n"
+    "        if (cl > 0.0001) vel *= nl / cl;\n"
+    "      }\n"
+    "    }\n"
+    // destroyer(引擎 sub_4BE394): 区域内(rect/ellipse/diamond)立即销毁
+    "    for (int de2 = 0; de2 < 4; ++de2) {\n"
+    "      if (de2 >= uEff.y) break;\n"
+    "      float4 dr2 = tex2D(sEff, float2((de2 + 0.5) / 64.0, 2.5 / 6.0));\n"
+    "      float4 ds2 = tex2D(sEff, float2((de2 + 0.5) / 64.0, 3.5 / 6.0));\n"
+    "      if (ds2.x < 0.5) continue;\n"
+    "      if (dr2.x >= dr2.y || dr2.z >= dr2.w) continue;\n"
+    "      if (pos.x >= dr2.x && pos.x <= dr2.y && pos.y >= dr2.z && pos.y <= dr2.w) {\n"
+    "        float nx = 2.0 * (pos.x - (dr2.y + dr2.x) * 0.5) / (dr2.y - dr2.x);\n"
+    "        float ny = 2.0 * (pos.y - (dr2.w + dr2.z) * 0.5) / (dr2.w - dr2.z);\n"
+    "        float hit = ds2.y < 0.5 ? 1.0\n"
+    "          : (ds2.y > 0.5 && ds2.y < 1.5) ? (nx * nx + ny * ny <= 1.0 ? 1.0 : 0.0)\n"
+    "          : (abs(nx) + abs(ny) <= 1.0 ? 1.0 : 0.0);\n"
+    "        if (hit > 0.5) { age = 1.0; life = 0.0; }   // 立即销毁(age>=life 剔除)\n"
+    "      }\n"
+    "    }\n"
     "    float4 T8 = tex2D(sType, float2((type + 0.5) / 256.0, 8.5 / 14.0));\n"
     "    float nf = T8.y;\n"
     "    frame = st.w;\n"
@@ -685,38 +754,16 @@ static const char* RND_PS_HLSL =
 // GPU 资源初始化(惰性, 失败置 g_gpu_failed)
 // ============================================================================
 
-// 调用 GM8 引擎 sub_4BB120(生成 14 个形状精灵并填充形状表数组)。
-// 特征码 = 函数开头 5 push + cmp byte ptr [disp32],0 + jnz——disp32 通配,
-// jnz 接受 short(75) 与 near(0F 85) 两种编码(GM8 不同编译产物的分支编码有差异,
-// 实测空工程为 75, Nature Edition 为 0F 85, 其余 12 字节一致)。
-// 仅当引擎标志未置位时调用(幂等)。若匹配失败, 形状表由引擎自身的
-// part_system_create 填充, ensure_gm8_shapes() 每帧重试兜底。
+// 预加载: 调用 GM8 引擎 sub_4BB120(生成 14 个形状精灵并填充形状表数组)。
+// 地址 0x4BB120 实测固定(空工程与 Nature Edition 一致, 引擎同一编译模板;
+// .data 基址 0x189000 稳定, 与 draw_text.cpp 读引擎全局同模式)。
+// 仅当引擎标志未置位时调用(幂等)。若调用时引擎子系统未就绪, 形状表由引擎
+// 自身的 part_system_create 填充, ensure_gm8_shapes() 每帧重试兜底。
 static void call_gm8_shape_init()
 {
     if (*(volatile BYTE*)0x58D5A0) return;   // 引擎已生成
-    static const BYTE sig[] = {
-        0x53, 0x56, 0x57, 0x55, 0x51,        // push ebx/esi/edi/ebp/ecx
-        0x80, 0x3D,                          // cmp byte ptr [disp32],
-        0x00, 0x00, 0x00, 0x00,              //   disp32(通配)
-        0x00,                                // , 0
-        0x75                                 // jnz short(与 0F 85 二选一)
-    };
-    constexpr DWORD TEXT_START = 0x401000;
-    constexpr DWORD TEXT_END = 0x589000;            // 到 .data 段前
-    for (DWORD ea = TEXT_START; ea + 14 <= TEXT_END; ++ea)
-    {
-        // 前 7 字节精确 + 偏移 11 的 ",0" + jnz(short 0x75 或 near 0F 85)
-        if (memcmp((const void*)ea, sig, 7) == 0
-            && *(const BYTE*)(ea + 11) == 0x00
-            && (*(const BYTE*)(ea + 12) == 0x75
-                || (*(const BYTE*)(ea + 12) == 0x0F
-                    && *(const BYTE*)(ea + 13) == 0x85)))
-        {
-            typedef void(__cdecl* fn_t)();
-            ((fn_t)ea)();
-            return;
-        }
-    }
+    typedef void(__cdecl* fn_t)();
+    ((fn_t)0x4BB120)();
 }
 
 // 从 GM8 引擎内置形状精灵表抓取位图(固定地址, 与 draw_text.cpp 读引擎全局同模式)。
@@ -832,8 +879,8 @@ static bool gpu_init_internal()
         g_atlas_x = 0;
         g_atlas_y = GP_ATLAS_TILE;   // 形状占满第 0 行, 精灵从第 1 行开始分配
         g_atlas_row_h = 0;
-        call_gm8_shape_init();       // 主动触发引擎形状精灵生成(避免依赖 part_system_create 先调用)
-        ensure_gm8_shapes();         // 抓取 GM8 引擎形状精灵(drawit 重试兜底)
+        call_gm8_shape_init();       // 预加载: 主动触发引擎形状精灵生成
+        ensure_gm8_shapes();         // 抓取 GM8 引擎形状精灵
 
         // 全屏四边形(剪辑空间 TRIANGLESTRIP)
         static const float quad[GP_QUAD_VERTS * 4] = {
@@ -935,6 +982,12 @@ static void system_tex_create(GSystem& s)
     d3d::release(prevRT);
     D3DCheck(d3d::set_render_target(1, nullptr), 10);
     D3DCheck(d3d::set_render_target(2, nullptr), 11);
+    // 特效器表 64x6 A16B16G16R16F(每特效器 2 行: 行0/1=attractor, 行2/3=destroyer, 行4/5=deflector)
+    D3DCheck(d3d::create_texture(GP_EFF_TEX_W, GP_EFF_TEX_H, 1, 0,
+        GP_FMT_16F, D3DPOOL_DEFAULT, &s.eff_tex), 12);
+    std::vector<unsigned short> ez((size_t)GP_EFF_TEX_W * GP_EFF_TEX_H * 4, 0);
+    D3DCheck(d3d::upload_texture(s.eff_tex, GP_EFF_TEX_W, GP_EFF_TEX_H,
+        GP_FMT_16F, ez.data(), GP_EFF_TEX_W * 8), 13);
 }
 
 static void system_tex_destroy(GSystem& s)
@@ -945,7 +998,50 @@ static void system_tex_destroy(GSystem& s)
             if (s.surf[k][p]) d3d::release(s.surf[k][p]);
             if (s.tex[k][p]) d3d::release(s.tex[k][p]);
         }
+    if (s.eff_tex) { d3d::release(s.eff_tex); s.eff_tex = nullptr; }
     if (s.id_vb) { d3d::release(s.id_vb); s.id_vb = nullptr; }
+}
+
+// 打包当前系统特效器到 eff_tex(行0/1=attractor, 行2/3=destroyer, 行4/5=deflector)。
+// 每特效器 1 列 × 2 行: 行0/2/4 = 几何参数, 行1/3/5 = (active, kind/shape, 附加, 0)。
+// 只上传前 GP_EFF_MAX 个(ps_3_0 展开预算), 超出的特效器静默忽略。
+static void upload_effectors(GSystem& s)
+{
+    std::vector<unsigned short> px((size_t)GP_EFF_TEX_W * GP_EFF_TEX_H * 4, 0);
+    auto put = [&](int row, int col, float x, float y, float z, float w)
+    {
+        unsigned short* p = &px[((size_t)row * GP_EFF_TEX_W + col) * 4];
+        p[0] = f2h(x); p[1] = f2h(y); p[2] = f2h(z); p[3] = f2h(w);
+    };
+    int ai = 0;
+    for (auto& kv : s.attractors)
+    {
+        if (ai >= GP_EFF_MAX) break;
+        const GAttractor& a = kv.second;
+        put(0, ai, a.x, a.y, a.force, a.dist);
+        put(1, ai, 1.0f, (float)a.kind, a.additive ? 1.0f : 0.0f, 0.0f);
+        ++ai;
+    }
+    int di = 0;
+    for (auto& kv : s.destroyers)
+    {
+        if (di >= GP_EFF_MAX) break;
+        const GDestroyer& d = kv.second;
+        put(2, di, d.xmin, d.xmax, d.ymin, d.ymax);
+        put(3, di, 1.0f, (float)d.shape, 0.0f, 0.0f);
+        ++di;
+    }
+    int fi = 0;
+    for (auto& kv : s.deflectors)
+    {
+        if (fi >= GP_EFF_MAX) break;
+        const GDeflector& d = kv.second;
+        put(4, fi, d.xmin, d.xmax, d.ymin, d.ymax);
+        put(5, fi, 1.0f, (float)d.kind, d.friction, 0.0f);
+        ++fi;
+    }
+    D3DCheck(d3d::upload_texture(s.eff_tex, GP_EFF_TEX_W, GP_EFF_TEX_H,
+        GP_FMT_16F, px.data(), GP_EFF_TEX_W * 8), 14);
 }
 
 // ============================================================================
@@ -1145,6 +1241,8 @@ static void run_evolution(GSystem& s, const std::vector<SpawnBatch>& batches, in
     D3DCheck(d3d::set_texture(1, s.tex[1][w]), 9);
     D3DCheck(d3d::set_texture(2, s.tex[2][w]), 10);
     D3DCheck(d3d::set_texture(3, g_type_tex), 11);
+    upload_effectors(s);                     // 特效器表打包上传(每步, 64x6 极小)
+    D3DCheck(d3d::set_texture(4, s.eff_tex), 12);
 
     D3DCheck(d3d::set_vertex_declaration(g_quad_decl), 12);
     D3DCheck(d3d::set_vertex_shader_handle(g_evo_vs), 13);
@@ -1159,6 +1257,15 @@ static void run_evolution(GSystem& s, const std::vector<SpawnBatch>& batches, in
     D3DCheck(d3d::set_ps_const_typed(EVO_C_BATCHN, d3d::CK_FLOAT, bn, 1), 18);
     float mode[4] = { spawn_only ? 1.0f : 0.0f, 0, 0, 0 };
     D3DCheck(d3d::set_ps_const_typed(EVO_C_MODE, d3d::CK_FLOAT, mode, 1), 19);
+    // spawn_only(仅出生分块)时特效器计数置 0: 特效器循环立即 break, 不影响存活粒子
+    float eff[4] = { 0, 0, 0, 0 };
+    if (!spawn_only)
+    {
+        eff[0] = (float)std::min((int)s.attractors.size(), GP_EFF_MAX);
+        eff[1] = (float)std::min((int)s.destroyers.size(), GP_EFF_MAX);
+        eff[2] = (float)std::min((int)s.deflectors.size(), GP_EFF_MAX);
+    }
+    D3DCheck(d3d::set_ps_const_typed(EVO_C_EFF, d3d::CK_FLOAT, eff, 1), 20);
 
     for (int b = 0; b < count; ++b)
         D3DCheck(d3d::set_ps_const_typed(EVO_C_BATCHES + b * 4, d3d::CK_FLOAT, (const float*)&batches[b], 4), 20);
@@ -1537,7 +1644,6 @@ exp_real gpart_system_drawit(double sys)
         GSystem& s = it->second;
 
         ensure_gm8_shapes();   // 引擎形状精灵懒初始化完成后的重试(一次性)
-
 
         run_render(s);
         return gtrue;
@@ -2312,4 +2418,300 @@ exp_real gpart_emitter_stream(double sys, double em, double parttype, double num
         return gtrue;
     }
     simple_catch("gpart_emitter_stream", gerror)
+}
+
+// ============================================================================
+// attractors (GM8 part_attractor_*, GPU 演化 pass 应用)
+// ============================================================================
+
+exp_real gpart_attractor_create(double sys)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return -1;
+        int id = it->second.att_counter++;
+        it->second.attractors[id] = GAttractor();
+        return (double)id;
+    }
+    simple_catch("gpart_attractor_create", gerror)
+}
+
+exp_real gpart_attractor_destroy(double sys, double ind)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        return it->second.attractors.erase((int)ind) ? gtrue : gfalse;
+    }
+    simple_catch("gpart_attractor_destroy", gerror)
+}
+
+exp_real gpart_attractor_destroy_all(double sys)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        it->second.attractors.clear();
+        return gtrue;
+    }
+    simple_catch("gpart_attractor_destroy_all", gerror)
+}
+
+exp_real gpart_attractor_exists(double sys, double ind)
+{
+    auto it = g_systems.find((int)sys);
+    if (it == g_systems.end()) return gfalse;
+    return it->second.attractors.count((int)ind) ? gtrue : gfalse;
+}
+
+exp_real gpart_attractor_clear(double sys, double ind)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        auto a = it->second.attractors.find((int)ind);
+        if (a == it->second.attractors.end()) return gfalse;
+        a->second = GAttractor();
+        return gtrue;
+    }
+    simple_catch("gpart_attractor_clear", gerror)
+}
+
+exp_real gpart_attractor_position(double sys, double ind, double x, double y)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        auto a = it->second.attractors.find((int)ind);
+        if (a == it->second.attractors.end()) return gfalse;
+        a->second.x = (float)x;
+        a->second.y = (float)y;
+        return gtrue;
+    }
+    simple_catch("gpart_attractor_position", gerror)
+}
+
+exp_real gpart_attractor_force(double sys, double ind, double force, double dist, double kind, double aditive)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        auto a = it->second.attractors.find((int)ind);
+        if (a == it->second.attractors.end()) return gfalse;
+        a->second.force = (float)force;
+        a->second.dist = (float)dist;
+        a->second.kind = (int)kind;
+        a->second.additive = aditive != 0.0;
+        return gtrue;
+    }
+    simple_catch("gpart_attractor_force", gerror)
+}
+
+// ============================================================================
+// destroyers (GM8 part_destroyer_*, GPU 演化 pass 应用)
+// ============================================================================
+
+exp_real gpart_destroyer_create(double sys)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return -1;
+        int id = it->second.des_counter++;
+        it->second.destroyers[id] = GDestroyer();
+        return (double)id;
+    }
+    simple_catch("gpart_destroyer_create", gerror)
+}
+
+exp_real gpart_destroyer_destroy(double sys, double ind)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        return it->second.destroyers.erase((int)ind) ? gtrue : gfalse;
+    }
+    simple_catch("gpart_destroyer_destroy", gerror)
+}
+
+exp_real gpart_destroyer_destroy_all(double sys)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        it->second.destroyers.clear();
+        return gtrue;
+    }
+    simple_catch("gpart_destroyer_destroy_all", gerror)
+}
+
+exp_real gpart_destroyer_exists(double sys, double ind)
+{
+    auto it = g_systems.find((int)sys);
+    if (it == g_systems.end()) return gfalse;
+    return it->second.destroyers.count((int)ind) ? gtrue : gfalse;
+}
+
+exp_real gpart_destroyer_clear(double sys, double ind)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        auto d = it->second.destroyers.find((int)ind);
+        if (d == it->second.destroyers.end()) return gfalse;
+        d->second = GDestroyer();
+        return gtrue;
+    }
+    simple_catch("gpart_destroyer_clear", gerror)
+}
+
+exp_real gpart_destroyer_region(double sys, double ind, double xmin, double xmax, double ymin, double ymax, double shape)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        auto d = it->second.destroyers.find((int)ind);
+        if (d == it->second.destroyers.end()) return gfalse;
+        d->second.xmin = (float)std::min(xmin, xmax);
+        d->second.xmax = (float)std::max(xmin, xmax);
+        d->second.ymin = (float)std::min(ymin, ymax);
+        d->second.ymax = (float)std::max(ymin, ymax);
+        d->second.shape = (int)shape;
+        return gtrue;
+    }
+    simple_catch("gpart_destroyer_region", gerror)
+}
+
+// ============================================================================
+// deflectors (GM8 part_deflector_*, GPU 演化 pass 应用)
+// ============================================================================
+
+exp_real gpart_deflector_create(double sys)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return -1;
+        int id = it->second.def_counter++;
+        it->second.deflectors[id] = GDeflector();
+        return (double)id;
+    }
+    simple_catch("gpart_deflector_create", gerror)
+}
+
+exp_real gpart_deflector_destroy(double sys, double ind)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        return it->second.deflectors.erase((int)ind) ? gtrue : gfalse;
+    }
+    simple_catch("gpart_deflector_destroy", gerror)
+}
+
+exp_real gpart_deflector_destroy_all(double sys)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        it->second.deflectors.clear();
+        return gtrue;
+    }
+    simple_catch("gpart_deflector_destroy_all", gerror)
+}
+
+exp_real gpart_deflector_exists(double sys, double ind)
+{
+    auto it = g_systems.find((int)sys);
+    if (it == g_systems.end()) return gfalse;
+    return it->second.deflectors.count((int)ind) ? gtrue : gfalse;
+}
+
+exp_real gpart_deflector_clear(double sys, double ind)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        auto d = it->second.deflectors.find((int)ind);
+        if (d == it->second.deflectors.end()) return gfalse;
+        d->second = GDeflector();
+        return gtrue;
+    }
+    simple_catch("gpart_deflector_clear", gerror)
+}
+
+exp_real gpart_deflector_region(double sys, double ind, double xmin, double xmax, double ymin, double ymax)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        auto d = it->second.deflectors.find((int)ind);
+        if (d == it->second.deflectors.end()) return gfalse;
+        d->second.xmin = (float)std::min(xmin, xmax);
+        d->second.xmax = (float)std::max(xmin, xmax);
+        d->second.ymin = (float)std::min(ymin, ymax);
+        d->second.ymax = (float)std::max(ymin, ymax);
+        return gtrue;
+    }
+    simple_catch("gpart_deflector_region", gerror)
+}
+
+exp_real gpart_deflector_kind(double sys, double ind, double kind)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        auto d = it->second.deflectors.find((int)ind);
+        if (d == it->second.deflectors.end()) return gfalse;
+        d->second.kind = (int)kind;
+        return gtrue;
+    }
+    simple_catch("gpart_deflector_kind", gerror)
+}
+
+exp_real gpart_deflector_friction(double sys, double ind, double friction)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        auto d = it->second.deflectors.find((int)ind);
+        if (d == it->second.deflectors.end()) return gfalse;
+        d->second.friction = (float)friction;
+        return gtrue;
+    }
+    simple_catch("gpart_deflector_friction", gerror)
 }

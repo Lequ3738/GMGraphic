@@ -34,7 +34,19 @@ enum gpart_region_shape : int
 // ---- emitter distribution (ps_distr_*) ----
 enum gpart_distribution : int
 {
-    PS_DISTR_LINEAR = 0, PS_DISTR_GAUSSIAN = 1,
+    PS_DISTR_LINEAR = 0, PS_DISTR_GAUSSIAN = 1, PS_DISTR_INVGAUSSIAN = 2,
+};
+
+// ---- effector force kinds (ps_force_*, GMAPI/GM8 values) ----
+enum gpart_force_kind : int
+{
+    PS_FORCE_CONSTANT = 0, PS_FORCE_LINEAR = 1, PS_FORCE_QUADRATIC = 2,
+};
+
+// ---- deflector kinds (ps_deflect_*, GMAPI/GM8: vertical=0, horizontal=1) ----
+enum gpart_deflect_kind : int
+{
+    PS_DEFLECT_VERTICAL = 0, PS_DEFLECT_HORIZONTAL = 1,
 };
 
 // ---- color modes (internal; GML sets them via gpart_type_colour*) ----
@@ -122,3 +134,30 @@ exp_real gpart_emitter_clear(double sys, double em);
 exp_real gpart_emitter_region(double sys, double em, double xmin, double xmax, double ymin, double ymax, double shape, double distribution);
 exp_real gpart_emitter_burst(double sys, double em, double parttype, double number);
 exp_real gpart_emitter_stream(double sys, double em, double parttype, double number);
+
+// ---- exports: attractors (7) ----
+exp_real gpart_attractor_create(double sys);
+exp_real gpart_attractor_destroy(double sys, double ind);
+exp_real gpart_attractor_destroy_all(double sys);
+exp_real gpart_attractor_exists(double sys, double ind);
+exp_real gpart_attractor_clear(double sys, double ind);
+exp_real gpart_attractor_position(double sys, double ind, double x, double y);
+exp_real gpart_attractor_force(double sys, double ind, double force, double dist, double kind, double aditive);
+
+// ---- exports: destroyers (6) ----
+exp_real gpart_destroyer_create(double sys);
+exp_real gpart_destroyer_destroy(double sys, double ind);
+exp_real gpart_destroyer_destroy_all(double sys);
+exp_real gpart_destroyer_exists(double sys, double ind);
+exp_real gpart_destroyer_clear(double sys, double ind);
+exp_real gpart_destroyer_region(double sys, double ind, double xmin, double xmax, double ymin, double ymax, double shape);
+
+// ---- exports: deflectors (8) ----
+exp_real gpart_deflector_create(double sys);
+exp_real gpart_deflector_destroy(double sys, double ind);
+exp_real gpart_deflector_destroy_all(double sys);
+exp_real gpart_deflector_exists(double sys, double ind);
+exp_real gpart_deflector_clear(double sys, double ind);
+exp_real gpart_deflector_region(double sys, double ind, double xmin, double xmax, double ymin, double ymax);
+exp_real gpart_deflector_kind(double sys, double ind, double kind);
+exp_real gpart_deflector_friction(double sys, double ind, double friction);
