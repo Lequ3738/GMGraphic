@@ -413,8 +413,8 @@ static const char* EVO_PS_HLSL =
     "sampler sLife : register(s1);\n"
     "sampler sOvr : register(s2);\n"
     "sampler sType : register(s3);\n"
-    "sampler sEff : register(s4);\n"      // 特效器表 64x6(每特效器 2 行: 行0/1=attractor, 行2/3=destroyer, 行4/5=deflector)
-    "float4 uGlobal : register(c0);\n"
+    "sampler sEff : register(s4);\n"      // 特效器表 64x6 (每特效器 2 行: 行0/1=attractor, 
+    "float4 uGlobal : register(c0);\n"    // 行2/3=destroyer, 行4/5=deflector)
     "float4 uBatchCount : register(c4);\n"
     "float4 uMode : register(c5);\n"      // .x = 1 → 仅出生不老化(多块演化用)
     "float4 uEff : register(c6);\n"       // .x=attractor 数, .y=destroyer 数, .z=deflector 数
@@ -479,7 +479,7 @@ static const char* EVO_PS_HLSL =
     "    float2 p;\n"
 
     "    if (b2.x < -1.5) {\n"
-    "      // 源槽位生成(step/death): 位置 = 源粒子当前位置(读上一帧状态)\n"
+           // 源槽位生成(step/death): 位置 = 源粒子当前位置(读上一帧状态)
     "      float src = floor(b2.z + 0.5);\n"
     "      float2 suv = (float2(fmod(src, 256.0), floor(src / 256.0)) + 0.5) * uGlobal.z;\n"
     "      p = tex2D(sPos, suv).xy;\n"
@@ -531,7 +531,7 @@ static const char* EVO_PS_HLSL =
 
     "    if (b3.w > 0.5) { base = b3.rgb; }\n"
     "    else if (T3.z > 3.5) {\n"
-    "      float cr = h1(id + seed * 17.0 + 31.7);   // 颜色独立随机(与方向/速度解耦)\n"
+    "      float cr = h1(id + seed * 17.0 + 31.7);\n"   // 颜色独立随机(与方向/速度解耦)
     "      if (T3.z < 4.5) { base = lerp(T4.rgb, float3(T4.w, T5.x, T5.y), cr); }\n"
     "      else if (T3.z < 5.5) { base = lerp(T4.rgb, T5.rgb, cr); }\n"
     "      else {\n"
@@ -546,10 +546,10 @@ static const char* EVO_PS_HLSL =
     "    float nf = T8.y;\n"
     "    frame = (T9.x > 0.5 && nf > 1.0) ? floor(h1(id + seed * 17.0 + 9.0) * nf) : 0.0;\n"
     "  } else if (dead < 0.5) {\n"
-    "    float dt = uMode.x > 0.5 ? 0.0 : uGlobal.y;   // 仅出生 pass: 不推进物理/老化\n"
+    "    float dt = uMode.x > 0.5 ? 0.0 : uGlobal.y;\n"   // 仅出生 pass: 不推进物理/老化
     "    float nage = st.x + dt;\n"
     "    if (nage >= st.y) {\n"
-    "      // 自然死亡: 立即清空(防僵尸粒子继续积分飞远, 污染 step/death 源槽读取)\n"
+           // 自然死亡: 立即清空(防僵尸粒子继续积分飞远, 污染 step/death 源槽读取)
     "      pos = 0; vel = 0; type = 0; base = float3(1,1,1); has_ovr = 0;\n"
     "      age = 1.0; life = 0.0; frame = 0.0;\n"
     "    } else {\n"
@@ -566,14 +566,14 @@ static const char* EVO_PS_HLSL =
     "    vel += g * dt * float2(cos(ga), -sin(ga));\n"
     "    vel *= max(1.0 - clamp(T2.z, 0.0, 1.0) * dt, 0.0);\n"
     "    float4 T13 = tex2D(sType, float2((type + 0.5) / 256.0, 13.5 / 14.0));\n"
-    // 速度/方向更新(与引擎 sub_4BDA50 一致):
-    // speed 每步 += speed_incr 后 clamp≥0; 移动前 speed += (tri((age+4φ)%20)/5 - 1)×speed_wiggle;
-    // direction 每步 += dir_incr; 移动前 direction += (tri((age+3φ)%24)/6 - 1)×dir_wiggle。
-    // tri(x) = x>2 ? 4-x : x; 两 wave 均 -1 → 值域 [-1,1) 对称平均 0(摆动无漂移)。
+         // 速度/方向更新(与引擎 sub_4BDA50 一致):
+         // speed 每步 += speed_incr 后 clamp≥0; 移动前 speed += (tri((age+4φ)%20)/5 - 1)×speed_wiggle;
+         // direction 每步 += dir_incr; 移动前 direction += (tri((age+3φ)%24)/6 - 1)×dir_wiggle。
+         // tri(x) = x>2 ? 4-x : x; 两 wave 均 -1 → 值域 [-1,1) 对称平均 0(摆动无漂移)。
     "    float len = max(length(vel) + T13.z * dt, 0.0);\n"
     "    vel = vel * (len / max(length(vel), 0.0001));\n"
-    // attractor 力(引擎 sub_4BDA50): 距离 ≤dist 内加力; kind 0=恒定 1=线性 2=二次衰减;
-    // additive=true 叠加到速度, false 只做位置修正。最多 4 个(ps_3_0 展开预算)。
+         // attractor 力(引擎 sub_4BDA50): 距离 ≤dist 内加力; kind 0=恒定 1=线性 2=二次衰减;
+         // additive=true 叠加到速度, false 只做位置修正。最多 4 个(ps_3_0 展开预算)。
     "    float2 acc_pos = 0;\n"
     "    for (int aa = 0; aa < 4; ++aa) {\n"
     "      if (aa >= uEff.x) break;\n"
@@ -590,9 +590,9 @@ static const char* EVO_PS_HLSL =
     "        if (as.z > 0.5) vel += f; else acc_pos += f;\n"
     "      }\n"
     "    }\n"
-    // 速度摆动: 每步随机 ±wiggle, 当步位移抖动(不进速度状态, 无累积/整流; GMParty 同模式)
+         // 速度摆动: 每步随机 ±wiggle, 当步位移抖动(不进速度状态, 无累积/整流; GMParty 同模式)
     "    float swing = (h1(id + floor(age) * 7.31) * 2.0 - 1.0) * T13.w * dt;\n"
-    // 方向摆动: 三角波(部分和有界 ±3×wiggle, 与引擎 sub_4BDA50 的 waveA 一致)
+         // 方向摆动: 三角波(部分和有界 ±3×wiggle, 与引擎 sub_4BDA50 的 waveA 一致)
     "    float dw = fmod(h1(id + 23.0) * 24.0 + age, 24.0) / 6.0;\n"
     "    dw = dw > 2.0 ? 4.0 - dw : dw;\n"
     "    float da = T13.x * dt + (dw - 1.0) * T13.y;\n"
@@ -600,9 +600,9 @@ static const char* EVO_PS_HLSL =
     "    float ca2 = cos(da), sa2 = sin(da);\n"
     "    vel = float2(vel.x * ca2 + vel.y * sa2, -vel.x * sa2 + vel.y * ca2);\n"
     "    pos += vel * dt + (vel / max(length(vel), 0.0001)) * swing + acc_pos;\n"
-    // deflector(引擎 sub_4BDED4): 区域内方向反射 + 位置镜像 + friction 减速。
-    // kind==1 horizontal(偏转水平速度): direction=180-dir → vel.x 取反 + x 镜像;
-    // kind!=1 vertical(偏转垂直速度): direction=360-dir → vel.y 取反 + y 镜像。
+         // deflector(引擎 sub_4BDED4): 区域内方向反射 + 位置镜像 + friction 减速。
+         // kind==1 horizontal(偏转水平速度): direction=180-dir → vel.x 取反 + x 镜像;
+         // kind!=1 vertical(偏转垂直速度): direction=360-dir → vel.y 取反 + y 镜像。
     "    for (int de = 0; de < 4; ++de) {\n"
     "      if (de >= uEff.z) break;\n"
     "      float4 dr = tex2D(sEff, float2((de + 0.5) / 64.0, 4.5 / 6.0));\n"
@@ -617,7 +617,7 @@ static const char* EVO_PS_HLSL =
     "        if (cl > 0.0001) vel *= nl / cl;\n"
     "      }\n"
     "    }\n"
-    // destroyer(引擎 sub_4BE394): 区域内(rect/ellipse/diamond)立即销毁
+         // destroyer(引擎 sub_4BE394): 区域内(rect/ellipse/diamond)立即销毁
     "    for (int de2 = 0; de2 < 4; ++de2) {\n"
     "      if (de2 >= uEff.y) break;\n"
     "      float4 dr2 = tex2D(sEff, float2((de2 + 0.5) / 64.0, 2.5 / 6.0));\n"
@@ -695,14 +695,14 @@ static const char* RND_VS_HLSL =
     "  float4 T8 = tex2Dlod(sType, float4(tuv.x, 8.5 / 14.0, 0, 0));\n"
     "  float4 ov = tex2Dlod(sOvr, float4(uv, 0, 0));\n"
     "  float4 T12 = tex2Dlod(sType, float4(tuv.x, 12.5 / 14.0, 0, 0));\n"
-    "  // GM8 尺寸语义: size0 = 随机[min,max] + incr*age(clamp≥0); wiggle = ±wiggle 三角波摆动\n"
+       // GM8 尺寸语义: size0 = 随机[min,max] + incr*age(clamp≥0); wiggle = ±wiggle 三角波摆动
     "  float size0 = max(lerp(T0.z, T0.w, h1(id + 3.0)) + T12.y * age, 0.0);\n"
     "  float swv = fmod(h1(id + 9.0) * 16.0 + age, 16.0) / 4.0;\n"
     "  swv = swv > 2.0 ? 4.0 - swv : swv;\n"
     "  float size = size0 + (swv - 1.0) * T12.z;\n"
     "  float2 psize = size * float2(T3.x, T3.y) * T12.x;\n"
     "  float ang = lerp(T7.x, T7.y, h1(id + 5.0)) + T7.z * age;\n"
-    // 角度摆动: 三角波(与引擎绘制 rot 的 wave 一致, mod 16 折返, 部分和有界)
+       // 角度摆动: 三角波(与引擎绘制 rot 的 wave 一致, mod 16 折返, 部分和有界)
     "  float owv = fmod(h1(id + 31.0) * 16.0 + age, 16.0) / 4.0;\n"
     "  owv = owv > 2.0 ? 4.0 - owv : owv;\n"
     "  ang += (owv - 1.0) * T7.w;\n"
@@ -743,7 +743,7 @@ static const char* RND_PS_HLSL =
     "  float2 auv = rect.xy + rect.zw * cuv;\n"
     "  float4 tex = tex2D(sMain, auv);\n"
     "  float a = tex.a * col.a;\n"
-    // 普通遍(ONE/INVSRCALPHA 语义): straight 输出; 加法遍(ONE/ONE): rgb 预乘 alpha(引擎 bm_add 行为)
+       // 普通遍(ONE/INVSRCALPHA 语义): straight 输出; 加法遍(ONE/ONE): rgb 预乘 alpha(引擎 bm_add 行为)
     "  float3 rgb = tex.rgb * col.rgb;\n"
     "  rgb *= (uBlend.x > 0.5) ? a : 1.0;\n"
     "  return float4(rgb, a);\n"
@@ -865,7 +865,6 @@ static bool gpu_init_internal()
         if (caps.vertex_tex_filter_caps == 0)
             throw std::runtime_error("显卡不支持顶点纹理采样(VTF), gpart 不可用。");
 
-
         // 类型表纹理 256x13 A16B16G16R16F
         D3DCheck(d3d::create_texture(GP_TYPE_TEX_W, GP_TYPE_ROWS, 1, 0,
             GP_FMT_16F, D3DPOOL_DEFAULT, &g_type_tex), 1);
@@ -908,14 +907,16 @@ static bool gpu_init_internal()
 
         // shader 编译
         auto compile = [](const char* src, const char* entry, const char* profile,
-            std::vector<BYTE>& code) {
-                std::string err;
-                void* table = nullptr;
-                HRESULT hr = d3d::compile_hlsl(src, strlen(src), entry, profile, code, &table, &err);
-                if (table) d3d::release(table);
-                if (FAILED(hr))
-                    throw std::runtime_error("gpart shader 编译失败 (" + std::string(entry) + "): " + err);
-            };
+            std::vector<BYTE>& code)
+        {
+            std::string err;
+            void* table = nullptr;
+            HRESULT hr = d3d::compile_hlsl(src, strlen(src), entry, profile, code, &table, &err);
+            if (table) d3d::release(table);
+            if (FAILED(hr))
+                throw std::runtime_error("gpart shader 编译失败 (" + std::string(entry) + "): " + err);
+        };
+
         std::vector<BYTE> code;
         compile(EVO_VS_HLSL, "main", "vs_3_0", code);
         D3DCheck(d3d::create_vertex_shader(d3d::VERT_DEFAULT, code.data(), nullptr, 0, &g_evo_vs), 9);
@@ -1218,7 +1219,8 @@ static void stages_set_point()
     }
 }
 
-static void run_evolution(GSystem& s, const std::vector<SpawnBatch>& batches, int count, bool spawn_only = false)
+static void run_evolution(GSystem& s, const std::vector<SpawnBatch>& batches, int count, 
+    bool spawn_only = false)
 {
     if (count < 0) return;   // count == 0 合法: 纯老化 pass(无出生分支)
     RsSave rs;
@@ -1268,7 +1270,10 @@ static void run_evolution(GSystem& s, const std::vector<SpawnBatch>& batches, in
     D3DCheck(d3d::set_ps_const_typed(EVO_C_EFF, d3d::CK_FLOAT, eff, 1), 20);
 
     for (int b = 0; b < count; ++b)
-        D3DCheck(d3d::set_ps_const_typed(EVO_C_BATCHES + b * 4, d3d::CK_FLOAT, (const float*)&batches[b], 4), 20);
+    {
+        D3DCheck(d3d::set_ps_const_typed(EVO_C_BATCHES + b * 4, d3d::CK_FLOAT,
+            (const float*)&batches[b], 4), 20);
+    }
 
     D3DCheck(d3d::draw_primitive(D3DPT_TRIANGLESTRIP, 2, 0), 20);
 
@@ -2501,7 +2506,8 @@ exp_real gpart_attractor_position(double sys, double ind, double x, double y)
     simple_catch("gpart_attractor_position", gerror)
 }
 
-exp_real gpart_attractor_force(double sys, double ind, double force, double dist, double kind, double aditive)
+exp_real gpart_attractor_force(double sys, double ind, double force, double dist, 
+    double kind, double aditive)
 {
     if (d3d::version() != d3d::V9) return gerror;
     try
@@ -2584,7 +2590,8 @@ exp_real gpart_destroyer_clear(double sys, double ind)
     simple_catch("gpart_destroyer_clear", gerror)
 }
 
-exp_real gpart_destroyer_region(double sys, double ind, double xmin, double xmax, double ymin, double ymax, double shape)
+exp_real gpart_destroyer_region(double sys, double ind, double xmin, double xmax, 
+    double ymin, double ymax, double shape)
 {
     if (d3d::version() != d3d::V9) return gerror;
     try
@@ -2668,7 +2675,8 @@ exp_real gpart_deflector_clear(double sys, double ind)
     simple_catch("gpart_deflector_clear", gerror)
 }
 
-exp_real gpart_deflector_region(double sys, double ind, double xmin, double xmax, double ymin, double ymax)
+exp_real gpart_deflector_region(double sys, double ind, double xmin, double xmax, 
+    double ymin, double ymax)
 {
     if (d3d::version() != d3d::V9) return gerror;
     try
