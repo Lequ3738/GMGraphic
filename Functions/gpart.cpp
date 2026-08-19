@@ -64,6 +64,7 @@ enum class GTypeRow : size_t
     StepDeath = 10,
     FeatureFlags = 11,
     RenderSize = 12,
+    DirectionExt = 13,   // 方向增量/摆动(每步方向 += incr + ±wiggle, GM8 part_type_direction)
 };
 
 // ============================================================================
@@ -181,6 +182,11 @@ struct GType
     float& size_increment() { return field(GTypeRow::RenderSize, 1); }
     float& size_wiggle() { return field(GTypeRow::RenderSize, 2); }
 
+    float& direction_increment() { return field(GTypeRow::DirectionExt, 0); }
+    float& direction_wiggle() { return field(GTypeRow::DirectionExt, 1); }
+    float& speed_increment() { return field(GTypeRow::DirectionExt, 2); }
+    float& speed_wiggle() { return field(GTypeRow::DirectionExt, 3); }
+
     void set_defaults()
     {
         life_min() = life_max() = 100;
@@ -188,6 +194,8 @@ struct GType
         size_max() = 1;
         speed_min() = speed_max() = 0;
         direction_min() = direction_max() = 0;
+        direction_increment() = direction_wiggle() = 0;
+        speed_increment() = speed_wiggle() = 0;
         gravity_direction() = 270;
         gravity_amount() = drag() = additive() = 0;
         scale_x() = scale_y() = 1;
@@ -491,11 +499,11 @@ static const char* EVO_PS_HLSL =
     "    }\n"
     "    pos = p;\n"
 
-    "    float4 T0 = tex2D(sType, float2((type + 0.5) / 256.0, 0.5 / 13.0));\n"
-    "    float4 T1 = tex2D(sType, float2((type + 0.5) / 256.0, 1.5 / 13.0));\n"
-    "    float4 T3 = tex2D(sType, float2((type + 0.5) / 256.0, 3.5 / 13.0));\n"
-    "    float4 T4 = tex2D(sType, float2((type + 0.5) / 256.0, 4.5 / 13.0));\n"
-    "    float4 T5 = tex2D(sType, float2((type + 0.5) / 256.0, 5.5 / 13.0));\n"
+    "    float4 T0 = tex2D(sType, float2((type + 0.5) / 256.0, 0.5 / 14.0));\n"
+    "    float4 T1 = tex2D(sType, float2((type + 0.5) / 256.0, 1.5 / 14.0));\n"
+    "    float4 T3 = tex2D(sType, float2((type + 0.5) / 256.0, 3.5 / 14.0));\n"
+    "    float4 T4 = tex2D(sType, float2((type + 0.5) / 256.0, 4.5 / 14.0));\n"
+    "    float4 T5 = tex2D(sType, float2((type + 0.5) / 256.0, 5.5 / 14.0));\n"
     "    float spd = lerp(T1.x, T1.y, rnd.y);\n"
     "    float dir = lerp(T1.z, T1.w, rnd.z);\n"
     "    float rad = dir * DEG2RAD;\n"
@@ -505,17 +513,18 @@ static const char* EVO_PS_HLSL =
 
     "    if (b3.w > 0.5) { base = b3.rgb; }\n"
     "    else if (T3.z > 3.5) {\n"
-    "      if (T3.z < 4.5) { base = lerp(T4.rgb, float3(T4.w, T5.x, T5.y), rnd.z); }\n"
-    "      else if (T3.z < 5.5) { base = lerp(T4.rgb, T5.rgb, rnd.z); }\n"
+    "      float cr = h1(id + seed * 17.0 + 31.7);   // 颜色独立随机(与方向/速度解耦)\n"
+    "      if (T3.z < 4.5) { base = lerp(T4.rgb, float3(T4.w, T5.x, T5.y), cr); }\n"
+    "      else if (T3.z < 5.5) { base = lerp(T4.rgb, T5.rgb, cr); }\n"
     "      else {\n"
-    "        float3 hsv = lerp(T4.rgb, T5.rgb, rnd.z);\n"
+    "        float3 hsv = lerp(T4.rgb, T5.rgb, cr);\n"
     "        base = hsv2rgb(hsv * float3(360.0/255.0, 1.0/255.0, 1.0/255.0));\n"
     "      }\n"
     "    } else { base = T4.rgb; }\n"
     "    has_ovr = b3.w;\n"
 
-    "    float4 T8 = tex2D(sType, float2((type + 0.5) / 256.0, 8.5 / 13.0));\n"
-    "    float4 T9 = tex2D(sType, float2((type + 0.5) / 256.0, 9.5 / 13.0));\n"
+    "    float4 T8 = tex2D(sType, float2((type + 0.5) / 256.0, 8.5 / 14.0));\n"
+    "    float4 T9 = tex2D(sType, float2((type + 0.5) / 256.0, 9.5 / 14.0));\n"
     "    float nf = T8.y;\n"
     "    frame = (T9.x > 0.5 && nf > 1.0) ? floor(h1(id + seed * 17.0 + 9.0) * nf) : 0.0;\n"
     "  } else if (dead < 0.5) {\n"
@@ -533,13 +542,29 @@ static const char* EVO_PS_HLSL =
     "    type = st.z;\n"
     "    base = ov.rgb;\n"
     "    has_ovr = ov.w;\n"
-    "    float4 T2 = tex2D(sType, float2((type + 0.5) / 256.0, 2.5 / 13.0));\n"
+    "    float4 T2 = tex2D(sType, float2((type + 0.5) / 256.0, 2.5 / 14.0));\n"
     "    float g = T2.y;\n"
     "    float ga = T2.x * DEG2RAD;\n"
     "    vel += g * dt * float2(cos(ga), -sin(ga));\n"
     "    vel *= max(1.0 - clamp(T2.z, 0.0, 1.0) * dt, 0.0);\n"
-    "    pos += vel * dt;\n"
-    "    float4 T8 = tex2D(sType, float2((type + 0.5) / 256.0, 8.5 / 13.0));\n"
+    "    float4 T13 = tex2D(sType, float2((type + 0.5) / 256.0, 13.5 / 14.0));\n"
+    // 速度/方向更新(与引擎 sub_4BDA50 一致):
+    // speed 每步 += speed_incr 后 clamp≥0; 移动前 speed += (tri((age+4φ)%20)/5 - 1)×speed_wiggle;
+    // direction 每步 += dir_incr; 移动前 direction += (tri((age+3φ)%24)/6 - 1)×dir_wiggle。
+    // tri(x) = x>2 ? 4-x : x; 两 wave 均 -1 → 值域 [-1,1) 对称平均 0(摆动无漂移)。
+    "    float len = max(length(vel) + T13.z * dt, 0.0);\n"
+    "    vel = vel * (len / max(length(vel), 0.0001));\n"
+    // 速度摆动: 每步随机 ±wiggle, 当步位移抖动(不进速度状态, 无累积/整流; GMParty 同模式)
+    "    float swing = (h1(id + floor(age) * 7.31) * 2.0 - 1.0) * T13.w * dt;\n"
+    // 方向摆动: 三角波(部分和有界 ±3×wiggle, 与引擎 sub_4BDA50 的 waveA 一致)
+    "    float dw = fmod(h1(id + 23.0) * 24.0 + age, 24.0) / 6.0;\n"
+    "    dw = dw > 2.0 ? 4.0 - dw : dw;\n"
+    "    float da = T13.x * dt + (dw - 1.0) * T13.y;\n"
+    "    da *= DEG2RAD;\n"
+    "    float ca2 = cos(da), sa2 = sin(da);\n"
+    "    vel = float2(vel.x * ca2 + vel.y * sa2, -vel.x * sa2 + vel.y * ca2);\n"
+    "    pos += vel * dt + (vel / max(length(vel), 0.0001)) * swing;\n"
+    "    float4 T8 = tex2D(sType, float2((type + 0.5) / 256.0, 8.5 / 14.0));\n"
     "    float nf = T8.y;\n"
     "    frame = st.w;\n"
     "    if (T8.z > 0.5 && nf > 1.0)\n"
@@ -591,22 +616,27 @@ static const char* RND_VS_HLSL =
     "  float frame = st.w;\n"
     "  float dead = (age >= life) ? 1.0 : 0.0;\n"
     "  float2 tuv = float2((type + 0.5) / 256.0, 0.0);\n"
-    "  float4 T0 = tex2Dlod(sType, float4(tuv.x, 0.5 / 13.0, 0, 0));\n"
-    "  float4 T2 = tex2Dlod(sType, float4(tuv.x, 2.5 / 13.0, 0, 0));\n"
-    "  float4 T3 = tex2Dlod(sType, float4(tuv.x, 3.5 / 13.0, 0, 0));\n"
-    "  float4 T4 = tex2Dlod(sType, float4(tuv.x, 4.5 / 13.0, 0, 0));\n"
-    "  float4 T5 = tex2Dlod(sType, float4(tuv.x, 5.5 / 13.0, 0, 0));\n"
-    "  float4 T6 = tex2Dlod(sType, float4(tuv.x, 6.5 / 13.0, 0, 0));\n"
-    "  float4 T7 = tex2Dlod(sType, float4(tuv.x, 7.5 / 13.0, 0, 0));\n"
-    "  float4 T8 = tex2Dlod(sType, float4(tuv.x, 8.5 / 13.0, 0, 0));\n"
+    "  float4 T0 = tex2Dlod(sType, float4(tuv.x, 0.5 / 14.0, 0, 0));\n"
+    "  float4 T2 = tex2Dlod(sType, float4(tuv.x, 2.5 / 14.0, 0, 0));\n"
+    "  float4 T3 = tex2Dlod(sType, float4(tuv.x, 3.5 / 14.0, 0, 0));\n"
+    "  float4 T4 = tex2Dlod(sType, float4(tuv.x, 4.5 / 14.0, 0, 0));\n"
+    "  float4 T5 = tex2Dlod(sType, float4(tuv.x, 5.5 / 14.0, 0, 0));\n"
+    "  float4 T6 = tex2Dlod(sType, float4(tuv.x, 6.5 / 14.0, 0, 0));\n"
+    "  float4 T7 = tex2Dlod(sType, float4(tuv.x, 7.5 / 14.0, 0, 0));\n"
+    "  float4 T8 = tex2Dlod(sType, float4(tuv.x, 8.5 / 14.0, 0, 0));\n"
     "  float4 ov = tex2Dlod(sOvr, float4(uv, 0, 0));\n"
-    "  float4 T12 = tex2Dlod(sType, float4(tuv.x, 12.5 / 13.0, 0, 0));\n"
-    "  // GM8 尺寸语义: size = 随机[min,max] + incr*age, 摆动 ±wiggle;\n"
-    "  // 屏幕像素 = size * scale * 形状像素(内置形状精灵 64px, 精灵用精灵宽)\n"
-    "  float size = lerp(T0.z, T0.w, h1(id + 3.0)) + T12.y * age + (h1(id + 9.0) * 2.0 - 1.0) * T12.z;\n"
+    "  float4 T12 = tex2Dlod(sType, float4(tuv.x, 12.5 / 14.0, 0, 0));\n"
+    "  // GM8 尺寸语义: size0 = 随机[min,max] + incr*age(clamp≥0); wiggle = ±wiggle 三角波摆动\n"
+    "  float size0 = max(lerp(T0.z, T0.w, h1(id + 3.0)) + T12.y * age, 0.0);\n"
+    "  float swv = fmod(h1(id + 9.0) * 16.0 + age, 16.0) / 4.0;\n"
+    "  swv = swv > 2.0 ? 4.0 - swv : swv;\n"
+    "  float size = size0 + (swv - 1.0) * T12.z;\n"
     "  float2 psize = size * float2(T3.x, T3.y) * T12.x;\n"
     "  float ang = lerp(T7.x, T7.y, h1(id + 5.0)) + T7.z * age;\n"
-    "  ang += (h1(id + floor(age) * 7.31) - 0.5) * 2.0 * T7.w;\n"
+    // 角度摆动: 三角波(与引擎绘制 rot 的 wave 一致, mod 16 折返, 部分和有界)
+    "  float owv = fmod(h1(id + 31.0) * 16.0 + age, 16.0) / 4.0;\n"
+    "  owv = owv > 2.0 ? 4.0 - owv : owv;\n"
+    "  ang += (owv - 1.0) * T7.w;\n"
     "  if (T8.x > 0.5) ang += atan2(-pl.w, pl.z) * 57.29577951308232;\n"
     "  ang *= 0.017453292519943295;\n"
     "  float ca = cos(ang), sa = sin(ang);\n"
@@ -638,12 +668,16 @@ static const char* RND_VS_HLSL =
 static const char* RND_PS_HLSL =
     "sampler sMain : register(s0);\n"
     "sampler sRect : register(s5);\n"
+    "float4 uBlend : register(c5);\n"   // .x = 当前遍混合模式(0=普通, 1=加法)
     "float4 main(float2 cuv : TEXCOORD0, float2 tinfo : TEXCOORD1, float4 col : COLOR0) : COLOR0 {\n"
     "  float4 rect = tex2D(sRect, float2((tinfo.x + 0.5) / 256.0, (tinfo.y + 0.5) / 32.0));\n"
     "  float2 auv = rect.xy + rect.zw * cuv;\n"
     "  float4 tex = tex2D(sMain, auv);\n"
     "  float a = tex.a * col.a;\n"
-    "  return float4(tex.rgb * col.rgb * a, a);\n"
+    // 普通遍(ONE/INVSRCALPHA 语义): straight 输出; 加法遍(ONE/ONE): rgb 预乘 alpha(引擎 bm_add 行为)
+    "  float3 rgb = tex.rgb * col.rgb;\n"
+    "  rgb *= (uBlend.x > 0.5) ? a : 1.0;\n"
+    "  return float4(rgb, a);\n"
     "}\n";
 
 
@@ -651,22 +685,32 @@ static const char* RND_PS_HLSL =
 // GPU 资源初始化(惰性, 失败置 g_gpu_failed)
 // ============================================================================
 
-// 调用 GM8 引擎 sub_4BB120(生成 14 个形状精灵并填充 0x6C7434 数组)。
-// 特征码 = 函数开头 5 push + cmp byte ptr [0x58D5A0],0 + jnz(.data 地址跨编译一致,
-// 已验证 0x58F3A0 等 .data 全局有效)。仅当引擎标志未置位时调用(幂等)。
+// 调用 GM8 引擎 sub_4BB120(生成 14 个形状精灵并填充形状表数组)。
+// 特征码 = 函数开头 5 push + cmp byte ptr [disp32],0 + jnz——disp32 通配,
+// jnz 接受 short(75) 与 near(0F 85) 两种编码(GM8 不同编译产物的分支编码有差异,
+// 实测空工程为 75, Nature Edition 为 0F 85, 其余 12 字节一致)。
+// 仅当引擎标志未置位时调用(幂等)。若匹配失败, 形状表由引擎自身的
+// part_system_create 填充, ensure_gm8_shapes() 每帧重试兜底。
 static void call_gm8_shape_init()
 {
     if (*(volatile BYTE*)0x58D5A0) return;   // 引擎已生成
     static const BYTE sig[] = {
-        0x53, 0x56, 0x57, 0x55, 0x51,               // push ebx/esi/edi/ebp/ecx
-        0x80, 0x3D, 0xA0, 0xD5, 0x58, 0x00, 0x00,   // cmp byte ptr [58D5A0], 0
-        0x75                                        // jnz
+        0x53, 0x56, 0x57, 0x55, 0x51,        // push ebx/esi/edi/ebp/ecx
+        0x80, 0x3D,                          // cmp byte ptr [disp32],
+        0x00, 0x00, 0x00, 0x00,              //   disp32(通配)
+        0x00,                                // , 0
+        0x75                                 // jnz short(与 0F 85 二选一)
     };
     constexpr DWORD TEXT_START = 0x401000;
     constexpr DWORD TEXT_END = 0x589000;            // 到 .data 段前
-    for (DWORD ea = TEXT_START; ea + sizeof(sig) <= TEXT_END; ++ea)
+    for (DWORD ea = TEXT_START; ea + 14 <= TEXT_END; ++ea)
     {
-        if (memcmp((const void*)ea, sig, sizeof(sig)) == 0)
+        // 前 7 字节精确 + 偏移 11 的 ",0" + jnz(short 0x75 或 near 0F 85)
+        if (memcmp((const void*)ea, sig, 7) == 0
+            && *(const BYTE*)(ea + 11) == 0x00
+            && (*(const BYTE*)(ea + 12) == 0x75
+                || (*(const BYTE*)(ea + 12) == 0x0F
+                    && *(const BYTE*)(ea + 13) == 0x85)))
         {
             typedef void(__cdecl* fn_t)();
             ((fn_t)ea)();
@@ -739,13 +783,11 @@ static void upscale_to_tile(const std::vector<BYTE>& src, int sw, int sh, std::v
 
 static bool g_gm8_shapes_grabbed = false;   // GM8 形状精灵抓取完成标志
 
-// 尝试抓取全部 14 个形状覆盖图集 tile(引擎在 part_system_create 时填充,
-// gpart_gpu_init 时可能未就绪, 由 drawit 重试)。
+// 尝试抓取全部 14 个形状覆盖图集 tile(引擎 sub_4BB120 由 CPU part_system_create
+// 触发, 时序不确定; 每帧尝试直到成功, 消除粒子延迟显现的几十帧空窗)。
 static void ensure_gm8_shapes()
 {
     if (g_gm8_shapes_grabbed || !g_atlas_tex) return;
-    static int g_retry = 0;              // 引擎表未就绪时每 60 帧重试一次, 避免刷屏
-    if (++g_retry % 60 != 1) return;
     bool all = true;
     for (int s = 0; s < PT_SHAPE_COUNT; ++s)
     {
@@ -1241,13 +1283,15 @@ static void run_render(GSystem& s)
     float bl[4] = { 0, 0, 0, 0 };
     if (s.blend_mask == 3)
     {
-        // 混合系统: 普通 + 加法两遍(VS 按 uBlend 零化不匹配粒子)
+        // 混合系统: 普通 + 加法两遍(VS/PS 按 uBlend 零化不匹配粒子/切换预乘)
         set_blend(0, 20);
         D3DCheck(d3d::set_vs_const_typed(RND_C_BLEND, d3d::CK_FLOAT, bl, 1), 22);
+        D3DCheck(d3d::set_ps_const_typed(RND_C_BLEND, d3d::CK_FLOAT, bl, 1), 22);
         draw_ranges(23);
         set_blend(1, 25);
         bl[0] = 1.0f;
         D3DCheck(d3d::set_vs_const_typed(RND_C_BLEND, d3d::CK_FLOAT, bl, 1), 26);
+        D3DCheck(d3d::set_ps_const_typed(RND_C_BLEND, d3d::CK_FLOAT, bl, 1), 26);
         draw_ranges(27);
     }
     else
@@ -1256,6 +1300,7 @@ static void run_render(GSystem& s)
         set_blend(additive, 20);
         bl[0] = (float)additive;
         D3DCheck(d3d::set_vs_const_typed(RND_C_BLEND, d3d::CK_FLOAT, bl, 1), 22);
+        D3DCheck(d3d::set_ps_const_typed(RND_C_BLEND, d3d::CK_FLOAT, bl, 1), 22);
         draw_ranges(23);
     }
 
@@ -1481,6 +1526,7 @@ exp_real gpart_system_update()
     simple_catch("gpart_system_update", gerror)
 }
 
+
 exp_real gpart_system_drawit(double sys)
 {
     if (d3d::version() != d3d::V9) return gerror;
@@ -1491,6 +1537,7 @@ exp_real gpart_system_drawit(double sys)
         GSystem& s = it->second;
 
         ensure_gm8_shapes();   // 引擎形状精灵懒初始化完成后的重试(一次性)
+
 
         run_render(s);
         return gtrue;
@@ -1812,7 +1859,10 @@ exp_real gpart_type_size(double type, double min, double max, double incr, doubl
     simple_catch("gpart_type_size", gerror)
 }
 
-exp_real gpart_type_speed(double type, double min, double max)
+// GM8 part_type_speed(ind, speed_min, speed_max, speed_incr, speed_wiggle):
+// 每步速度 += speed_incr(速度永不为负) + 随机 ±speed_wiggle 摆动。
+// 增量/摆动为 per-step(与 dt=1 的演化一致), 速度下限 0 由 shader clamp。
+exp_real gpart_type_speed(double type, double min, double max, double incr, double wiggle)
 {
     try
     {
@@ -1820,13 +1870,17 @@ exp_real gpart_type_speed(double type, double min, double max)
         if (!t) return gfalse;
         t->speed_min() = (float)std::min(min, max);
         t->speed_max() = (float)std::max(min, max);
+        t->speed_increment() = (float)incr;
+        t->speed_wiggle() = (float)wiggle;
         type_table_upload();
         return gtrue;
     }
     simple_catch("gpart_type_speed", gerror)
 }
 
-exp_real gpart_type_direction(double type, double min, double max)
+// GM8 part_type_direction(ind, dir_min, dir_max, dir_incr, dir_wiggle):
+// 方向范围(逆时针, 0=右); dir_incr = 每步方向增量; dir_wiggle = 每步 ±偏移。均为 per-step。
+exp_real gpart_type_direction(double type, double min, double max, double incr, double wiggle)
 {
     try
     {
@@ -1834,6 +1888,8 @@ exp_real gpart_type_direction(double type, double min, double max)
         if (!t) return gfalse;
         t->direction_min() = (float)std::min(min, max);
         t->direction_max() = (float)std::max(min, max);
+        t->direction_increment() = (float)incr;
+        t->direction_wiggle() = (float)wiggle;
         type_table_upload();
         return gtrue;
     }
