@@ -78,7 +78,9 @@ constexpr int GP_ATLAS_TILE = 64;         // built-in shape tile size (px, 16 pe
 constexpr int GP_RECT_TEX_FRAMES = 32;    // rect table rows per type (max sprite frames)
 
 // ---- exports: gpu init (1) ----
-exp_real gpart_gpu_init();              // 立即完成 GPU 初始化(懒初始化之外的手动预热), 成功 1 / 失败 -1
+// cache_dir: 着色器字节码缓存目录(空串 = 不使用缓存)。缓存跳过 d3dcompiler 的
+// HLSL→asm 编译(EVO_PS 展开后 ~1.4s), 缓存命中直接读 .bin 建设备对象。
+exp_real gpart_gpu_init(const char* cache_dir);
 
 // ---- exports: system (9) ----
 exp_real gpart_system_create(double capacity);

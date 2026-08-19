@@ -1,9 +1,11 @@
 #include "gpart.h"
 #include "vertex.h"
+#include "xxhash.hpp"          // shader 缓存 key 哈希
 #include "../Librarys/math_s.h"
 #include <cstring>
 #include <cmath>
 #include <algorithm>
+#include <fstream>
 
 // GP_FMT_16F / GP_FMT_32F 是 D3D9 专属格式常量(113/116), d3d8.h 里没有; gpart 仅 D3D9 运行。
 static const DWORD GP_FMT_16F = 113;   // D3DFMT_A16B16G16R16F (PS 采样通用, VS/VTF 仅部分硬件支持)
@@ -854,7 +856,50 @@ static void ensure_gm8_shapes()
         g_gm8_shapes_grabbed = true;
 }
 
-static bool gpu_init_internal()
+// ---- shader 字节码缓存(现代预编译: 跳过 d3dcompiler 的 HLSL→asm 编译) ----
+// 缓存文件: <dir>\gpart_shader_<name>.bin, 头 16 字节 = magic("GPCS") + src_hash(XXH64) + len。
+// src_hash = XXH64(shader 源串 + profile), shader 改动自动失效 → 重新编译覆盖。
+// DX9 asm bytecode 与驱动无关(驱动每次创建时即时编 ISA), 驱动更新无需重编译。
+static bool shader_cache_read(const char* dir, const char* name, xxh::hash64_t src_hash,
+    std::vector<BYTE>& out)
+{
+    if (!dir || dir[0] == '\0')
+        return false;
+
+    std::ifstream f(std::string(dir) + "\\gpart_shader_" + name + ".bin", std::ios::binary);
+    if (!f) return false;
+
+    unsigned magic = 0, len = 0;
+    xxh::hash64_t sh = 0;
+    if (!f.read(reinterpret_cast<char*>(&magic), 4)
+        || !f.read(reinterpret_cast<char*>(&sh), 8)
+        || !f.read(reinterpret_cast<char*>(&len), 4)
+        || magic != 0x43535047u || sh != src_hash || len == 0 || len >= (1u << 20))
+        return false;
+
+    out.resize(len);
+    return static_cast<bool>(f.read(reinterpret_cast<char*>(out.data()), len));
+}
+
+static void shader_cache_write(const char* dir, const char* name, xxh::hash64_t src_hash,
+    const void* data, size_t len)
+{
+    if (!dir || dir[0] == '\0')
+        return;
+
+    CreateDirectoryA(dir, nullptr);   // 已存在则失败, 忽略
+    std::ofstream f(std::string(dir) + "\\gpart_shader_" + name + ".bin",
+        std::ios::binary | std::ios::trunc);
+    if (!f) return;
+
+    unsigned magic = 0x43535047u, l = static_cast<unsigned>(len);
+    f.write(reinterpret_cast<const char*>(&magic), 4);
+    f.write(reinterpret_cast<const char*>(&src_hash), 8);
+    f.write(reinterpret_cast<const char*>(&l), 4);
+    f.write(static_cast<const char*>(data), static_cast<std::streamsize>(len));
+}
+
+static bool gpu_init_internal(const char* cache_dir)
 {
     if (g_gpu_ready || g_gpu_failed) return g_gpu_ready;
     try
@@ -905,26 +950,35 @@ static bool gpu_init_internal()
                 GP_FMT_16F, z.data(), GP_TYPE_TEX_W * 8), 10);
         }
 
-        // shader 编译
-        auto compile = [](const char* src, const char* entry, const char* profile,
-            std::vector<BYTE>& code)
+        // shader 编译(带字节码缓存: 命中直接读文件, 未命中编译并写缓存)
+        auto load_or_compile = [&](const char* name, const char* src, const char* entry,
+            const char* profile, std::vector<BYTE>& code)
         {
+			std::string src_str(src);
+            std::string key = src_str + "|" + profile;
+            xxh::hash64_t h = xxh::xxhash<64>(key.data(), key.size());
+            if (shader_cache_read(cache_dir, name, h, code))
+                return;   // 缓存命中, 跳过编译
+
             std::string err;
             void* table = nullptr;
-            HRESULT hr = d3d::compile_hlsl(src, strlen(src), entry, profile, code, &table, &err);
+            HRESULT hr = d3d::compile_hlsl(src_str.data(), src_str.length(), entry, 
+                profile, code, &table, &err);
             if (table) d3d::release(table);
             if (FAILED(hr))
                 throw std::runtime_error("gpart shader 编译失败 (" + std::string(entry) + "): " + err);
+
+            shader_cache_write(cache_dir, name, h, code.data(), code.size());
         };
 
         std::vector<BYTE> code;
-        compile(EVO_VS_HLSL, "main", "vs_3_0", code);
+        load_or_compile("evo_vs", EVO_VS_HLSL, "main", "vs_3_0", code);
         D3DCheck(d3d::create_vertex_shader(d3d::VERT_DEFAULT, code.data(), nullptr, 0, &g_evo_vs), 9);
-        compile(EVO_PS_HLSL, "main", "ps_3_0", code);
+        load_or_compile("evo_ps", EVO_PS_HLSL, "main", "ps_3_0", code);
         D3DCheck(d3d::create_pixel_shader(code.data(), &g_evo_ps), 10);
-        compile(RND_VS_HLSL, "main", "vs_3_0", code);
+        load_or_compile("rnd_vs", RND_VS_HLSL, "main", "vs_3_0", code);
         D3DCheck(d3d::create_vertex_shader(d3d::VERT_DEFAULT, code.data(), nullptr, 0, &g_rnd_vs), 11);
-        compile(RND_PS_HLSL, "main", "ps_3_0", code);
+        load_or_compile("rnd_ps", RND_PS_HLSL, "main", "ps_3_0", code);
         D3DCheck(d3d::create_pixel_shader(code.data(), &g_rnd_ps), 12);
 
         g_gpu_ready = true;
@@ -1434,12 +1488,13 @@ static void run_render(GSystem& s)
 // 立即执行 GPU 初始化(创建类型表/图集/矩形表纹理、编译 shader、抓取引擎形状精灵)。
 // 幂等: 已就绪/已失败时直接返回现状; 游戏可在加载画面主动预热, 避免首次
 // update/particles_create 时的卡顿。成功返回 gtrue, 失败(含 VTF 不支持)返回 gerror。
-exp_real gpart_gpu_init()
+// cache_dir: 着色器字节码缓存目录; 空字符串 = 不使用缓存(每次重新编译)。
+exp_real gpart_gpu_init(const char* cache_dir)
 {
     if (d3d::version() != d3d::V9) return gerror;
     try
     {
-        return gpu_init_internal() ? gtrue : gerror;
+        return gpu_init_internal(cache_dir ? cache_dir : "") ? gtrue : gerror;
     }
     simple_catch("gpart_gpu_init", gerror)
 }
@@ -1449,7 +1504,7 @@ exp_real gpart_system_create(double capacity)
     if (d3d::version() != d3d::V9) return gerror;
     try
     {
-        if (!gpu_init_internal()) return gerror;
+        if (!gpu_init_internal("")) return gerror;
         GSystem s;
         // capacity <= 0 → 默认 4096(GML 包装脚本省略参数时为 0)
         s.capacity = (int)capacity <= 0
@@ -1845,7 +1900,7 @@ exp_real gpart_type_sprite(double type, double sprite, double animat, double str
     try
     {
         if (d3d::version() != d3d::V9) return gerror;
-        if (!gpu_init_internal()) return gerror;
+        if (!gpu_init_internal("")) return gerror;
         GType* t = type_at((int)type);
         if (!t) return gfalse;
         int spr = (int)sprite;
