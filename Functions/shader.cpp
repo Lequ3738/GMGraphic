@@ -679,6 +679,34 @@ void texture_clear_all()
 
 // 采样器基础过滤(GMS2 gpu_set_texfilter_ext, 参数扩展为 D3D 过滤值)。
 // filter: 0=point(最近邻)/1=linear(双线性)/2=anisotropic/3=none。
+
+// ---- 采样器状态(D3D9 D3DSAMP_* 数值; D3D8 无 sampler state → 映射到 D3DTSS_*) ----
+// D3D9 D3DSAMP_: ADDRESSU=1, ADDRESSV=2, ADDRESSW=3, BORDERCOLOR=4, MAGFILTER=5,
+//   MINFILTER=6, MIPFILTER=7, MIPMAPLODBIAS=8, MAXMIPLEVEL=9, MAXANISOTROPY=10, SRGBTEXTURE=11。
+// D3D8 D3DTSS_ 对应: ADDRESSU=13, ADDRESSV=14, ADDRESSW=15, BORDERCOLOR=16, MAGFILTER=17,
+//   MINFILTER=18, MIPFILTER=19, MIPMAPLODBIAS=20, MAXMIPLEVEL=21, MAXANISOTROPY=22。
+// (SRGBTEXTURE 等 D3D9 专属 → D3D8 返回失败)
+static const dword g_samp_state_to_tss[11] = { 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 0 };
+
+// 按后端分发: D3D9 走 sampler state(可编程 shader 采样器的正规控制, 读写对称),
+// D3D8 映射回 texture stage state(固定管线采样状态挂 stage)。
+static HRESULT set_sampler_state_cfg(dword s, dword samp_state, dword v)
+{
+    if (d3d::version() == d3d::V9)
+        return d3d::set_sampler_state(s, samp_state, v);
+    if (samp_state == 0 || samp_state > 11 || g_samp_state_to_tss[samp_state - 1] == 0)
+        return E_FAIL;
+    return d3d::set_tex_stage_state(s, g_samp_state_to_tss[samp_state - 1], v);
+}
+static HRESULT get_sampler_state_cfg(dword s, dword samp_state, dword* v)
+{
+    if (d3d::version() == d3d::V9)
+        return d3d::get_sampler_state(s, samp_state, v);
+    if (samp_state == 0 || samp_state > 11 || g_samp_state_to_tss[samp_state - 1] == 0)
+        return E_FAIL;
+    return d3d::get_tex_stage_state(s, g_samp_state_to_tss[samp_state - 1], v);
+}
+
 exp_real gpu_set_texfilter_ext(double sampler, double filter)
 {
     dword s = (dword)sampler;
@@ -695,8 +723,9 @@ exp_real gpu_set_texfilter_ext(double sampler, double filter)
     default: f = D3DTEXF_POINT;     break;
     }
 
-    if ((D3D_OK == d3d::set_tex_stage_state(s, D3DTSS_MAGFILTER, f))
-        && (D3D_OK == d3d::set_tex_stage_state(s, D3DTSS_MINFILTER, f)))
+    // D3D9 下用 sampler state(D3DSAMP_MAGFILTER=5/MINFILTER=6), shader 采样器正规控制
+    if ((D3D_OK == set_sampler_state_cfg(s, 5, f))
+        && (D3D_OK == set_sampler_state_cfg(s, 6, f)))
     {
         return gtrue;
     }
@@ -718,9 +747,10 @@ exp_real gpu_set_texrepeat_ext(double sampler, double h, double v, double border
     if (u == 0) u = D3DTADDRESS_CLAMP;   // 0 = clamp(gm82dx9 式)
     if (w == 0) w = D3DTADDRESS_CLAMP;
 
-    HRESULT hr = d3d::set_tex_stage_state(s, D3DTSS_ADDRESSU, u);
-    if (SUCCEEDED(hr)) hr = d3d::set_tex_stage_state(s, D3DTSS_ADDRESSV, w);
-    if (SUCCEEDED(hr)) hr = d3d::set_tex_stage_state(s, D3DTSS_BORDERCOLOR, col_d3d((int)border_col, 1.0));
+    // D3D9: D3DSAMP_ADDRESSU=1/ADDRESSV=2/BORDERCOLOR=4
+    HRESULT hr = set_sampler_state_cfg(s, 1, u);
+    if (SUCCEEDED(hr)) hr = set_sampler_state_cfg(s, 2, w);
+    if (SUCCEEDED(hr)) hr = set_sampler_state_cfg(s, 4, col_d3d((int)border_col, 1.0));
     return SUCCEEDED(hr) ? gtrue : gfalse;
 }
 
@@ -732,7 +762,8 @@ exp_real gpu_set_tex_max_aniso_ext(double sampler, double maxaniso)
     if (s >= d3dcaps.max_tex_stages)
         return gerror;
 
-    d3dcheck(d3d::set_tex_stage_state(s, D3DTSS_MAXANISOTROPY,
+    // D3D9: D3DSAMP_MAXANISOTROPY=10
+    d3dcheck(set_sampler_state_cfg(s, 10,
         (dword)std::min((dword)maxaniso, d3dcaps.max_aniso)));
 }
 
@@ -744,7 +775,8 @@ exp_real gpu_set_tex_mip_filter_ext(double sampler, double filter)
     if (s >= d3dcaps.max_tex_stages)
         return gerror;
 
-    d3dcheck(d3d::set_tex_stage_state(s, D3DTSS_MIPFILTER, (dword)filter));
+    // D3D9: D3DSAMP_MIPFILTER=7
+    d3dcheck(set_sampler_state_cfg(s, 7, (dword)filter));
 }
 
 // border 寻址模式颜色(D3D 扩展, GMS2 无对等)。tex_wrap_border(4) 模式用。
@@ -755,7 +787,34 @@ exp_real gpu_set_tex_border_ext(double sampler, double col, double alpha)
     if (s >= d3dcaps.max_tex_stages)
         return gerror;
 
-    d3dcheck(d3d::set_tex_stage_state(s, D3DTSS_BORDERCOLOR, col_d3d((int)col, alpha)));
+    // D3D9: D3DSAMP_BORDERCOLOR=4
+    d3dcheck(set_sampler_state_cfg(s, 4, col_d3d((int)col, alpha)));
+}
+
+// ============================================================================
+// 通用采样器状态(D3D 扩展, GMS2 无对等): 完整开放 D3D9 D3DSAMP_* / D3D8 对应 D3DTSS_*
+// ============================================================================
+
+// gpu_set_sampler_state_ext(sampler, state, value): 设置采样器任意状态。
+// state(D3DSAMP_ 值): ADDRESSU=1, ADDRESSV=2, ADDRESSW=3, BORDERCOLOR=4, MAGFILTER=5,
+//   MINFILTER=6, MIPFILTER=7, MIPMAPLODBIAS=8, MAXMIPLEVEL=9, MAXANISOTROPY=10, SRGBTEXTURE=11。
+// value: 对应状态值(filter: NONE=0/POINT=1/LINEAR=3/ANISOTROPIC=4;
+//   address: WRAP=1/MIRROR=2/CLAMP=3/BORDER=4)。D3D8 下映射到 D3DTSS_*, 专属状态失败。
+exp_real gpu_set_sampler_state_ext(double sampler, double state, double value)
+{
+    dword s = (dword)sampler;
+    if (s >= d3dcaps.max_tex_stages) return gerror;
+    HRESULT hr = set_sampler_state_cfg(s, (dword)state, (dword)value);
+    return SUCCEEDED(hr) ? gtrue : gfalse;
+}
+
+exp_real gpu_get_sampler_state_ext(double sampler, double state)
+{
+    dword s = (dword)sampler;
+    if (s >= d3dcaps.max_tex_stages) return gerror;
+    dword v = 0;
+    HRESULT hr = get_sampler_state_cfg(s, (dword)state, &v);
+    return SUCCEEDED(hr) ? (double)v : gerror;
 }
 
 // ============================================================================

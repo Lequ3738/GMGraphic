@@ -81,6 +81,7 @@ constexpr int GP_RECT_TEX_FRAMES = 32;    // rect table rows per type (max sprit
 // cache_dir: 着色器字节码缓存目录(空串 = 不使用缓存)。缓存跳过 d3dcompiler 的
 // HLSL→asm 编译(EVO_PS 展开后 ~1.4s), 缓存命中直接读 .bin 建设备对象。
 exp_real gpart_gpu_init(const char* cache_dir);
+exp_real gpart_set_premul(double mode);   // gpart 扩展: -1=自动检测(默认)/0=straight/1=预乘, 同 sdf_draw_set_premul
 
 // ---- exports: system (9) ----
 exp_real gpart_system_create(double capacity);
@@ -115,6 +116,7 @@ exp_real gpart_type_gravity(double type, double force, double dir);
 exp_real gpart_type_drag(double type, double coeff);
 exp_real gpart_type_step(double type, double step_number, double step_type);
 exp_real gpart_type_death(double type, double death_number, double death_type);
+exp_real gpart_type_immune_destroyer(double type, double immune);   // gpart 扩展: 豁免 destroyer 特效器(锚定粒子用)
 exp_real gpart_type_colour1(double type, double c1);
 exp_real gpart_type_colour2(double type, double c1, double c2);
 exp_real gpart_type_colour3(double type, double c1, double c2, double c3);

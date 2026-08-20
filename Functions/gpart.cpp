@@ -183,6 +183,8 @@ struct GType
     const float& death_type_id() const { return field(GTypeRow::StepDeath, 3); }
     bool has_step() const { return field(GTypeRow::FeatureFlags, 0) > 0.5f; }
     bool has_death() const { return field(GTypeRow::FeatureFlags, 1) > 0.5f; }
+    bool destroyer_immune() const { return field(GTypeRow::FeatureFlags, 2) > 0.5f; }
+    float& destroyer_immune_flag() { return field(GTypeRow::FeatureFlags, 2); }
 
     float& pixel_scale() { return field(GTypeRow::RenderSize, 0); }
     float& size_increment() { return field(GTypeRow::RenderSize, 1); }
@@ -217,7 +219,8 @@ struct GType
         frame_count() = animation_enabled() = stretch_animation() = 0;
         random_frame_flag() = 0;
         step_number() = step_type_id() = death_number() = death_type_id() = 0;
-        field(GTypeRow::FeatureFlags, 0) = field(GTypeRow::FeatureFlags, 1) = 0;
+        field(GTypeRow::FeatureFlags, 0) = field(GTypeRow::FeatureFlags, 1) =
+            field(GTypeRow::FeatureFlags, 2) = 0;
         pixel_scale() = 64;   // GM8 内置形状精灵实测 64×64(origin 32,32 中心); size 为缩放倍数
         size_increment() = size_wiggle() = 0;
     }
@@ -363,6 +366,9 @@ static dword g_evo_vs = 0, g_evo_ps = 0;
 static dword g_rnd_vs = 0, g_rnd_ps = 0;
 static bool g_gpu_ready = false;
 static bool g_gpu_failed = false;
+// 粒子输出 alpha 模式: -1=自动检测当前混合状态(ONE/INVSRCALPHA→预乘, SRCALPHA→straight),
+// 0=强制 straight(SRCALPHA/INVSRCALPHA), 1=强制预乘(ONE/INVSRCALPHA)。默认 -1 适配任意管线。
+static int g_gpart_premul = -1;
 
 // 图集分配: 先复用已释放区域(首次适配, 可切分), 否则走 shelf 分配器
 static bool atlas_alloc(int w, int h, int& x, int& y)
@@ -619,7 +625,8 @@ static const char* EVO_PS_HLSL =
     "        if (cl > 0.0001) vel *= nl / cl;\n"
     "      }\n"
     "    }\n"
-         // destroyer(引擎 sub_4BE394): 区域内(rect/ellipse/diamond)立即销毁
+         // destroyer(引擎 sub_4BE394): 区域内(rect/ellipse/diamond)立即销毁;
+    "    float4 T11 = tex2D(sType, float2((type + 0.5) / 256.0, 11.5 / 14.0));\n"
     "    for (int de2 = 0; de2 < 4; ++de2) {\n"
     "      if (de2 >= uEff.y) break;\n"
     "      float4 dr2 = tex2D(sEff, float2((de2 + 0.5) / 64.0, 2.5 / 6.0));\n"
@@ -632,7 +639,7 @@ static const char* EVO_PS_HLSL =
     "        float hit = ds2.y < 0.5 ? 1.0\n"
     "          : (ds2.y > 0.5 && ds2.y < 1.5) ? (nx * nx + ny * ny <= 1.0 ? 1.0 : 0.0)\n"
     "          : (abs(nx) + abs(ny) <= 1.0 ? 1.0 : 0.0);\n"
-    "        if (hit > 0.5) { age = 1.0; life = 0.0; }   // 立即销毁(age>=life 剔除)\n"
+    "        if (hit > 0.5 && T11.z < 0.5) { age = 1.0; life = 0.0; }\n"   // 立即销毁(age>=life 剔除)
     "      }\n"
     "    }\n"
     "    float4 T8 = tex2D(sType, float2((type + 0.5) / 256.0, 8.5 / 14.0));\n"
@@ -745,9 +752,10 @@ static const char* RND_PS_HLSL =
     "  float2 auv = rect.xy + rect.zw * cuv;\n"
     "  float4 tex = tex2D(sMain, auv);\n"
     "  float a = tex.a * col.a;\n"
-       // 普通遍(ONE/INVSRCALPHA 语义): straight 输出; 加法遍(ONE/ONE): rgb 预乘 alpha(引擎 bm_add 行为)
+    // uBlend.x = 当前遍(0=普通, 1=加色); uBlend.y = 预乘输出(1=预乘管线/自动检测到 ONE 混合)。
+    // 加色遍或预乘模式 → rgb *= a(预乘); 否则 straight(默认 SRCALPHA 管线)。
     "  float3 rgb = tex.rgb * col.rgb;\n"
-    "  rgb *= (uBlend.x > 0.5) ? a : 1.0;\n"
+    "  rgb *= (uBlend.x > 0.5 || uBlend.y > 0.5) ? a : 1.0;\n"
     "  return float4(rgb, a);\n"
     "}\n";
 
@@ -1188,6 +1196,7 @@ struct RsSave
     dword cull = 0;
     dword ps_en = 0, ps_scale = 0, ps_min = 0, ps_max = 0, ps_size = 0;
     float minv = 0, maxv = 0, sizev = 0;
+    UINT vp_w = 0, vp_h = 0;   // viewport(演化 pass 改 256x256, 必须还原)
 };
 static void rs_save(RsSave& r)
 {
@@ -1209,6 +1218,7 @@ static void rs_save(RsSave& r)
     memcpy(&r.minv, &r.ps_min, 4);
     memcpy(&r.maxv, &r.ps_max, 4);
     memcpy(&r.sizev, &r.ps_size, 4);
+    d3d::get_viewport(&r.vp_w, &r.vp_h);
 }
 static void rs_restore(const RsSave& r)
 {
@@ -1230,58 +1240,52 @@ static void rs_restore(const RsSave& r)
     d3d::set_render_state(D3DRS_POINTSIZE_MIN, r.ps_min);
     d3d::set_render_state(D3DRS_POINTSIZE_MAX, r.ps_max);
     d3d::set_render_state(D3DRS_POINTSIZE, r.ps_size);
+    d3d::set_viewport(r.vp_w, r.vp_h);
 }
-// 纹理 stage 保存/恢复(0..5 的绑定 + 寻址/过滤; addr 用 [i*2]=U, [i*2+1]=V)
-// 注意必须覆盖到 stage 5(矩形表), 否则残留绑定会污染 ext 多纹理绘制(TEX8)。
+// 纹理 stage 绑定保存/恢复(0..5 的 texture)。注意覆盖到 stage 5(矩形表),
+// 否则残留绑定会污染 ext 多纹理绘制(TEX8)。
+// 重要: 绝不读写 D3DTSS_ 过滤/寻址状态 —— D3D9 固定管线(FVF 无 shader)的过滤只认
+// D3DTSS_MINFILTER/MAGFILTER, 而 GMDirectX9 把引擎的过滤设置 patch 到了 SetSamplerState
+// (D3DSAMP_)。GetTextureStageState 读回的是从未被写过的 D3DTSS 影子表(陈旧默认
+// MIN/MAG=LINEAR/WRAP), 若再 SetTextureStageState 写回会把 LINEAR 写进共享底层状态,
+// 污染引擎后续固定管线绘制(纹理变双线性平滑)。shader 路径不读 D3DTSS, 无需保存过滤。
 static const int GP_STAGES = 6;
-static void stages_save(void* tex[GP_STAGES], dword addr[GP_STAGES * 2],
-                        dword mag[GP_STAGES], dword minf[GP_STAGES], dword mip[GP_STAGES])
+static void stages_save_textures(void* tex[GP_STAGES])
 {
     for (int i = 0; i < GP_STAGES; ++i)
     {
         tex[i] = nullptr;
         d3d::get_texture(i, &tex[i]);
-        d3d::get_tex_stage_state(i, D3DTSS_ADDRESSU, &addr[i * 2]);
-        d3d::get_tex_stage_state(i, D3DTSS_ADDRESSV, &addr[i * 2 + 1]);
-        d3d::get_tex_stage_state(i, D3DTSS_MAGFILTER, &mag[i]);
-        d3d::get_tex_stage_state(i, D3DTSS_MINFILTER, &minf[i]);
-        d3d::get_tex_stage_state(i, D3DTSS_MIPFILTER, &mip[i]);
     }
 }
-static void stages_restore(void* tex[GP_STAGES], dword addr[GP_STAGES * 2],
-                           dword mag[GP_STAGES], dword minf[GP_STAGES], dword mip[GP_STAGES])
+static void stages_restore_textures(void* tex[GP_STAGES])
 {
     for (int i = 0; i < GP_STAGES; ++i)
-    {
-        d3d::set_tex_stage_state(i, D3DTSS_ADDRESSU, addr[i * 2]);
-        d3d::set_tex_stage_state(i, D3DTSS_ADDRESSV, addr[i * 2 + 1]);
-        d3d::set_tex_stage_state(i, D3DTSS_MAGFILTER, mag[i]);
-        d3d::set_tex_stage_state(i, D3DTSS_MINFILTER, minf[i]);
-        d3d::set_tex_stage_state(i, D3DTSS_MIPFILTER, mip[i]);
         d3d::set_texture(i, tex[i]);
-    }
 }
-static void stages_set_point()
+// 渲染状态 + 纹理绑定 RAII 守卫: 任何返回/异常路径都还原(rs + 纹理绑定)。
+// 过滤/寻址(D3DTSS_)完全不碰, 避免污染引擎固定管线(见上)。
+struct RenderStateGuard
 {
-    for (int i = 0; i < GP_STAGES; ++i)
+    RsSave rs;
+    void* tex[GP_STAGES] = {};
+    RenderStateGuard()
     {
-        d3d::set_tex_stage_state(i, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);
-        d3d::set_tex_stage_state(i, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
-        d3d::set_tex_stage_state(i, D3DTSS_MAGFILTER, D3DTEXF_POINT);
-        d3d::set_tex_stage_state(i, D3DTSS_MINFILTER, D3DTEXF_POINT);
-        d3d::set_tex_stage_state(i, D3DTSS_MIPFILTER, D3DTEXF_NONE);
+        rs_save(rs);
+        stages_save_textures(tex);
     }
-}
+    ~RenderStateGuard()
+    {
+        stages_restore_textures(tex);
+        rs_restore(rs);
+    }
+};
 
 static void run_evolution(GSystem& s, const std::vector<SpawnBatch>& batches, int count, 
     bool spawn_only = false)
 {
     if (count < 0) return;   // count == 0 合法: 纯老化 pass(无出生分支)
-    RsSave rs;
-    rs_save(rs);
-    void* tex[GP_STAGES] = {};
-    dword addr[GP_STAGES * 2] = {}, mag[GP_STAGES] = {}, minf[GP_STAGES] = {}, mip[GP_STAGES] = {};
-    stages_save(tex, addr, mag, minf, mip);
+    RenderStateGuard rsg;    // RAII: rs + stages 保存, 析构无条件还原(含异常路径)
 
     int w = s.cur, dst = s.cur ^ 1;
     D3DCheck(d3d::set_render_target(0, s.surf[0][dst]), 1);
@@ -1292,7 +1296,6 @@ static void run_evolution(GSystem& s, const std::vector<SpawnBatch>& batches, in
     D3DCheck(d3d::set_render_state(D3DRS_ALPHABLENDENABLE, FALSE), 6);
     D3DCheck(d3d::set_render_state(D3DRS_POINTSPRITEENABLE, FALSE), 7);
 
-    stages_set_point();
     D3DCheck(d3d::set_texture(0, s.tex[0][w]), 8);
     D3DCheck(d3d::set_texture(1, s.tex[1][w]), 9);
     D3DCheck(d3d::set_texture(2, s.tex[2][w]), 10);
@@ -1334,9 +1337,7 @@ static void run_evolution(GSystem& s, const std::vector<SpawnBatch>& batches, in
     s.cur = dst;
     // 注意: s.now 不在这里推进! 一次 update 可能切块跑多次演化 pass,
     // 时钟只能推进一次(由 gpart_system_update 统一推进), 否则多批次时加速。
-
-    stages_restore(tex, addr, mag, minf, mip);
-    rs_restore(rs);
+    // (rsg 析构在此函数末尾还原渲染状态/纹理阶段)
 }
 
 // ============================================================================
@@ -1348,11 +1349,9 @@ static void run_render(GSystem& s)
     // 快速跳过: 从未发射过/已清空
     if (s.live_window.empty()) return;
 
-    RsSave rs;
-    rs_save(rs);
-    void* tex[GP_STAGES] = {};
-    dword addr[GP_STAGES * 2] = {}, mag[GP_STAGES] = {}, minf[GP_STAGES] = {}, mip[GP_STAGES] = {};
-    stages_save(tex, addr, mag, minf, mip);
+    RenderStateGuard rsg;    // RAII: rs + stages 保存, 析构无条件还原(含异常路径)
+    // 图集采样用 POINT(像素游戏风格, 与游戏纹理一致): 完全不改任何采样器过滤状态,
+    // 从根源避免污染引擎/后续绘制的采样过滤(此前 LINEAR 方案无论怎么恢复都有泄漏风险)。
 
     // 渲染状态: 三角形管线(四边形粒子), 无点精灵依赖
     D3DCheck(d3d::set_render_state(D3DRS_ZENABLE, FALSE), 1);
@@ -1360,7 +1359,6 @@ static void run_render(GSystem& s)
 
     // 纹理绑定: PS sMain=stage0(图集), PS sRect=stage5(矩形表);
     // VS(VTF 独立槽位): sOvr=257, sPos=258, sLife=259, sType=260
-    stages_set_point();
     int w = s.cur;
     D3DCheck(d3d::set_texture(0, g_atlas_tex), 6);
     D3DCheck(d3d::set_texture(5, g_rect_tex), 11);
@@ -1368,9 +1366,6 @@ static void run_render(GSystem& s)
     D3DCheck(d3d::set_texture(GP_VTS0 + 1, s.tex[0][w]), 101);   // VS sPos(位置/速度)
     D3DCheck(d3d::set_texture(GP_VTS0 + 2, s.tex[1][w]), 102);   // VS sLife(age/life/type/frame)
     D3DCheck(d3d::set_texture(GP_VTS0 + 3, g_type_tex), 103);    // VS sType(类型表)
-    // 图集(stage 0, PS sMain)用 LINEAR: 形状纹理采样需平滑, 状态/矩形表保持 POINT
-    d3d::set_tex_stage_state(0, D3DTSS_MINFILTER, D3DTEXF_LINEAR);
-    d3d::set_tex_stage_state(0, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
 
     // VS 常量
     float wvp[16];
@@ -1404,8 +1399,12 @@ static void run_render(GSystem& s)
     D3DCheck(d3d::set_pixel_shader(g_rnd_ps), 18);
     D3DCheck(d3d::set_stream_source(0, s.id_vb, 12), 19);
 
-    // 混合状态: 普通 = SRCALPHA/INVSRCALPHA, 加法 = ONE/ONE
-    auto set_blend = [](int additive, int pos) {
+    // 混合: 加法 = ONE/ONE(预乘输出); 普通遍按预乘模式选 ONE/INVSRCALPHA(预乘管线)
+    // 或 SRCALPHA/INVSRCALPHA(默认 straight 管线)。premul 由 gpart_set_premul 或自动检测:
+    // 检测进入本函数时的 SRCBLEND(rs.src) == D3DBLEND_ONE → 当前是预乘管线(psPremul)。
+    bool premul = g_gpart_premul >= 0 ? (g_gpart_premul != 0)
+        : (rsg.rs.src == 2 /* D3DBLEND_ONE */);
+    auto set_blend = [&](int additive, int pos) {
         D3DCheck(d3d::set_render_state(D3DRS_ALPHABLENDENABLE, TRUE), pos);
         if (additive)
         {
@@ -1414,7 +1413,7 @@ static void run_render(GSystem& s)
         }
         else
         {
-            D3DCheck(d3d::set_render_state(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA), pos + 1);
+            D3DCheck(d3d::set_render_state(D3DRS_SRCBLEND, premul ? D3DBLEND_ONE : D3DBLEND_SRCALPHA), pos + 1);
             D3DCheck(d3d::set_render_state(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA), pos + 2);
         }
     };
@@ -1446,7 +1445,7 @@ static void run_render(GSystem& s)
         }
     };
 
-    float bl[4] = { 0, 0, 0, 0 };
+    float bl[4] = { 0, premul ? 1.0f : 0.0f, 0, 0 };   // .x=加色遍, .y=预乘输出
     if (s.blend_mask == 3)
     {
         // 混合系统: 普通 + 加法两遍(VS/PS 按 uBlend 零化不匹配粒子/切换预乘)
@@ -1475,9 +1474,7 @@ static void run_render(GSystem& s)
     d3d::set_texture(GP_VTS0 + 1, nullptr);
     d3d::set_texture(GP_VTS0 + 2, nullptr);
     d3d::set_texture(GP_VTS0 + 3, nullptr);
-
-    stages_restore(tex, addr, mag, minf, mip);
-    rs_restore(rs);
+    // (rsg 析构在此函数末尾还原渲染状态/纹理阶段, 异常路径也执行)
 }
 
 
@@ -1497,6 +1494,17 @@ exp_real gpart_gpu_init(const char* cache_dir)
         return gpu_init_internal(cache_dir ? cache_dir : "") ? gtrue : gerror;
     }
     simple_catch("gpart_gpu_init", gerror)
+}
+
+// gpart 扩展: 设置粒子输出 alpha 模式(类似 sdf_draw_set_premul)。
+// mode: -1=自动检测当前混合状态(默认, ONE/INVSRCALPHA→预乘, SRCALPHA→straight);
+//        0=强制 straight(SRCALPHA/INVSRCALPHA); 1=强制预乘(ONE/INVSRCALPHA)。
+// 默认自动即可适配 application_surface(psPremul) 与普通绘制管线; 特殊场景可手动强制。
+exp_real gpart_set_premul(double mode)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    g_gpart_premul = (int)mode;
+    return gtrue;
 }
 
 exp_real gpart_system_create(double capacity)
@@ -2123,6 +2131,22 @@ exp_real gpart_type_death(double type, double death_number, double death_type)
         return gtrue;
     }
     simple_catch("gpart_type_death", gerror)
+}
+
+// gpart 扩展: 设置类型是否豁免 destroyer 特效器(区域销毁条不会销毁此类型)。
+// 用于 part_type_death 生成的锚定粒子(如水面涟漪), 防止被触发销毁的销毁条二次销毁。
+exp_real gpart_type_immune_destroyer(double type, double immune)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        GType* t = type_at((int)type);
+        if (!t) return gfalse;
+        t->destroyer_immune_flag() = (immune >= 0.5) ? 1.0f : 0.0f;
+        type_table_upload();
+        return gtrue;
+    }
+    simple_catch("gpart_type_immune_destroyer", gerror)
 }
 
 exp_real gpart_type_blend(double type, double additive)

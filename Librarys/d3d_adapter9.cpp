@@ -50,6 +50,11 @@ namespace d3d
         { return dev()->SetTextureStageState(stage, (D3DTEXTURESTAGESTATETYPE)type, v); }
         HRESULT get_tex_stage_state(DWORD stage, DWORD type, DWORD* v)
         { return dev()->GetTextureStageState(stage, (D3DTEXTURESTAGESTATETYPE)type, v); }
+        // shader 采样器过滤正规控制(D3DSAMP_*); 与 D3DTSS_MINFILTER 等共享底层状态。
+        HRESULT set_sampler_state(DWORD stage, DWORD type, DWORD v)
+        { return dev()->SetSamplerState(stage, (D3DSAMPLERSTATETYPE)type, v); }
+        HRESULT get_sampler_state(DWORD stage, DWORD type, DWORD* v)
+        { return dev()->GetSamplerState(stage, (D3DSAMPLERSTATETYPE)type, v); }
         HRESULT get_transform(DWORD state, float* m16)
         { return dev()->GetTransform((D3DTRANSFORMSTATETYPE)state, (D3DMATRIX*)m16); }
         HRESULT draw_primitive_up(DWORD prim, DWORD count, const void* verts, DWORD stride)

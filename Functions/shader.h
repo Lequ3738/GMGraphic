@@ -76,6 +76,8 @@ exp_real gpu_set_tex_max_aniso_ext(double sampler, double maxaniso);
 exp_real gpu_set_tex_mip_filter_ext(double sampler, double filter);
 // D3D 扩展(无 GMS2 对等): border 寻址模式用的颜色。
 exp_real gpu_set_tex_border_ext(double sampler, double col, double alpha);
+exp_real gpu_set_sampler_state_ext(double sampler, double state, double value);  // D3D 扩展: 通用采样器状态(D3DSAMP_* 值)
+exp_real gpu_get_sampler_state_ext(double sampler, double state);               // D3D 扩展: 查询采样器状态
 
 // 内部助手(不导出): 清空所有纹理 stage。
 void texture_clear_all();

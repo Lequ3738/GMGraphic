@@ -44,6 +44,8 @@ namespace d3d
         HRESULT get_render_state(DWORD, DWORD*);
         HRESULT set_tex_stage_state(DWORD, DWORD, DWORD);
         HRESULT get_tex_stage_state(DWORD, DWORD, DWORD*);
+        HRESULT set_sampler_state(DWORD, DWORD, DWORD);   // D3D8 无 sampler state, 桩返回 E_FAIL
+        HRESULT get_sampler_state(DWORD, DWORD, DWORD*);
         HRESULT get_transform(DWORD, float*);
         HRESULT draw_primitive_up(DWORD, DWORD, const void*, DWORD);
         UINT    get_available_tex_mem();
@@ -117,6 +119,8 @@ namespace d3d
         HRESULT get_render_state(DWORD, DWORD*);
         HRESULT set_tex_stage_state(DWORD, DWORD, DWORD);
         HRESULT get_tex_stage_state(DWORD, DWORD, DWORD*);
+        HRESULT set_sampler_state(DWORD, DWORD, DWORD);   // D3D9 SetSamplerState(采样器过滤正规控制)
+        HRESULT get_sampler_state(DWORD, DWORD, DWORD*);
         HRESULT get_transform(DWORD, float*);
         HRESULT draw_primitive_up(DWORD, DWORD, const void*, DWORD);
         UINT    get_available_tex_mem();
@@ -193,6 +197,10 @@ namespace d3d
     { return version() == V9 ? impl9::set_tex_stage_state(stage, type, v) : impl8::set_tex_stage_state(stage, type, v); }
     inline HRESULT get_tex_stage_state(DWORD stage, DWORD type, DWORD* v)
     { return version() == V9 ? impl9::get_tex_stage_state(stage, type, v) : impl8::get_tex_stage_state(stage, type, v); }
+    inline HRESULT set_sampler_state(DWORD stage, DWORD type, DWORD v)
+    { return version() == V9 ? impl9::set_sampler_state(stage, type, v) : impl8::set_sampler_state(stage, type, v); }
+    inline HRESULT get_sampler_state(DWORD stage, DWORD type, DWORD* v)
+    { return version() == V9 ? impl9::get_sampler_state(stage, type, v) : impl8::get_sampler_state(stage, type, v); }
     inline HRESULT get_transform(DWORD state, float* m16)
     { return version() == V9 ? impl9::get_transform(state, m16) : impl8::get_transform(state, m16); }
     inline HRESULT draw_primitive_up(DWORD prim, DWORD count, const void* verts, DWORD stride)

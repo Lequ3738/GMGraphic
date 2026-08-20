@@ -22,6 +22,8 @@ namespace d3d
         { return dev()->SetTextureStageState(stage, (D3DTEXTURESTAGESTATETYPE)type, v); }
         HRESULT get_tex_stage_state(DWORD stage, DWORD type, DWORD* v)
         { return dev()->GetTextureStageState(stage, (D3DTEXTURESTAGESTATETYPE)type, v); }
+        HRESULT set_sampler_state(DWORD stage, DWORD type, DWORD v) { return E_FAIL; }   // D3D8 无 sampler state
+        HRESULT get_sampler_state(DWORD stage, DWORD type, DWORD* v) { return E_FAIL; }
         HRESULT get_transform(DWORD state, float* m16)
         { return dev()->GetTransform((D3DTRANSFORMSTATETYPE)state, (D3DMATRIX*)m16); }
         HRESULT draw_primitive_up(DWORD prim, DWORD count, const void* verts, DWORD stride)
