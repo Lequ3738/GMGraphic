@@ -566,405 +566,567 @@ static void atlas_free_regions(GType& gt)
 // ============================================================================
 // 内嵌 HLSL
 // ============================================================================
-static const char* EVO_VS_HLSL =
-    "struct VSIN { float4 pos : POSITION; };\n"
-    "struct VSOUT { float4 pos : POSITION; };\n"
-    "VSOUT main(VSIN v) { VSOUT o; o.pos = v.pos; return o; }\n";
+static const char* EVO_VS_HLSL = R"HLSL(
+struct VSIN { float4 pos : POSITION; };
+struct VSOUT { float4 pos : POSITION; };
 
-static const char* EVO_PS_HLSL =
-    "sampler sPos : register(s0);\n"
-    "sampler sLife : register(s1);\n"
-    "sampler sOvr : register(s2);\n"
-    "sampler sType : register(s3);\n"
-    "sampler sEff : register(s4);\n"      // 特效器表 64x6 (每特效器 2 行: 行0/1=attractor, 
-    "float4 uGlobal : register(c0);\n"    // 行2/3=destroyer, 行4/5=deflector)
-    "float4 uBatchCount : register(c4);\n"
-    "float4 uMode : register(c5);\n"      // .x = 1 → 仅出生不老化(多块演化用)
-    "float4 uEff : register(c6);\n"       // .x=attractor 数, .y=destroyer 数, .z=deflector 数
-    "float4 uBatches[16] : register(c8);\n"
+VSOUT main(VSIN v)
+{
+    VSOUT o;
+    o.pos = v.pos;
+    return o;
+}
+)HLSL";
 
-    "static const float TWO_PI = 6.283185307179586;\n"
-    "static const float DEG2RAD = 0.017453292519943295;\n"
-    "static const float GRID = 256.0;\n"
+static const char* EVO_PS_HLSL = R"HLSL(
+sampler sPos : register(s0);
+sampler sLife : register(s1);
+sampler sOvr : register(s2);
+sampler sType : register(s3);
+sampler sEff : register(s4);    // 特效器表 64x6 (每特效器 2 行: 
+                                // 行0/1=attractor, 行2/3=destroyer, 行4/5=deflector)
+float4 uGlobal : register(c0);
+float4 uBatchCount : register(c4);
+float4 uMode : register(c5);      // .x = 1 → 仅出生不老化(多块演化用)
+float4 uEff : register(c6);       // .x=attractor 数, .y=destroyer 数, .z=deflector 数
+float4 uBatches[16] : register(c8);
+static const float TWO_PI = 6.283185307179586;
+static const float DEG2RAD = 0.017453292519943295;
+static const float GRID = 256.0;
 
-    // 高熵 1D hash: 二次项打破 frac(a*k) 的线性周期(否则相邻 id 方向相关 → 射线)
-    "float h1(float a) {\n"
-    "  a = frac(a * 0.1031);\n"
-    "  a = frac(a * (a + 19.19));\n"
-    "  a = frac(a * (a + 33.33));\n"
-    "  return frac(a * 43758.5453);\n"
-    "}\n"
+// 高熵 1D hash: 二次项打破 frac(a*k) 的线性周期(否则相邻 id 方向相关 → 射线)
+float h1(float a)
+{
+    a = frac(a * 0.1031);
+    a = frac(a * (a + 19.19));
+    a = frac(a * (a + 33.33));
+    return frac(a * 43758.5453);
+}
 
-    "float3 h3(float a) {\n"
-    "  float3 r;\n"
-    "  r.x = h1(a); r.y = h1(a + 57.13); r.z = h1(a + 161.7);\n"
-    "  return r;\n"
-    "}\n"
+float3 h3(float a)
+{
+    float3 r;
+    r.x = h1(a); r.y = h1(a + 57.13); r.z = h1(a + 161.7);
+    return r;
+}
 
-    "float3 hsv2rgb(float3 c) {\n"
-    "  float3 p = abs(frac(c.x + float3(0.0, 2.0/3.0, 1.0/3.0)) * 6.0 - 3.0);\n"
-    "  return c.z * lerp(float3(1,1,1), clamp(p - 1.0, 0.0, 1.0), c.y);\n"
-    "}\n"
+float3 hsv2rgb(float3 c)
+{
+    float3 p = abs(frac(c.x + float3(0.0, 2.0/3.0, 1.0/3.0)) * 6.0 - 3.0);
+    return c.z * lerp(float3(1,1,1), clamp(p - 1.0, 0.0, 1.0), c.y);
+}
 
-    "struct PS_OUT { float4 c0 : COLOR0; float4 c1 : COLOR1; float4 c2 : COLOR2; };\n"
+struct PS_OUT
+{
+    float4 c0 : COLOR0;
+    float4 c1 : COLOR1;
+    float4 c2 : COLOR2;
+};
 
-    "PS_OUT main(float4 vpos : VPOS) {\n"
-    "  PS_OUT o;\n"
-    "  float id = vpos.x + vpos.y * GRID;\n"
-    "  float2 uv = (vpos.xy + 0.5) * uGlobal.z;\n"
-    "  float4 prev = tex2D(sPos, uv);\n"
-    "  float4 st = tex2D(sLife, uv);\n"
-    "  float4 ov = tex2D(sOvr, uv);\n"
+PS_OUT main(float4 vpos : VPOS)
+{
+    PS_OUT o;
+    float id = vpos.x + vpos.y * GRID;
+    float2 uv = (vpos.xy + 0.5) * uGlobal.z;
+    float4 prev = tex2D(sPos, uv);
+    float4 st = tex2D(sLife, uv);
+    float4 ov = tex2D(sOvr, uv);
+    float4 b0 = 0; float4 b1 = 0; float4 b2 = 0; float4 b3 = 0;
+    float seeded = 0.0;
 
-    "  float4 b0 = 0; float4 b1 = 0; float4 b2 = 0; float4 b3 = 0;\n"
-    "  float seeded = 0.0;\n"
-    "  for (int b = 0; b < 16; ++b) {\n"
-    "    if (b >= uBatchCount.x) break;\n"
-    "    float4 bb0 = uBatches[b * 4 + 0];\n"
-    "    float hit = (id >= bb0.x && id < bb0.x + bb0.y) ? 1.0 : 0.0;\n"
-    "    if (hit > 0.5 && seeded < 0.5) {\n"
-    "      seeded = 1.0;\n"
-    "      b0 = bb0; b1 = uBatches[b*4+1]; b2 = uBatches[b*4+2]; b3 = uBatches[b*4+3];\n"
-    "    }\n"
-    "  }\n"
+    for (int b = 0; b < 16; ++b)
+    {
+        if (b >= uBatchCount.x)
+            break;
+        
+        float4 bb0 = uBatches[b * 4 + 0];
+        float hit = (id >= bb0.x && id < bb0.x + bb0.y) ? 1.0 : 0.0;
+        if (hit > 0.5 && seeded < 0.5)
+        {
+            seeded = 1.0;
+            b0 = bb0;
+            b1 = uBatches[b * 4 + 1];
+            b2 = uBatches[b * 4 + 2];
+            b3 = uBatches[b * 4 + 3];
+        }
+    }
 
-    "  float dead = (id >= uGlobal.w) ? 1.0 : 0.0;\n"
-    "  float age, life, type;\n"
-    "  float2 pos, vel;\n"
-    "  float3 base;\n"
-    "  float has_ovr;\n"
-    "  float frame;\n"
-    "  float killhit = 0.0;\n"   // 本步被 destroyer 命中(非免疫类型)
-    "  float srcdead = 0.0;\n"   // 源槽位粒子已死(step/death 源槽读取无效)
+    float dead = (id >= uGlobal.w) ? 1.0 : 0.0;
+    float age, life, type;
+    float2 pos, vel;
+    float3 base;
+    float has_ovr;
+    float frame;
+    float killhit = 0.0;
+    float srcdead = 0.0;
 
-    "  if (seeded > 0.5 && dead < 0.5) {\n"
-    "    type = b0.z;\n"
-    "    float seed = b0.w;\n"
-    "    float3 rnd = h3(id + seed * 17.0);\n"
-    "    float2 p;\n"
+    if (seeded > 0.5 && dead < 0.5)
+    {
+        type = b0.z;
+        float seed = b0.w;
+        float3 rnd = h3(id + seed * 17.0);
+        float2 p;
 
-    "    if (b2.x < -1.5) {\n"
-           // 源槽位生成(step/death): 位置 = 源粒子当前位置(读上一帧状态)。
-           // 源已死(GPU 击杀/变形后的僵尸事件)则出生即死, 防 (0,0) 幽灵粒子。
-    "      float src = floor(b2.z + 0.5);\n"
-    "      float2 suv = (float2(fmod(src, 256.0), floor(src / 256.0)) + 0.5) * uGlobal.z;\n"
-    "      p = tex2D(sPos, suv).xy;\n"
-    "      float4 sst = tex2D(sLife, suv);\n"
-    "      srcdead = (sst.y <= 0.0 || sst.x >= sst.y) ? 1.0 : 0.0;\n"
-    "    } else if (b2.x < -0.5) {\n"
-    "      p = b2.zw;\n"
-    "    } else {\n"
-    "      float shape = floor(b2.x + 0.5);\n"
-    "      float distr = b2.y;\n"
-    "      float u = rnd.x, v = rnd.y;\n"
+        if (b2.x < -1.5)
+        {
+            // 源槽位生成(step/death): 位置 = 源粒子当前位置(读上一帧状态)。
+            // 源已死(GPU 击杀/变形后的僵尸事件)则出生即死, 防 (0,0) 幽灵粒子。
+            float src = floor(b2.z + 0.5);
+            float2 suv = (float2(fmod(src, 256.0), floor(src / 256.0)) + 0.5) * uGlobal.z;
+            p = tex2D(sPos, suv).xy;
+            float4 sst = tex2D(sLife, suv);
+            srcdead = (sst.y <= 0.0 || sst.x >= sst.y) ? 1.0 : 0.0;
+        }
+        else if (b2.x < -0.5)
+            p = b2.zw;
+        else
+        {
+            float shape = floor(b2.x + 0.5);
+            float distr = b2.y;
+            float u = rnd.x, v = rnd.y;
 
-    "      if (distr > 1.5) {\n"  // ps_distr_invgaussian: 边缘密集(均匀盘半径)
-    "        float r = sqrt(v);\n"
-    "        float a = TWO_PI * u;\n"
-    "        u = clamp(0.5 + 0.5 * r * cos(a), 0.0, 1.0);\n"
-    "        v = clamp(0.5 + 0.5 * r * sin(a), 0.0, 1.0);\n"
-    "      } else if (distr > 0.5) {\n"  // ps_distr_gaussian: 中心密集(Box-Muller)
-    "        float r = sqrt(-2.0 * log(max(1.0 - u, 0.0001)));\n"
-    "        float a = TWO_PI * v;\n"
-    "        u = clamp(0.5 + 0.5 * r * cos(a), 0.0, 1.0);\n"
-    "        v = clamp(0.5 + 0.5 * r * sin(a), 0.0, 1.0);\n"
-    "      }\n"
+            if (distr > 1.5)   // ps_distr_invgaussian: 边缘密集(均匀盘半径)
+            {
+                float r = sqrt(v);
+                float a = TWO_PI * u;
+                u = clamp(0.5 + 0.5 * r * cos(a), 0.0, 1.0);
+                v = clamp(0.5 + 0.5 * r * sin(a), 0.0, 1.0);
+            }
+            else if (distr > 0.5)   // ps_distr_gaussian: 中心密集(Box-Muller)
+            {
+                float r = sqrt(-2.0 * log(max(1.0 - u, 0.0001)));
+                float a = TWO_PI * v;
+                u = clamp(0.5 + 0.5 * r * cos(a), 0.0, 1.0);
+                v = clamp(0.5 + 0.5 * r * sin(a), 0.0, 1.0);
+            }
 
-    "      if (shape < 0.5) { p = lerp(b1.xy, b1.zw, float2(u, v)); }\n"
-    "      else if (shape < 1.5) {\n"
-    "        float ang = TWO_PI * u;\n"
-    "        float rr = sqrt(v);\n"
-    "        float2 d = float2(cos(ang), sin(ang)) * rr;\n"
-    "        p = 0.5 * (b1.xy + b1.zw) + d * 0.5 * (b1.zw - b1.xy);\n"
-    "      } else if (shape < 2.5) {\n"
-    "        float uu = u * 2.0 - 1.0, vv = v * 2.0 - 1.0;\n"
-    "        float m = abs(uu) + abs(vv);\n"
-    "        if (m > 1.0) { uu /= m; vv /= m; }\n"
-    "        p = 0.5 * (b1.xy + b1.zw) + float2(uu, vv) * 0.5 * (b1.zw - b1.xy);\n"
-    "      } else { p = lerp(b1.xy, b1.zw, float2(u, u)); }\n"
-    "    }\n"
-    "    pos = p;\n"
+            if (shape < 0.5)
+                p = lerp(b1.xy, b1.zw, float2(u, v));
+            else if (shape < 1.5)
+            {
+                float ang = TWO_PI * u;
+                float rr = sqrt(v);
+                float2 d = float2(cos(ang), sin(ang)) * rr;
+                p = 0.5 * (b1.xy + b1.zw) + d * 0.5 * (b1.zw - b1.xy);
+            }
+            else if (shape < 2.5)
+            {
+                float uu = u * 2.0 - 1.0, vv = v * 2.0 - 1.0;
+                float m = abs(uu) + abs(vv);
+                if (m > 1.0) { uu /= m; vv /= m; }
+                p = 0.5 * (b1.xy + b1.zw) + float2(uu, vv) * 0.5 * (b1.zw - b1.xy);
+            }
+            else
+                p = lerp(b1.xy, b1.zw, float2(u, u));
+        }
 
-    "    float4 T0 = tex2D(sType, float2((type + 0.5) / 256.0, 0.5 / 14.0));\n"
-    "    float4 T1 = tex2D(sType, float2((type + 0.5) / 256.0, 1.5 / 14.0));\n"
-    "    float4 T3 = tex2D(sType, float2((type + 0.5) / 256.0, 3.5 / 14.0));\n"
-    "    float4 T4 = tex2D(sType, float2((type + 0.5) / 256.0, 4.5 / 14.0));\n"
-    "    float4 T5 = tex2D(sType, float2((type + 0.5) / 256.0, 5.5 / 14.0));\n"
-    "    float spd = lerp(T1.x, T1.y, rnd.y);\n"
-    "    float dir = lerp(T1.z, T1.w, rnd.z);\n"
-    "    float rad = dir * DEG2RAD;\n"
-    "    vel = spd * float2(cos(rad), -sin(rad));\n"
-    "    age = 0.0;\n"
-    "    life = lerp(T0.x, T0.y, rnd.x);\n"
-    "    if (srcdead > 0.5) life = 0.0;\n"   // 源槽位已死: 出生即死(不渲染, 槽位自然回收)
+        pos = p;
+        float4 T0 = tex2D(sType, float2((type + 0.5) / 256.0, 0.5 / 14.0));
+        float4 T1 = tex2D(sType, float2((type + 0.5) / 256.0, 1.5 / 14.0));
+        float4 T3 = tex2D(sType, float2((type + 0.5) / 256.0, 3.5 / 14.0));
+        float4 T4 = tex2D(sType, float2((type + 0.5) / 256.0, 4.5 / 14.0));
+        float4 T5 = tex2D(sType, float2((type + 0.5) / 256.0, 5.5 / 14.0));
+        float spd = lerp(T1.x, T1.y, rnd.y);
+        float dir = lerp(T1.z, T1.w, rnd.z);
+        float rad = dir * DEG2RAD;
+        vel = spd * float2(cos(rad), -sin(rad));
+        age = 0.0;
+        life = lerp(T0.x, T0.y, rnd.x);
 
-    "    if (b3.w > 0.5) { base = b3.rgb; }\n"
-    "    else if (T3.z > 3.5) {\n"
-    "      float cr = h1(id + seed * 17.0 + 31.7);\n"   // 颜色独立随机(与方向/速度解耦)
-    "      if (T3.z < 4.5) { base = lerp(T4.rgb, float3(T4.w, T5.x, T5.y), cr); }\n"
-    "      else if (T3.z < 5.5) { base = lerp(T4.rgb, T5.rgb, cr); }\n"
-    "      else {\n"
-    "        float3 hsv = lerp(T4.rgb, T5.rgb, cr);\n"
-           // h/s/v 均为 0..255(GM8 make_color_hsv 约定) → 各除 255 归一(hsv2rgb 的 h 以圈为单位)
-    "        base = hsv2rgb(hsv * float3(1.0/255.0, 1.0/255.0, 1.0/255.0));\n"
-    "      }\n"
-    "    } else { base = T4.rgb; }\n"
-    "    has_ovr = b3.w;\n"
+        if (srcdead > 0.5) life = 0.0;
 
-    "    float4 T8 = tex2D(sType, float2((type + 0.5) / 256.0, 8.5 / 14.0));\n"
-    "    float4 T9 = tex2D(sType, float2((type + 0.5) / 256.0, 9.5 / 14.0));\n"
-    "    float nf = T8.y;\n"
-    "    frame = (T9.x > 0.5 && nf > 1.0) ? floor(h1(id + seed * 17.0 + 9.0) * nf) : 0.0;\n"
-    "  } else if (dead < 0.5) {\n"
-    "    float dt = uMode.x > 0.5 ? 0.0 : uGlobal.y;\n"   // 仅出生 pass: 不推进物理/老化
-    "    float nage = st.x + dt;\n"
-    "    if (nage >= st.y) {\n"
-           // 自然死亡: 立即清空(防僵尸粒子继续积分飞远, 污染 step/death 源槽读取)
-    "      pos = 0; vel = 0; type = 0; base = float3(1,1,1); has_ovr = 0;\n"
-    "      age = 1.0; life = 0.0; frame = 0.0;\n"
-    "    } else {\n"
-    "    pos = prev.xy;\n"
-    "    vel = prev.zw;\n"
-    "    age = nage;\n"
-    "    life = st.y;\n"
-    "    type = st.z;\n"
-    "    base = ov.rgb;\n"
-    "    has_ovr = ov.w;\n"
-    "    float4 T2 = tex2D(sType, float2((type + 0.5) / 256.0, 2.5 / 14.0));\n"
-    "    float g = T2.y;\n"
-    "    float ga = T2.x * DEG2RAD;\n"
-    "    vel += g * dt * float2(cos(ga), -sin(ga));\n"
-    "    vel *= max(1.0 - clamp(T2.z, 0.0, 1.0) * dt, 0.0);\n"
-    "    float4 T13 = tex2D(sType, float2((type + 0.5) / 256.0, 13.5 / 14.0));\n"
-         // 速度/方向更新(与引擎 sub_4BDA50 一致):
-         // speed 每步 += speed_incr 后 clamp≥0; 移动前 speed += (tri((age+4φ)%20)/5 - 1)×speed_wiggle;
-         // direction 每步 += dir_incr; 移动前 direction += (tri((age+3φ)%24)/6 - 1)×dir_wiggle。
-         // tri(x) = x>2 ? 4-x : x; 两 wave 均 -1 → 值域 [-1,1) 对称平均 0(摆动无漂移)。
-    "    float len = max(length(vel) + T13.z * dt, 0.0);\n"
-    "    vel = vel * (len / max(length(vel), 0.0001));\n"
-         // attractor 力(引擎 sub_4BDA50): 距离 ≤dist 内加力; kind 0=恒定 1=线性 2=二次衰减;
-         // additive=true 叠加到速度, false 只做位置修正。最多 4 个(ps_3_0 展开预算)。
-    "    float2 acc_pos = 0;\n"
-    "    for (int aa = 0; aa < 4; ++aa) {\n"
-    "      if (aa >= uEff.x) break;\n"
-    "      float2 ac = tex2D(sEff, float2((aa + 0.5) / 64.0, 0.5 / 6.0)).xy;\n"
-    "      float2 af = tex2D(sEff, float2((aa + 0.5) / 64.0, 0.5 / 6.0)).zw;\n"
-    "      float4 as = tex2D(sEff, float2((aa + 0.5) / 64.0, 1.5 / 6.0));\n"
-    "      if (as.x < 0.5) continue;\n"
-    "      float2 d = ac - pos;\n"
-    "      float dist = length(d);\n"
-    "      if (dist <= af.y && dist > 0.0 && af.x != 0.0 && af.y != 0.0) {\n"
-    "        float2 f = af.x * d / dist;\n"
-    "        if (as.y > 0.5 && as.y < 1.5) { float k = (af.y - dist) / af.y; f *= k; }\n"
-    "        else if (as.y > 1.5) { float k = (af.y - dist) / af.y; f *= k * k; }\n"
-    "        if (as.z > 0.5) vel += f; else acc_pos += f;\n"
-    "      }\n"
-    "    }\n"
-         // 速度摆动: 每步随机 ±wiggle, 当步位移抖动(不进速度状态, 无累积/整流; GMParty 同模式)
-    "    float swing = (h1(id + floor(age) * 7.31) * 2.0 - 1.0) * T13.w * dt;\n"
-         // 方向摆动: 三角波(部分和有界 ±3×wiggle, 与引擎 sub_4BDA50 的 waveA 一致)
-    "    float dw = fmod(h1(id + 23.0) * 24.0 + age, 24.0) / 6.0;\n"
-    "    dw = dw > 2.0 ? 4.0 - dw : dw;\n"
-    "    float da = T13.x * dt + (dw - 1.0) * T13.y;\n"
-    "    da *= DEG2RAD;\n"
-    "    float ca2 = cos(da), sa2 = sin(da);\n"
-    "    vel = float2(vel.x * ca2 + vel.y * sa2, -vel.x * sa2 + vel.y * ca2);\n"
-    "    pos += vel * dt + (vel / max(length(vel), 0.0001)) * swing + acc_pos;\n"
-         // deflector: 区域内方向反射 + 位置镜像 + friction 减速。
-         // kind==1 horizontal(偏转水平速度): direction=180-dir → vel.x 取反 + x 镜像;
-         // kind!=1 vertical(偏转垂直速度): direction=360-dir → vel.y 取反 + y 镜像。
-    "    for (int de = 0; de < 4; ++de) {\n"
-    "      if (de >= uEff.z) break;\n"
-    "      float4 dr = tex2D(sEff, float2((de + 0.5) / 64.0, 4.5 / 6.0));\n"
-    "      float4 ds = tex2D(sEff, float2((de + 0.5) / 64.0, 5.5 / 6.0));\n"
-    "      if (ds.x < 0.5) continue;\n"
-    "      if (dr.x >= dr.y || dr.z >= dr.w) continue;\n"
-    "      if (pos.x >= dr.x && pos.x <= dr.y && pos.y >= dr.z && pos.y <= dr.w) {\n"
-    "        float cl = length(vel);\n"
-    "        if (ds.y > 0.5) { vel.x = -vel.x; pos.x = prev.x - (pos.x - prev.x); }\n"
-    "        else { vel.y = -vel.y; pos.y = prev.y - (pos.y - prev.y); }\n"
-    "        float nl = max(cl - ds.z, 0.0);\n"
-    "        if (cl > 0.0001) vel *= nl / cl;\n"
-    "      }\n"
-    "    }\n"
-         // destroyer: 区域内(rect/ellipse/diamond)立即销毁。
-         // 有 death 配置的类型不销毁, 而是当场变形为 death_type 粒子(GPU 侧 part_type_death,
-         // 零 CPU 回读): 复用本槽位, 重新按 death_type 类型表初始化 age/life/vel。
-         // death_number > 1 时只变形 1 个(原槽位), 为 GPU 无回读语义的近似; 负值 = 概率模式。
-    "    float4 T11 = tex2D(sType, float2((type + 0.5) / 256.0, 11.5 / 14.0));\n"
-    "    for (int de2 = 0; de2 < 4; ++de2) {\n"
-    "      if (de2 >= uEff.y) break;\n"
-    "      float4 dr2 = tex2D(sEff, float2((de2 + 0.5) / 64.0, 2.5 / 6.0));\n"
-    "      float4 ds2 = tex2D(sEff, float2((de2 + 0.5) / 64.0, 3.5 / 6.0));\n"
-    "      if (ds2.x < 0.5) continue;\n"
-    "      if (dr2.x >= dr2.y || dr2.z >= dr2.w) continue;\n"
-    "      if (pos.x >= dr2.x && pos.x <= dr2.y && pos.y >= dr2.z && pos.y <= dr2.w) {\n"
-    "        float nx = 2.0 * (pos.x - (dr2.y + dr2.x) * 0.5) / (dr2.y - dr2.x);\n"
-    "        float ny = 2.0 * (pos.y - (dr2.w + dr2.z) * 0.5) / (dr2.w - dr2.z);\n"
-    "        float hit = ds2.y < 0.5 ? 1.0\n"
-    "          : (ds2.y > 0.5 && ds2.y < 1.5) ? (nx * nx + ny * ny <= 1.0 ? 1.0 : 0.0)\n"
-    "          : (abs(nx) + abs(ny) <= 1.0 ? 1.0 : 0.0);\n"
-    "        if (hit > 0.5 && T11.z < 0.5) killhit = 1.0;\n"
-    "      }\n"
-    "    }\n"
-    "    if (killhit > 0.5) {\n"
-    "      float4 T10 = tex2D(sType, float2((type + 0.5) / 256.0, 10.5 / 14.0));\n"
-    "      float dn = T10.z, dtype = T10.w;\n"
-    "      if (dn != 0.0 && dtype >= 1.0 && dtype < 256.0\n"
-    "          && (dn > 0.0 || h1(id + 41.7) < 1.0 / -dn)) {\n"
-    "        type = dtype;\n"
-    "        float4 TD0 = tex2D(sType, float2((type + 0.5) / 256.0, 0.5 / 14.0));\n"
-    "        float4 TD1 = tex2D(sType, float2((type + 0.5) / 256.0, 1.5 / 14.0));\n"
-    "        float rr2 = h1(id + 71.3);\n"
-    "        float rr3 = h1(id + 91.7);\n"
-    "        age = 0.0;\n"
-    "        life = lerp(TD0.x, TD0.y, rr2);\n"
-    "        float spd2 = lerp(TD1.x, TD1.y, rr2);\n"
-    "        float dir2 = lerp(TD1.z, TD1.w, rr3);\n"
-    "        float rad2 = dir2 * DEG2RAD;\n"
-    "        vel = spd2 * float2(cos(rad2), -sin(rad2));\n"
-           // 按新类型重算颜色: 旧粒子的烘焙色/覆盖色不得继承(否则 mix/rgb/hsv 模式的
-           // death_type 显示旧色, override 永久粘连)。颜色随机与变形概率(id+41.7)、
-           // 寿命/速度(id+71.3/91.7)用不同偏移解耦。
-    "        float4 TM3 = tex2D(sType, float2((type + 0.5) / 256.0, 3.5 / 14.0));\n"
-    "        float4 TM4 = tex2D(sType, float2((type + 0.5) / 256.0, 4.5 / 14.0));\n"
-    "        float4 TM5 = tex2D(sType, float2((type + 0.5) / 256.0, 5.5 / 14.0));\n"
-    "        float crm = h1(id + 61.3);\n"
-    "        if (TM3.z > 3.5) {\n"
-    "          if (TM3.z < 4.5) { base = lerp(TM4.rgb, float3(TM4.w, TM5.x, TM5.y), crm); }\n"
-    "          else if (TM3.z < 5.5) { base = lerp(TM4.rgb, TM5.rgb, crm); }\n"
-    "          else { base = hsv2rgb(lerp(TM4.rgb, TM5.rgb, crm) * float3(1.0/255.0, 1.0/255.0, 1.0/255.0)); }\n"
-    "        } else { base = TM4.rgb; }\n"
-    "        has_ovr = 0.0;\n"
-    "      } else {\n"
-    "        age = 1.0; life = 0.0;\n"   // 无 death 配置(或概率未中): 直接销毁(age>=life 剔除)
-    "      }\n"
-    "    }\n"
-    "    float4 T8 = tex2D(sType, float2((type + 0.5) / 256.0, 8.5 / 14.0));\n"
-    "    float nf = T8.y;\n"
-    "    frame = st.w;\n"
-    "    if (T8.z > 0.5 && nf > 1.0)\n"
-    "      frame = T8.w > 0.5\n"
-    "        ? min(nf - 1.0, floor(age / max(life, 0.0001) * nf))\n"
-    "        : fmod(age, nf);\n"
-    "    if (killhit > 0.5) frame = 0.0;\n"   // 变形粒子从第 0 帧开始(非动画类型防旧帧越界)
-    "    }\n"
-    "  } else {\n"
-    "    pos = 0; vel = 0; type = 0; base = float3(1,1,1); has_ovr = 0;\n"
-    "    age = 1.0; life = 0.0; frame = 0.0;\n"
-    "  }\n"
-    "  o.c0 = float4(pos, vel);\n"
-    "  o.c1 = float4(age, life, type, frame);\n"
-    "  o.c2 = float4(base, has_ovr);\n"
-    "  return o;\n"
-    "}\n";
+        if (b3.w > 0.5)
+            base = b3.rgb;
+        else if (T3.z > 3.5)
+        {
+            float cr = h1(id + seed * 17.0 + 31.7);   // 颜色独立随机(与方向/速度解耦)
+            if (T3.z < 4.5)
+                base = lerp(T4.rgb, float3(T4.w, T5.x, T5.y), cr);
+            else if (T3.z < 5.5)
+                base = lerp(T4.rgb, T5.rgb, cr);
+            else
+            {
+                float3 hsv = lerp(T4.rgb, T5.rgb, cr);
+                base = hsv2rgb(hsv * float3(1.0/255.0, 1.0/255.0, 1.0/255.0));
+            }
+        }
+        else
+            base = T4.rgb;
 
-static const char* RND_VS_HLSL =
-    "sampler sOvr : register(s0);\n"
-    "sampler sPos : register(s1);\n"
-    "sampler sLife : register(s2);\n"
-    "sampler sType : register(s3);\n"
-    "float4x4 uWVP : register(c0);\n"
-    "float4 uSys : register(c4);\n"
-    "float4 uBlend : register(c5);\n"
-    "struct VSIN { float3 c : TEXCOORD0; };\n"   // c.xy = 角点{0,1}, c.z = 粒子 id
-    "struct VSOUT {\n"
-    "  float4 pos : POSITION;\n"
-    "  float2 cuv : TEXCOORD0;\n"    // 角点 uv(插值 = 粒子内 0..1)
-    "  float2 tinfo : TEXCOORD1;\n"  // type, frame
-    "  float4 col : COLOR0;\n"       // rgb = 颜色, a = alpha
-    "};\n"
+        has_ovr = b3.w;
+        float4 T8 = tex2D(sType, float2((type + 0.5) / 256.0, 8.5 / 14.0));
+        float4 T9 = tex2D(sType, float2((type + 0.5) / 256.0, 9.5 / 14.0));
+        float nf = T8.y;
+        frame = (T9.x > 0.5 && nf > 1.0) ? floor(h1(id + seed * 17.0 + 9.0) * nf) : 0.0;
+    }
+    else if (dead < 0.5)
+    {
+        float dt = uMode.x > 0.5 ? 0.0 : uGlobal.y;   // 仅出生 pass: 不推进物理/老化
+        float nage = st.x + dt;
 
-    "float h1(float a) {\n"
-    "  a = frac(a * 0.1031);\n"
-    "  a = frac(a * (a + 19.19));\n"
-    "  a = frac(a * (a + 33.33));\n"
-    "  return frac(a * 43758.5453);\n"
-    "}\n"
+        if (nage >= st.y)
+        {
+            // 自然死亡: 立即清空(防僵尸粒子继续积分飞远, 污染 step/death 源槽读取)
+            pos = 0; vel = 0; type = 0; base = float3(1,1,1); has_ovr = 0;
+            age = 1.0; life = 0.0; frame = 0.0;
+        }
+        else
+        {
+            pos = prev.xy;
+            vel = prev.zw;
+            age = nage;
+            life = st.y;
+            type = st.z;
+            base = ov.rgb;
+            has_ovr = ov.w;
+            
+            float4 T2 = tex2D(sType, float2((type + 0.5) / 256.0, 2.5 / 14.0));
+            float g = T2.y;
+            float ga = T2.x * DEG2RAD;
+            vel += g * dt * float2(cos(ga), -sin(ga));
+            vel *= max(1.0 - clamp(T2.z, 0.0, 1.0) * dt, 0.0);
+            float4 T13 = tex2D(sType, float2((type + 0.5) / 256.0, 13.5 / 14.0));
+            float len = max(length(vel) + T13.z * dt, 0.0);
+            vel = vel * (len / max(length(vel), 0.0001));
+            
+            // attractor 力(引擎 sub_4BDA50): 距离 ≤dist 内加力; kind 0=恒定 1=线性 2=二次衰减;
+            // additive=true 叠加到速度, false 只做位置修正。最多 4 个。
+            float2 acc_pos = 0;
+            
+            for (int aa = 0; aa < 4; ++aa)
+            {
+                if (aa >= uEff.x)
+                    break;
+                
+                float2 ac = tex2D(sEff, float2((aa + 0.5) / 64.0, 0.5 / 6.0)).xy;
+                float2 af = tex2D(sEff, float2((aa + 0.5) / 64.0, 0.5 / 6.0)).zw;
+                float4 as = tex2D(sEff, float2((aa + 0.5) / 64.0, 1.5 / 6.0));
+                if (as.x < 0.5)
+                    continue;
+                
+                float2 d = ac - pos;
+                float dist = length(d);
+                if (dist <= af.y && dist > 0.0 && af.x != 0.0 && af.y != 0.0)
+                {
+                    float2 f = af.x * d / dist;
+                    if (as.y > 0.5 && as.y < 1.5)
+                    {
+                        float k = (af.y - dist) / af.y;
+                        f *= k;
+                    }
+                    else if (as.y > 1.5)
+                    {
+                        float k = (af.y - dist) / af.y;
+                        f *= k * k;
+                    }
+                    
+                    if (as.z > 0.5)
+                        vel += f;
+                    else
+                        acc_pos += f;
+                }
+            }
+            
+            // 速度摆动: 每步随机 ±wiggle, 当步位移抖动
+            float swing = (h1(id + floor(age) * 7.31) * 2.0 - 1.0) * T13.w * dt;
+            // 方向摆动: 三角波
+            float dw = fmod(h1(id + 23.0) * 24.0 + age, 24.0) / 6.0;
+            dw = dw > 2.0 ? 4.0 - dw : dw;
+            float da = T13.x * dt + (dw - 1.0) * T13.y;
+            da *= DEG2RAD;
+            float ca2 = cos(da), sa2 = sin(da);
+            vel = float2(vel.x * ca2 + vel.y * sa2, -vel.x * sa2 + vel.y * ca2);
+            pos += vel * dt + (vel / max(length(vel), 0.0001)) * swing + acc_pos;
+            
+            // deflector: 区域内方向反射 + 位置镜像 + friction 减速。
+            // kind==1 horizontal(偏转水平速度): direction=180-dir → vel.x 取反 + x 镜像;
+            // kind!=1 vertical(偏转垂直速度): direction=360-dir → vel.y 取反 + y 镜像。
+            for (int de = 0; de < 4; ++de)
+            {
+                if (de >= uEff.z)
+                    break;
+                
+                float4 dr = tex2D(sEff, float2((de + 0.5) / 64.0, 4.5 / 6.0));
+                float4 ds = tex2D(sEff, float2((de + 0.5) / 64.0, 5.5 / 6.0));
+                if (ds.x < 0.5)
+                    continue;
+                
+                if (dr.x >= dr.y || dr.z >= dr.w)
+                    continue;
+                
+                if (pos.x >= dr.x && pos.x <= dr.y && pos.y >= dr.z && pos.y <= dr.w)
+                {
+                    float cl = length(vel);
+                    if (ds.y > 0.5)
+                    {
+                        vel.x = -vel.x;
+                        pos.x = prev.x - (pos.x - prev.x);
+                    }
+                    else
+                    {
+                        vel.y = -vel.y;
+                        pos.y = prev.y - (pos.y - prev.y);
+                    }
+                    
+                    float nl = max(cl - ds.z, 0.0);
+                    if (cl > 0.0001)
+                        vel *= nl / cl;
+                }
+            }
+            
+            // destroyer: 区域内(rect/ellipse/diamond)立即销毁。
+            // 有 death 配置的类型不销毁, 而是当场变形为 death_type 粒子(GPU 侧 part_type_death,
+            // 零 CPU 回读): 复用本槽位, 重新按 death_type 类型表初始化 age/life/vel。
+            // death_number > 1 时只变形 1 个(原槽位), 为 GPU 无回读语义的近似; 负值 = 概率模式。
+            float4 T11 = tex2D(sType, float2((type + 0.5) / 256.0, 11.5 / 14.0));
+            for (int de2 = 0; de2 < 4; ++de2)
+            {
+                if (de2 >= uEff.y)
+                    break;
+                
+                float4 dr2 = tex2D(sEff, float2((de2 + 0.5) / 64.0, 2.5 / 6.0));
+                float4 ds2 = tex2D(sEff, float2((de2 + 0.5) / 64.0, 3.5 / 6.0));
+                if (ds2.x < 0.5)
+                    continue;
+                
+                if (dr2.x >= dr2.y || dr2.z >= dr2.w)
+                    continue;
+                
+                if (pos.x >= dr2.x && pos.x <= dr2.y && pos.y >= dr2.z && pos.y <= dr2.w)
+                {
+                    float nx = 2.0 * (pos.x - (dr2.y + dr2.x) * 0.5) / (dr2.y - dr2.x);
+                    float ny = 2.0 * (pos.y - (dr2.w + dr2.z) * 0.5) / (dr2.w - dr2.z);
+                    float hit = ds2.y < 0.5 ? 1.0
+                        : (ds2.y > 0.5 && ds2.y < 1.5) ? (nx * nx + ny * ny <= 1.0 ? 1.0 : 0.0)
+                        : (abs(nx) + abs(ny) <= 1.0 ? 1.0 : 0.0);
+                    
+                    if (hit > 0.5 && T11.z < 0.5)
+                        killhit = 1.0;
+                }
+            }
+            
+            if (killhit > 0.5)
+            {
+                float4 T10 = tex2D(sType, float2((type + 0.5) / 256.0, 10.5 / 14.0));
+                float dn = T10.z, dtype = T10.w;
+                if (dn != 0.0 && dtype >= 1.0 && dtype < 256.0
+                    && (dn > 0.0 || h1(id + 41.7) < 1.0 / -dn))
+                {
+                    type = dtype;
+                    float4 TD0 = tex2D(sType, float2((type + 0.5) / 256.0, 0.5 / 14.0));
+                    float4 TD1 = tex2D(sType, float2((type + 0.5) / 256.0, 1.5 / 14.0));
+                    float rr2 = h1(id + 71.3);
+                    float rr3 = h1(id + 91.7);
+                    age = 0.0;
+                    life = lerp(TD0.x, TD0.y, rr2);
+                    float spd2 = lerp(TD1.x, TD1.y, rr2);
+                    float dir2 = lerp(TD1.z, TD1.w, rr3);
+                    float rad2 = dir2 * DEG2RAD;
+                    vel = spd2 * float2(cos(rad2), -sin(rad2));
+                    
+                    // 按新类型重算颜色: 旧粒子的烘焙色/覆盖色不得继承(否则 mix/rgb/hsv 模式的
+                    // death_type 显示旧色, override 永久粘连)。颜色随机与变形概率(id+41.7)、
+                    // 寿命/速度(id+71.3/91.7)用不同偏移解耦。
+                    float4 TM3 = tex2D(sType, float2((type + 0.5) / 256.0, 3.5 / 14.0));
+                    float4 TM4 = tex2D(sType, float2((type + 0.5) / 256.0, 4.5 / 14.0));
+                    float4 TM5 = tex2D(sType, float2((type + 0.5) / 256.0, 5.5 / 14.0));
+                    float crm = h1(id + 61.3);
+                    
+                    if (TM3.z > 3.5)
+                    {
+                        if (TM3.z < 4.5)
+                            base = lerp(TM4.rgb, float3(TM4.w, TM5.x, TM5.y), crm);
+                        else if (TM3.z < 5.5)
+                            base = lerp(TM4.rgb, TM5.rgb, crm);
+                        else
+                        {
+                            base = hsv2rgb(lerp(TM4.rgb, TM5.rgb, crm) * 
+                                float3(1.0 / 255.0, 1.0 / 255.0, 1.0 / 255.0));
+                        }
+                    }
+                    else
+                        base = TM4.rgb;
+                    
+                    has_ovr = 0.0;
+                }
+                else
+                {
+                    // 无 death 配置(或概率未中): 直接销毁(age>=life 剔除)
+                    age = 1.0; life = 0.0;
+                }
+            }
+            
+            float4 T8 = tex2D(sType, float2((type + 0.5) / 256.0, 8.5 / 14.0));
+            float nf = T8.y;
+            frame = st.w;
+            
+            if (T8.z > 0.5 && nf > 1.0)
+            {
+                frame = T8.w > 0.5
+                    ? min(nf - 1.0, floor(age / max(life, 0.0001) * nf))
+                    : fmod(age, nf);
+            }
+            
+            if (killhit > 0.5)
+                frame = 0.0;   // 变形粒子从第 0 帧开始(非动画类型防旧帧越界)
+        }
+    }
+    else
+    {
+        pos = 0; vel = 0; type = 0; base = float3(1,1,1); has_ovr = 0;
+        age = 1.0; life = 0.0; frame = 0.0;
+    }
+    
+    o.c0 = float4(pos, vel);
+    o.c1 = float4(age, life, type, frame);
+    o.c2 = float4(base, has_ovr);
+    return o;
+}
+)HLSL";
 
-    "VSOUT main(VSIN v) {\n"
-    "  VSOUT o;\n"
-    "  float id = v.c.z;\n"
-    "  float2 uv = (float2(fmod(id, 256.0), floor(id / 256.0)) + 0.5) * uSys.z;\n"
-    "  float4 pl = tex2Dlod(sPos, float4(uv, 0, 0));\n"
-    "  float4 st = tex2Dlod(sLife, float4(uv, 0, 0));\n"
-    "  float age = st.x, life = st.y;\n"
-    "  float type = st.z;\n"
-    "  float frame = st.w;\n"
-    "  float dead = (age >= life) ? 1.0 : 0.0;\n"
-    "  float2 tuv = float2((type + 0.5) / 256.0, 0.0);\n"
-    "  float4 T0 = tex2Dlod(sType, float4(tuv.x, 0.5 / 14.0, 0, 0));\n"
-    "  float4 T2 = tex2Dlod(sType, float4(tuv.x, 2.5 / 14.0, 0, 0));\n"
-    "  float4 T3 = tex2Dlod(sType, float4(tuv.x, 3.5 / 14.0, 0, 0));\n"
-    "  float4 T4 = tex2Dlod(sType, float4(tuv.x, 4.5 / 14.0, 0, 0));\n"
-    "  float4 T5 = tex2Dlod(sType, float4(tuv.x, 5.5 / 14.0, 0, 0));\n"
-    "  float4 T6 = tex2Dlod(sType, float4(tuv.x, 6.5 / 14.0, 0, 0));\n"
-    "  float4 T7 = tex2Dlod(sType, float4(tuv.x, 7.5 / 14.0, 0, 0));\n"
-    "  float4 T8 = tex2Dlod(sType, float4(tuv.x, 8.5 / 14.0, 0, 0));\n"
-    "  float4 ov = tex2Dlod(sOvr, float4(uv, 0, 0));\n"
-    "  float4 T12 = tex2Dlod(sType, float4(tuv.x, 12.5 / 14.0, 0, 0));\n"
-       // GM8 尺寸语义: size0 = 随机[min,max] + incr*age(clamp≥0); wiggle = ±wiggle 三角波摆动
-    "  float size0 = max(lerp(T0.z, T0.w, h1(id + 3.0)) + T12.y * age, 0.0);\n"
-    "  float swv = fmod(h1(id + 9.0) * 16.0 + age, 16.0) / 4.0;\n"
-    "  swv = swv > 2.0 ? 4.0 - swv : swv;\n"
-    "  float size = size0 + (swv - 1.0) * T12.z;\n"
-    "  float2 psize = size * float2(T3.x, T3.y) * T12.x;\n"
-       // 点采样像素对齐(uSys.w = pixelsnap): 尺寸取整 + 锚点吸附整数网格,
-       // 未旋转粒子达成纹素↔像素 1:1, 消除非整坐标下纹素宽窄不一的形变(像素游戏)。
-       // 旋转粒子无法整对齐, 保持原样。
-    "  if (uSys.w > 0.5) { psize = floor(psize + 0.5); }\n"
-    "  float ang = lerp(T7.x, T7.y, h1(id + 5.0)) + T7.z * age;\n"
-       // 角度摆动: 三角波(与引擎绘制 rot 的 wave 一致, mod 16 折返, 部分和有界)
-    "  float owv = fmod(h1(id + 31.0) * 16.0 + age, 16.0) / 4.0;\n"
-    "  owv = owv > 2.0 ? 4.0 - owv : owv;\n"
-    "  ang += (owv - 1.0) * T7.w;\n"
-    "  if (T8.x > 0.5) ang += atan2(-pl.w, pl.z) * 57.29577951308232;\n"
-    "  ang *= 0.017453292519943295;\n"
-    "  float ca = cos(ang), sa = sin(ang);\n"
-    "  float2 corner = (v.c.xy * 2.0 - 1.0) * psize * 0.5;\n"
-    "  float2 off = float2(ca * corner.x - sa * corner.y, sa * corner.x + ca * corner.y);\n"
-    "  float2 wpos = pl.xy + uSys.xy;\n"
-       // 吸附未旋转左下角(wpos - psize/2)到整数网格: 角点 = 整数原点 + 整数尺寸 → 全整,
-       // 奇偶尺寸都严格 1:1(只吸附中心的话奇数尺寸会得到半整数角点)
-    "  if (uSys.w > 0.5) { wpos = floor(wpos - psize * 0.5 + 0.5) + psize * 0.5; }\n"
-    "  float4 clip = mul(uWVP, float4(wpos + off, 0, 1));\n"
-    "  o.pos = dead > 0.5 ? float4(2.0, 2.0, 0.5, 1.0) : clip;\n" // 全部角点同点，零面积三角形被剔除
-    "  o.cuv = v.c.xy;\n"
-    "  o.tinfo = float2(type, frame);\n"
+static const char* RND_VS_HLSL = R"HLSL(
+sampler sOvr : register(s0);
+sampler sPos : register(s1);
+sampler sLife : register(s2);
+sampler sType : register(s3);
+float4x4 uWVP : register(c0);
+float4 uSys : register(c4);
+float4 uBlend : register(c5);
 
-    "  float t = life > 0.0001 ? clamp(age / life, 0.0, 1.0) : 1.0;\n"
-    "  float3 col;\n"
-    "  float mode = T3.z;\n"
-    "  if (ov.w > 0.5 || mode > 3.5) col = ov.rgb;\n"
-    "  else if (mode < 1.5) col = T4.rgb;\n"
-    "  else if (mode < 2.5) col = lerp(T4.rgb, float3(T4.w, T5.x, T5.y), t);\n"
-    "  else col = t < 0.5 ? lerp(T4.rgb, float3(T4.w, T5.x, T5.y), t * 2.0)\n"
-    "    : lerp(float3(T4.w, T5.x, T5.y), float3(T5.z, T5.w, T6.x), (t - 0.5) * 2.0);\n"
-    "  float a;\n"
-    "  float am = T3.w;\n"
-    "  if (am < 1.5) a = T6.y;\n"
-    "  else if (am < 2.5) a = lerp(T6.y, T6.z, t);\n"
-    "  else a = t < 0.5 ? lerp(T6.y, T6.z, t * 2.0) : lerp(T6.z, T6.w, (t - 0.5) * 2.0);\n"
-    "  if (abs(T2.w - uBlend.x) > 0.5) a = 0.0;\n"   // 混合模式不匹配当前遍 → 零贡献
-    "  o.col = float4(col, a);\n"
-    "  return o;\n"
-    "}\n";
+struct VSIN { float3 c : TEXCOORD0; };   // c.xy = 角点{0,1}, c.z = 粒子 id
 
-static const char* RND_PS_HLSL =
-    "sampler sMain : register(s0);\n"
-    "sampler sRect : register(s5);\n"
-    "float4 uBlend : register(c5);\n"   // .x = 当前遍混合模式(0=普通, 1=加法)
-    "float4 main(float2 cuv : TEXCOORD0, float2 tinfo : TEXCOORD1, float4 col : COLOR0) : COLOR0 {\n"
-    "  float4 rect = tex2D(sRect, float2((tinfo.x + 0.5) / 256.0, (tinfo.y + 0.5) / 32.0));\n"
-    "  float2 auv = rect.xy + rect.zw * cuv;\n"
-    "  float4 tex = tex2D(sMain, auv);\n"
-    "  float a = tex.a * col.a;\n"
+struct VSOUT {
+    float4 pos : POSITION;
+    float2 cuv : TEXCOORD0;   // 角点 uv(插值 = 粒子内 0..1)
+    float2 tinfo : TEXCOORD1; // type, frame
+    float4 col : COLOR0;      // rgb = 颜色, a = alpha
+};
+
+float h1(float a) {
+    a = frac(a * 0.1031);
+    a = frac(a * (a + 19.19));
+    a = frac(a * (a + 33.33));
+    return frac(a * 43758.5453);
+}
+
+VSOUT main(VSIN v) {
+    VSOUT o;
+    
+    float id = v.c.z;
+    float2 uv = (float2(fmod(id, 256.0), floor(id / 256.0)) + 0.5) * uSys.z;
+    float4 pl = tex2Dlod(sPos, float4(uv, 0, 0));
+    float4 st = tex2Dlod(sLife, float4(uv, 0, 0));
+    float age = st.x, life = st.y;
+    float type = st.z;
+    float frame = st.w;
+    float dead = (age >= life) ? 1.0 : 0.0;
+    float2 tuv = float2((type + 0.5) / 256.0, 0.0);
+    
+    float4 T0 = tex2Dlod(sType, float4(tuv.x, 0.5 / 14.0, 0, 0));
+    float4 T2 = tex2Dlod(sType, float4(tuv.x, 2.5 / 14.0, 0, 0));
+    float4 T3 = tex2Dlod(sType, float4(tuv.x, 3.5 / 14.0, 0, 0));
+    float4 T4 = tex2Dlod(sType, float4(tuv.x, 4.5 / 14.0, 0, 0));
+    float4 T5 = tex2Dlod(sType, float4(tuv.x, 5.5 / 14.0, 0, 0));
+    float4 T6 = tex2Dlod(sType, float4(tuv.x, 6.5 / 14.0, 0, 0));
+    float4 T7 = tex2Dlod(sType, float4(tuv.x, 7.5 / 14.0, 0, 0));
+    float4 T8 = tex2Dlod(sType, float4(tuv.x, 8.5 / 14.0, 0, 0));
+    float4 ov = tex2Dlod(sOvr, float4(uv, 0, 0));
+    float4 T12 = tex2Dlod(sType, float4(tuv.x, 12.5 / 14.0, 0, 0));
+    
+    // GM8 尺寸语义: size0 = 随机[min,max] + incr*age(clamp≥0); wiggle = ±wiggle 三角波摆动
+    float size0 = max(lerp(T0.z, T0.w, h1(id + 3.0)) + T12.y * age, 0.0);
+    float swv = fmod(h1(id + 9.0) * 16.0 + age, 16.0) / 4.0;
+    swv = swv > 2.0 ? 4.0 - swv : swv;
+    float size = size0 + (swv - 1.0) * T12.z;
+    float2 psize = size * float2(T3.x, T3.y) * T12.x;
+    
+    // 点采样像素对齐(uSys.w = pixelsnap): 尺寸取整 + 锚点吸附整数网格,
+    // 未旋转粒子达成纹素↔像素 1:1, 消除非整坐标下纹素宽窄不一的形变。
+    // 旋转粒子无法整对齐, 保持原样。
+    if (uSys.w > 0.5)
+        psize = floor(psize + 0.5);
+    
+    float ang = lerp(T7.x, T7.y, h1(id + 5.0)) + T7.z * age;
+    // 角度摆动: 三角波(与引擎绘制 rot 的 wave 一致, mod 16 折返, 部分和有界)
+    float owv = fmod(h1(id + 31.0) * 16.0 + age, 16.0) / 4.0;
+    owv = owv > 2.0 ? 4.0 - owv : owv;
+    ang += (owv - 1.0) * T7.w;
+    if (T8.x > 0.5)
+        ang += atan2(-pl.w, pl.z) * 57.29577951308232;
+    ang *= 0.017453292519943295;
+    
+    float ca = cos(ang), sa = sin(ang);
+    float2 corner = (v.c.xy * 2.0 - 1.0) * psize * 0.5;
+    float2 off = float2(ca * corner.x - sa * corner.y, sa * corner.x + ca * corner.y);
+    float2 wpos = pl.xy + uSys.xy;
+    // 吸附未旋转左下角(wpos - psize/2)到整数网格: 角点 = 整数原点 + 整数尺寸 → 全整,
+    // 奇偶尺寸都严格 1:1(只吸附中心的话奇数尺寸会得到半整数角点)
+    if (uSys.w > 0.5)
+        wpos = floor(wpos - psize * 0.5 + 0.5) + psize * 0.5;
+    
+    float4 clip = mul(uWVP, float4(wpos + off, 0, 1));
+    o.pos = dead > 0.5 ? float4(2.0, 2.0, 0.5, 1.0) : clip;   // 全部角点同点，零面积三角形被剔除
+    o.cuv = v.c.xy;
+    o.tinfo = float2(type, frame);
+    float t = life > 0.0001 ? clamp(age / life, 0.0, 1.0) : 1.0;
+    float3 col;
+    float mode = T3.z;
+    
+    if (ov.w > 0.5 || mode > 3.5)
+        col = ov.rgb;
+    else if (mode < 1.5)
+        col = T4.rgb;
+    else if (mode < 2.5)
+        col = lerp(T4.rgb, float3(T4.w, T5.x, T5.y), t);
+    else
+    {
+        col = t < 0.5
+            ? lerp(T4.rgb, float3(T4.w, T5.x, T5.y), t * 2.0)
+            : lerp(float3(T4.w, T5.x, T5.y), float3(T5.z, T5.w, T6.x), (t - 0.5) * 2.0);
+    }
+    
+    float a;
+    float am = T3.w;
+    if (am < 1.5)
+        a = T6.y;
+    else if (am < 2.5)
+        a = lerp(T6.y, T6.z, t);
+    else
+    {
+        a = t < 0.5
+            ? lerp(T6.y, T6.z, t * 2.0)
+            : lerp(T6.z, T6.w, (t - 0.5) * 2.0);
+    }
+    
+    if (abs(T2.w - uBlend.x) > 0.5)
+        a = 0.0;   // 混合模式不匹配当前遍 → 零贡献
+    
+    o.col = float4(col, a);
+    return o;
+}
+)HLSL";
+
+static const char* RND_PS_HLSL = R"HLSL(
+sampler sMain : register(s0);
+sampler sRect : register(s5);
+float4 uBlend : register(c5);   // .x = 当前遍混合模式(0=普通, 1=加法)
+
+float4 main(float2 cuv : TEXCOORD0, float2 tinfo : TEXCOORD1, float4 col : COLOR0) : COLOR0
+{
+    float4 rect = tex2D(sRect, float2((tinfo.x + 0.5) / 256.0, (tinfo.y + 0.5) / 32.0));
+    float2 auv = rect.xy + rect.zw * cuv;
+    float4 tex = tex2D(sMain, auv);
+    
+    float a = tex.a * col.a;
+    
     // uBlend.x = 当前遍(0=普通, 1=加色); uBlend.y = 预乘输出(1=预乘管线/自动检测到 ONE 混合)。
     // 加色遍或预乘模式 → rgb *= a(预乘); 否则 straight(默认 SRCALPHA 管线)。
-    "  float3 rgb = tex.rgb * col.rgb;\n"
-    "  rgb *= (uBlend.x > 0.5 || uBlend.y > 0.5) ? a : 1.0;\n"
-    "  return float4(rgb, a);\n"
-    "}\n";
+    float3 rgb = tex.rgb * col.rgb;
+    rgb *= (uBlend.x > 0.5 || uBlend.y > 0.5) ? a : 1.0;
+    
+    return float4(rgb, a);
+}
+)HLSL";
 
 
 // ============================================================================
@@ -972,13 +1134,7 @@ static const char* RND_PS_HLSL =
 // ============================================================================
 
 // 预加载: 调用 GM8 引擎 sub_4BB120(生成 14 个形状精灵并填充形状表数组)。
-// 地址 0x4BB120 实测固定(空工程与 Nature Edition 一致, 引擎同一编译模板;
-// .data 基址 0x189000 稳定, 与 draw_text.cpp 读引擎全局同模式)。
-// 仅当引擎标志未置位时调用(幂等)。若调用时引擎子系统未就绪, 形状表由引擎
-// 自身的 part_system_create 填充, ensure_gm8_shapes() 每帧重试兜底。
-// SEH 兜底: /EHsc 下 catch(...) 接不住硬件异常(AV), 裸地址解引用/调用收进
-// 纯 POD 的 __try 函数(不可含需展开的 C++ 对象, 否则 C2712), 地址失效时优雅降级。
-static int call_gm8_shape_init_seh()
+static int call_gm8_shape_init()
 {
     __try
     {
@@ -988,18 +1144,9 @@ static int call_gm8_shape_init_seh()
     }
     __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
 }
-static void call_gm8_shape_init()
-{
-    call_gm8_shape_init_seh();
-}
 
-// 从 GM8 引擎内置形状精灵表抓取位图(固定地址, 与 draw_text.cpp 读引擎全局同模式)。
-// 0x58F3A0 处是一个 DWORD 变量, 其值 = 精灵指针数组基址(引擎 sub_4BB120 在
-// part_system_create 时填充; 汇编: mov edx, off_58F3A0; mov edi, [edx+eax*4])。
-// 精灵结构: +4 = subimageCount, +8 = 帧数据指针数组, [0] = 帧数据。
-// 帧数据: +4 = 宽, +8 = 高, +12 = 像素数据指针(DWORD/像素, 实测 0xAARRGGBB)。
-// 实测形状精灵为 64×64(origin 32,32 = 中心)。成功返回 [R][G][B][A] 像素与宽高。
-// 结构解读在纯 POD 的 __try 函数内完成(SEH 保护), C++ 侧仅做像素拷贝。
+// 从 GM8 引擎内置形状精灵表抓取位图
+// 结构解读在纯 POD 的 __try 函数内完成, C++ 侧仅做像素拷贝。
 static int gm8_shape_read(int shape, int* w_out, int* h_out, DWORD** px_out)
 {
     __try
@@ -1159,7 +1306,7 @@ static bool gpu_init_internal(const char* cache_dir)
         g_atlas_x = 0;
         g_atlas_y = GP_ATLAS_TILE;   // 形状占满第 0 行, 精灵从第 1 行开始分配
         g_atlas_row_h = 0;
-        call_gm8_shape_init();       // 预加载: 主动触发引擎形状精灵生成
+        (void)call_gm8_shape_init(); // 预加载: 主动触发引擎形状精灵生成
         ensure_gm8_shapes();         // 抓取 GM8 引擎形状精灵
 
         // 全屏四边形(剪辑空间 TRIANGLESTRIP)
@@ -1190,7 +1337,7 @@ static bool gpu_init_internal(const char* cache_dir)
         auto load_or_compile = [&](const char* name, const char* src, const char* entry,
             const char* profile, std::vector<BYTE>& code)
         {
-			std::string src_str(src);
+            std::string src_str(src);
             std::string key = src_str + "|" + profile;
             xxh::hash64_t h = xxh::xxhash<64>(key.data(), key.size());
             if (shader_cache_read(cache_dir, name, h, code))
@@ -1452,13 +1599,6 @@ static void fire_death_event(GSystem& s, int slot)
 // ============================================================================
 // 演化 pass
 // ============================================================================
-// 渲染状态 + 纹理绑定保存/恢复: 统一使用 Librarys/state_guard.h 的 RenderStateGuard
-// (成员 d3d::Ref 自动释放 Get* 带回的加引用指针, 引用泄漏从写法上不可能)。
-// 重要: 守卫绝不读写 D3DTSS_ 过滤/寻址状态 —— D3D9 固定管线(FVF 无 shader)的过滤只认
-// D3DTSS_MINFILTER/MAGFILTER, 而 GMDirectX9 把引擎的过滤设置 patch 到了 SetSamplerState
-// (D3DSAMP_)。GetTextureStageState 读回的是从未被写过的 D3DTSS 影子表(陈旧默认
-// MIN/MAG=LINEAR/WRAP), 若再 SetTextureStageState 写回会把 LINEAR 写进共享底层状态,
-// 污染引擎后续固定管线绘制(纹理变双线性平滑)。shader 路径不读 D3DTSS, 无需保存过滤。
 
 static void run_evolution(GSystem& s, const std::vector<SpawnBatch>& batches, int count, 
     bool spawn_only = false)
@@ -1522,13 +1662,12 @@ static void run_evolution(GSystem& s, const std::vector<SpawnBatch>& batches, in
 // 渲染 pass
 // ============================================================================
 
-// 重建渲染数据: 活跃窗口过滤(原地)+ 按出生序双桶(普通/加法)+ 图集矩形, 无排序
+// 重建渲染数据
 static void run_render(GSystem& s)
 {
-    // 快速跳过: 从未发射过/已清空
     if (s.live_window.empty()) return;
 
-    RenderStateGuard rsg;    // RAII: rs + stages 保存, 析构无条件还原(含异常路径)
+    RenderStateGuard rsg;    // RAII: rs + stages 保存
 
     D3DCheck(d3d::set_render_state(D3DRS_ZENABLE, FALSE), 1);
     D3DCheck(d3d::set_render_state(D3DRS_CULLMODE, D3DCULL_NONE), 2);
@@ -2116,7 +2255,8 @@ exp_real gpart_type_clear(double type)
     simple_catch("gpart_type_clear", gerror)
 }
 
-exp_real gpart_type_sprite(double type, double sprite, double animat, double stretch, double random)
+exp_real gpart_type_sprite(double type, double sprite, double animat, double stretch, 
+    double random)
 {
     try
     {
@@ -2256,9 +2396,6 @@ exp_real gpart_type_size(double type, double min, double max, double incr, doubl
     simple_catch("gpart_type_size", gerror)
 }
 
-// GM8 part_type_speed(ind, speed_min, speed_max, speed_incr, speed_wiggle):
-// 每步速度 += speed_incr(速度永不为负) + 随机 ±speed_wiggle 摆动。
-// 增量/摆动为 per-step(与 dt=1 的演化一致), 速度下限 0 由 shader clamp。
 exp_real gpart_type_speed(double type, double min, double max, double incr, double wiggle)
 {
     try
@@ -2275,8 +2412,6 @@ exp_real gpart_type_speed(double type, double min, double max, double incr, doub
     simple_catch("gpart_type_speed", gerror)
 }
 
-// GM8 part_type_direction(ind, dir_min, dir_max, dir_incr, dir_wiggle):
-// 方向范围(逆时针, 0=右); dir_incr = 每步方向增量; dir_wiggle = 每步 ±偏移。均为 per-step。
 exp_real gpart_type_direction(double type, double min, double max, double incr, double wiggle)
 {
     try
@@ -2356,7 +2491,7 @@ exp_real gpart_type_death(double type, double death_number, double death_type)
     simple_catch("gpart_type_death", gerror)
 }
 
-// gpart 扩展: 设置类型是否豁免 destroyer 特效器(区域销毁条不会销毁此类型)。
+// 设置类型是否豁免 destroyer 特效器(区域销毁条不会销毁此类型)。
 // 用于 part_type_death 生成的锚定粒子(如水面涟漪), 防止被触发销毁的销毁条二次销毁。
 exp_real gpart_type_immune_destroyer(double type, double immune)
 {
@@ -2674,8 +2809,9 @@ exp_real gpart_emitter_region(double sys, double em, double xmin, double xmax,
     simple_catch("gpart_emitter_region", gerror)
 }
 
-static double emitter_spawn_impl(double sys, double em, double parttype, double number)
+exp_real gpart_emitter_burst(double sys, double em, double parttype, double number)
 {
+    if (d3d::version() != d3d::V9) return gerror;
     try
     {
         auto it = g_systems.find((int)sys);
@@ -2693,14 +2829,7 @@ static double emitter_spawn_impl(double sys, double em, double parttype, double 
     simple_catch("gpart_emitter_burst", gerror)
 }
 
-exp_real gpart_emitter_burst(double sys, double em, double parttype, double number)
-{
-    if (d3d::version() != d3d::V9) return gerror;
-    return emitter_spawn_impl(sys, em, parttype, number);
-}
-
-// 配置流式发射(同 GM8 part_emitter_stream): 设置后每步自动发射 number 个,
-// number < 0 时每步 1/|number| 概率产生 1 个(GM8 语义); number = 0 关闭流式。
+// 配置流式发射
 // 由 gpart_system_update 处理; 清除用 gpart_emitter_clear。
 exp_real gpart_emitter_stream(double sys, double em, double parttype, double number)
 {
@@ -2731,9 +2860,9 @@ exp_real gpart_emitter_stream(double sys, double em, double parttype, double num
     simple_catch("gpart_emitter_stream", gerror)
 }
 
-// 定时渐变流(gpart 扩展): 从调用时刻起 duration 步内, 每步发射数量从 rate0 线性
-// 渐变到 rate1, 时间到自动停止。小数速率用累积器平滑(如 10→0 共 100 步 = 平均每步 0.1,
-// 不因取整丢失)。再次调用重新计时; gpart_emitter_stream / gpart_emitter_clear 会取消。
+// 定时渐变流: 从调用时刻起 duration 步内, 每步发射数量从 rate0 线性渐变到 rate1, 时间到
+// 自动停止。小数速率用累积器平滑(如 10→0 共 100 步 = 平均每步 0.1, 不因取整丢失)。再次调
+// 用重新计时; gpart_emitter_stream / gpart_emitter_clear 会取消。
 exp_real gpart_emitter_stream_ramp(double sys, double em, double parttype,
     double rate0, double rate1, double duration)
 {
@@ -3071,7 +3200,7 @@ exp_real gpart_draw_regions(double sys, double color, double alpha)
         if (it == g_systems.end()) return gfalse;
         GSystem& s = it->second;
 
-        RenderStateGuard rsg;   // RAII: rs + 纹理绑定保存, 析构无条件还原(含异常路径)
+        RenderStateGuard rsg;   // RAII: rs + 纹理绑定保存
 
         // 固定管线 FVF 线框绘制(无 PS, 无纹理)
         D3DCheck(d3d::set_vertex_shader(true, D3DFVF_XYZ | D3DFVF_DIFFUSE, 0), 1);
@@ -3092,7 +3221,10 @@ exp_real gpart_draw_regions(double sys, double color, double alpha)
                 pts.data(), sizeof(V)), 20);
         };
         auto rect = [&](float x0, float y0, float x1, float y1) {
-            return std::vector<V>{ {x0,y0,0,col},{x1,y0,0,col},{x1,y1,0,col},{x0,y1,0,col},{x0,y0,0,col} };
+            return std::vector<V>{
+                {x0, y0, 0, col}, {x1, y0, 0, col}, {x1, y1, 0, col},
+                {x0, y1, 0, col}, {x0, y0, 0, col}
+            };
         };
         auto ellipse = [&](float x0, float y0, float x1, float y1, int n = 32) {
             std::vector<V> v;
@@ -3107,7 +3239,10 @@ exp_real gpart_draw_regions(double sys, double color, double alpha)
         };
         auto diamond = [&](float x0, float y0, float x1, float y1) {
             float cx = (x0 + x1) * 0.5f, cy = (y0 + y1) * 0.5f;
-            return std::vector<V>{ {cx,y0,0,col},{x1,cy,0,col},{cx,y1,0,col},{x0,cy,0,col},{cx,y0,0,col} };
+            return std::vector<V>{
+                {cx, y0, 0, col}, {x1, cy, 0, col}, {cx, y1, 0, col},
+                {x0, cy, 0, col}, {cx, y0, 0, col}
+            };
         };
 
         // 发射器区域
@@ -3149,7 +3284,7 @@ exp_real gpart_draw_regions(double sys, double color, double alpha)
             poly(rect(d.xmin, d.ymin, d.xmax, d.ymax));
         }
 
-        return gtrue;   // rsg 析构自动还原状态与纹理绑定
+        return gtrue;
     }
     simple_catch("gpart_draw_regions", gerror)
 }
