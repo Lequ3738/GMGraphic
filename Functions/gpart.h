@@ -72,16 +72,16 @@ constexpr int GP_MAX_CAPACITY = 65536;    // hard cap
 constexpr int GP_MAX_BATCHES = 16;        // spawn batches per evolution pass chunk(ps_3_0 指令预算限制循环展开, 实测仅 ~24 批; 16 保守, 多块演化兜底)
 constexpr int GP_TYPE_TEX_W = 256;        // type table texture width (max 256 types)
 constexpr int GP_TYPE_TEX_H = 14;         // float4 texels per type (0..9 参数, 10/11 = step/death, 12 = 渲染尺寸, 13 = 方向增量/摆动)
-constexpr int GP_MAX_FRAMES = 32;         // max sprite frames resolved per type
 constexpr int GP_ATLAS_SIZE = 1024;       // particle atlas texture size (px)
 constexpr int GP_ATLAS_TILE = 64;         // built-in shape tile size (px, 16 per row)
-constexpr int GP_RECT_TEX_FRAMES = 32;    // rect table rows per type (max sprite frames)
+constexpr int GP_RECT_TEX_FRAMES = 32;    // rect table rows per type = 每类型最大帧数(采集/存储共用上限; 提升时须同步 RND_PS 的 /32.0)
 
-// ---- exports: gpu init (1) ----
+// ---- exports: gpu init (2) ----
 // cache_dir: 着色器字节码缓存目录(空串 = 不使用缓存)。缓存跳过 d3dcompiler 的
 // HLSL→asm 编译(EVO_PS 展开后 ~1.4s), 缓存命中直接读 .bin 建设备对象。
 exp_real gpart_gpu_init(const char* cache_dir);
 exp_real gpart_set_premul(double mode);
+exp_real gpart_set_pixelsnap(double mode);   // gpart 扩展: 像素对齐(-1 自动/0 关/1 开)
 
 // ---- exports: system (9) ----
 exp_real gpart_system_create(double capacity);

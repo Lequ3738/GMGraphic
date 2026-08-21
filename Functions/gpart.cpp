@@ -2,6 +2,7 @@
 #include "vertex.h"
 #include "xxhash.hpp"          // shader 缓存 key 哈希
 #include "../Librarys/math_s.h"
+#include "../Librarys/state_guard.h"
 #include <cstring>
 #include <cmath>
 #include <algorithm>
@@ -45,7 +46,7 @@ static const int EVO_C_MODE = 5;      // (.x = 1 → 仅出生不老化)
 static const int EVO_C_BATCHES = 8;   // 16 批 × 4 float4(c8..c71, ps_3_0 常量上限内)
 static const int EVO_C_EFF = 6;       // (.x=attractor 数, .y=destroyer 数, .z=deflector 数)
 static const int RND_C_WVP = 0;       // float4x4 (c0..c3)
-static const int RND_C_SYS = 4;       // (sys_x, sys_y, invGrid, capacity)
+static const int RND_C_SYS = 4;       // (sys_x, sys_y, invGrid, pixelsnap)
 static const int RND_C_BLEND = 5;     // (当前遍混合模式: 0=普通, 1=加法)
 
 static const int GP_TYPE_ROWS = GP_TYPE_TEX_H;   // 类型表纹理行数(与 gpart.h 一致)
@@ -370,6 +371,10 @@ struct GAttractor { float x = 0, y = 0, force = 0, dist = 0; int kind = 0; bool 
 struct GDestroyer { float xmin = 0, xmax = 0, ymin = 0, ymax = 0; int shape = 0; };
 struct GDeflector { float xmin = 0, xmax = 0, ymin = 0, ymax = 0; int kind = 0; float friction = 0; };
 
+// 前向声明(定义在"系统状态纹理创建/销毁"小节): GSystem 的 RAII 析构依赖
+struct GSystem;
+static void system_tex_destroy(GSystem& s);
+
 struct GSystem
 {
     int capacity = 4096;
@@ -400,6 +405,54 @@ struct GSystem
     std::unordered_map<int, GDeflector> deflectors;
     int att_counter = 1, des_counter = 1, def_counter = 1;
     void* eff_tex = nullptr;          // 特效器表 64x6 A16B16G16R16F(每特效器 2 行)
+
+    // 所有权 RAII: 设备资源随对象生死, 创建中途抛异常也不再泄漏已建资源。
+    // 拷贝禁用(指针会被双重释放); 移动后源对象指针置空, system_tex_destroy 幂等。
+    GSystem() = default;   // 声明了移动构造后默认构造需显式保留
+    GSystem(const GSystem&) = delete;
+    GSystem& operator=(const GSystem&) = delete;
+    GSystem(GSystem&& o) noexcept { move_from(o); }
+    GSystem& operator=(GSystem&& o) noexcept
+    {
+        if (this != &o) { system_tex_destroy(*this); move_from(o); }
+        return *this;
+    }
+    ~GSystem() { system_tex_destroy(*this); }
+
+private:
+    void move_from(GSystem& o) noexcept
+    {
+        capacity = o.capacity;
+        old_to_new = o.old_to_new;
+        pos_x = o.pos_x; pos_y = o.pos_y;
+        for (int k = 0; k < 3; ++k)
+            for (int p = 0; p < 2; ++p)
+            {
+                tex[k][p] = o.tex[k][p];   o.tex[k][p] = nullptr;
+                surf[k][p] = o.surf[k][p]; o.surf[k][p] = nullptr;
+            }
+        cur = o.cur;
+        now = o.now;
+        cursor = o.cursor;
+        s_birth = std::move(o.s_birth);
+        s_life = std::move(o.s_life);
+        s_type = std::move(o.s_type);
+        s_frame = std::move(o.s_frame);
+        s_gen = std::move(o.s_gen);
+        pending = std::move(o.pending);
+        emitters = std::move(o.emitters);
+        em_counter = o.em_counter;
+        live_window = std::move(o.live_window);
+        id_vb = o.id_vb; o.id_vb = nullptr;
+        blend_mask = o.blend_mask;
+        attractors = std::move(o.attractors);
+        destroyers = std::move(o.destroyers);
+        deflectors = std::move(o.deflectors);
+        att_counter = o.att_counter; des_counter = o.des_counter; def_counter = o.def_counter;
+        eff_tex = o.eff_tex; o.eff_tex = nullptr;
+    }
+
+public:
 };
 
 static std::unordered_map<int, GSystem> g_systems;
@@ -467,6 +520,10 @@ static bool g_gpu_failed = false;
 // 粒子输出 alpha 模式: -1=自动检测当前混合状态(ONE/INVSRCALPHA→预乘, SRCALPHA→straight),
 // 0=强制 straight(SRCALPHA/INVSRCALPHA), 1=强制预乘(ONE/INVSRCALPHA)。默认 -1 适配任意管线。
 static int g_gpart_premul = -1;
+// 粒子像素对齐(点采样像素游戏防形变): -1=自动检测当前 MAGFILTER(POINT→吸附),
+// 0=强制关, 1=强制开。开启时 VS 把粒子尺寸取整并把锚点吸附到整数网格,
+// 未旋转粒子达成纹素↔像素 1:1(非整坐标下不再出现纹素宽窄不一)。
+static int g_gpart_pixelsnap = -1;
 
 // 图集分配: 先复用已释放区域(首次适配, 可切分), 否则走 shelf 分配器
 static bool atlas_alloc(int w, int h, int& x, int& y)
@@ -852,6 +909,10 @@ static const char* RND_VS_HLSL =
     "  swv = swv > 2.0 ? 4.0 - swv : swv;\n"
     "  float size = size0 + (swv - 1.0) * T12.z;\n"
     "  float2 psize = size * float2(T3.x, T3.y) * T12.x;\n"
+       // 点采样像素对齐(uSys.w = pixelsnap): 尺寸取整 + 锚点吸附整数网格,
+       // 未旋转粒子达成纹素↔像素 1:1, 消除非整坐标下纹素宽窄不一的形变(像素游戏)。
+       // 旋转粒子无法整对齐, 保持原样。
+    "  if (uSys.w > 0.5) { psize = floor(psize + 0.5); }\n"
     "  float ang = lerp(T7.x, T7.y, h1(id + 5.0)) + T7.z * age;\n"
        // 角度摆动: 三角波(与引擎绘制 rot 的 wave 一致, mod 16 折返, 部分和有界)
     "  float owv = fmod(h1(id + 31.0) * 16.0 + age, 16.0) / 4.0;\n"
@@ -862,7 +923,11 @@ static const char* RND_VS_HLSL =
     "  float ca = cos(ang), sa = sin(ang);\n"
     "  float2 corner = (v.c.xy * 2.0 - 1.0) * psize * 0.5;\n"
     "  float2 off = float2(ca * corner.x - sa * corner.y, sa * corner.x + ca * corner.y);\n"
-    "  float4 clip = mul(uWVP, float4(pl.xy + uSys.xy + off, 0, 1));\n"
+    "  float2 wpos = pl.xy + uSys.xy;\n"
+       // 吸附未旋转左下角(wpos - psize/2)到整数网格: 角点 = 整数原点 + 整数尺寸 → 全整,
+       // 奇偶尺寸都严格 1:1(只吸附中心的话奇数尺寸会得到半整数角点)
+    "  if (uSys.w > 0.5) { wpos = floor(wpos - psize * 0.5 + 0.5) + psize * 0.5; }\n"
+    "  float4 clip = mul(uWVP, float4(wpos + off, 0, 1));\n"
     "  o.pos = dead > 0.5 ? float4(2.0, 2.0, 0.5, 1.0) : clip;\n" // 全部角点同点，零面积三角形被剔除
     "  o.cuv = v.c.xy;\n"
     "  o.tinfo = float2(type, frame);\n"
@@ -1220,11 +1285,14 @@ static void system_tex_create(GSystem& s)
 
 static void system_tex_destroy(GSystem& s)
 {
+    // 释放后一律置空: 幂等, 允许被显式调用后随析构再次触发(移动赋值路径)
     for (int k = 0; k < 3; ++k)
         for (int p = 0; p < 2; ++p)
         {
             if (s.surf[k][p]) d3d::release(s.surf[k][p]);
             if (s.tex[k][p]) d3d::release(s.tex[k][p]);
+            s.surf[k][p] = nullptr;
+            s.tex[k][p] = nullptr;
         }
     if (s.eff_tex) { d3d::release(s.eff_tex); s.eff_tex = nullptr; }
     if (s.id_vb) { d3d::release(s.id_vb); s.id_vb = nullptr; }
@@ -1384,100 +1452,13 @@ static void fire_death_event(GSystem& s, int slot)
 // ============================================================================
 // 演化 pass
 // ============================================================================
-// 渲染状态保存/恢复
-struct RsSave
-{
-    dword vs = 0, ps = 0, fvf = 0;
-    void* decl = nullptr;
-    void* rt0 = nullptr;
-    dword zenable = 0, blend = 0, src = 0, dst = 0;
-    dword cull = 0;
-    dword ps_en = 0, ps_scale = 0, ps_min = 0, ps_max = 0, ps_size = 0;
-    float minv = 0, maxv = 0, sizev = 0;
-    UINT vp_w = 0, vp_h = 0;   // viewport(演化 pass 改 256x256, 必须还原)
-};
-static void rs_save(RsSave& r)
-{
-    D3DCheck(d3d::get_vertex_shader(&r.vs), 1);
-    D3DCheck(d3d::get_pixel_shader(&r.ps), 2);
-    D3DCheck(d3d::get_fvf(&r.fvf), 3);
-    D3DCheck(d3d::get_vertex_declaration(&r.decl), 4);
-    D3DCheck(d3d::get_render_target(0, &r.rt0), 5);
-    d3d::get_render_state(D3DRS_ZENABLE, &r.zenable);
-    d3d::get_render_state(D3DRS_ALPHABLENDENABLE, &r.blend);
-    d3d::get_render_state(D3DRS_SRCBLEND, &r.src);
-    d3d::get_render_state(D3DRS_DESTBLEND, &r.dst);
-    d3d::get_render_state(D3DRS_CULLMODE, &r.cull);
-    d3d::get_render_state(D3DRS_POINTSPRITEENABLE, &r.ps_en);
-    d3d::get_render_state(D3DRS_POINTSCALEENABLE, &r.ps_scale);
-    d3d::get_render_state(D3DRS_POINTSIZE_MIN, &r.ps_min);
-    d3d::get_render_state(D3DRS_POINTSIZE_MAX, &r.ps_max);
-    d3d::get_render_state(D3DRS_POINTSIZE, &r.ps_size);
-    memcpy(&r.minv, &r.ps_min, 4);
-    memcpy(&r.maxv, &r.ps_max, 4);
-    memcpy(&r.sizev, &r.ps_size, 4);
-    d3d::get_viewport(&r.vp_w, &r.vp_h);
-}
-static void rs_restore(const RsSave& r)
-{
-    D3DCheck(d3d::set_vertex_shader_handle(r.vs), 1);
-    D3DCheck(d3d::set_pixel_shader(r.ps), 2);
-    D3DCheck(d3d::set_vertex_declaration(r.decl), 3);
-    D3DCheck(d3d::set_fvf(r.fvf), 4);
-    D3DCheck(d3d::set_render_target(0, r.rt0), 5);
-    d3d::release(r.rt0);
-    D3DCheck(d3d::set_render_target(1, nullptr), 6);
-    D3DCheck(d3d::set_render_target(2, nullptr), 7);
-    d3d::set_render_state(D3DRS_ZENABLE, r.zenable);
-    d3d::set_render_state(D3DRS_ALPHABLENDENABLE, r.blend);
-    d3d::set_render_state(D3DRS_SRCBLEND, r.src);
-    d3d::set_render_state(D3DRS_DESTBLEND, r.dst);
-    d3d::set_render_state(D3DRS_CULLMODE, r.cull);
-    d3d::set_render_state(D3DRS_POINTSPRITEENABLE, r.ps_en);
-    d3d::set_render_state(D3DRS_POINTSCALEENABLE, r.ps_scale);
-    d3d::set_render_state(D3DRS_POINTSIZE_MIN, r.ps_min);
-    d3d::set_render_state(D3DRS_POINTSIZE_MAX, r.ps_max);
-    d3d::set_render_state(D3DRS_POINTSIZE, r.ps_size);
-    d3d::set_viewport(r.vp_w, r.vp_h);
-}
-// 纹理 stage 绑定保存/恢复(0..5 的 texture)。注意覆盖到 stage 5(矩形表),
-// 否则残留绑定会污染 ext 多纹理绘制(TEX8)。
-// 重要: 绝不读写 D3DTSS_ 过滤/寻址状态 —— D3D9 固定管线(FVF 无 shader)的过滤只认
+// 渲染状态 + 纹理绑定保存/恢复: 统一使用 Librarys/state_guard.h 的 RenderStateGuard
+// (成员 d3d::Ref 自动释放 Get* 带回的加引用指针, 引用泄漏从写法上不可能)。
+// 重要: 守卫绝不读写 D3DTSS_ 过滤/寻址状态 —— D3D9 固定管线(FVF 无 shader)的过滤只认
 // D3DTSS_MINFILTER/MAGFILTER, 而 GMDirectX9 把引擎的过滤设置 patch 到了 SetSamplerState
 // (D3DSAMP_)。GetTextureStageState 读回的是从未被写过的 D3DTSS 影子表(陈旧默认
 // MIN/MAG=LINEAR/WRAP), 若再 SetTextureStageState 写回会把 LINEAR 写进共享底层状态,
 // 污染引擎后续固定管线绘制(纹理变双线性平滑)。shader 路径不读 D3DTSS, 无需保存过滤。
-static const int GP_STAGES = 6;
-static void stages_save_textures(void* tex[GP_STAGES])
-{
-    for (int i = 0; i < GP_STAGES; ++i)
-    {
-        tex[i] = nullptr;
-        d3d::get_texture(i, &tex[i]);
-    }
-}
-static void stages_restore_textures(void* tex[GP_STAGES])
-{
-    for (int i = 0; i < GP_STAGES; ++i)
-        d3d::set_texture(i, tex[i]);
-}
-// 渲染状态 + 纹理绑定 RAII 守卫: 任何返回/异常路径都还原(rs + 纹理绑定)。
-// 过滤/寻址(D3DTSS_)完全不碰, 避免污染引擎固定管线(见上)。
-struct RenderStateGuard
-{
-    RsSave rs;
-    void* tex[GP_STAGES] = {};
-    RenderStateGuard()
-    {
-        rs_save(rs);
-        stages_save_textures(tex);
-    }
-    ~RenderStateGuard()
-    {
-        stages_restore_textures(tex);
-        rs_restore(rs);
-    }
-};
 
 static void run_evolution(GSystem& s, const std::vector<SpawnBatch>& batches, int count, 
     bool spawn_only = false)
@@ -1585,7 +1566,16 @@ static void run_render(GSystem& s)
                 wvp[r * 4 + c] = sum;
             }
     }
-    float sys[4] = { s.pos_x, s.pos_y, 1.0f / (float)GP_GRID, (float)s.capacity };
+    // 像素对齐自动检测: 引擎过滤设置已被 patch 到 SetSamplerState, GetSamplerState
+    // 读回即真实状态; MAGFILTER == D3DTEXF_POINT(1) 视为像素管线, 吸附粒子到整数网格
+    int snap_mode = g_gpart_pixelsnap;
+    if (snap_mode < 0)
+    {
+        dword mag = 0;
+        d3d::get_sampler_state(0, 5 /*D3DSAMP_MAGFILTER*/, &mag);
+        snap_mode = (mag == 1 /*D3DTEXF_POINT*/) ? 1 : 0;
+    }
+    float sys[4] = { s.pos_x, s.pos_y, 1.0f / (float)GP_GRID, snap_mode ? 1.0f : 0.0f };
     D3DCheck(d3d::set_vs_const_typed(RND_C_WVP, d3d::CK_FLOAT, wvp, 4), 12);
     D3DCheck(d3d::set_vs_const_typed(RND_C_SYS, d3d::CK_FLOAT, sys, 1), 13);
 
@@ -1598,7 +1588,7 @@ static void run_render(GSystem& s)
     // 或 SRCALPHA/INVSRCALPHA(默认 straight 管线)。premul 由 gpart_set_premul 或自动检测:
     // 检测进入本函数时的 SRCBLEND(rs.src) == D3DBLEND_ONE → 当前是预乘管线(psPremul)。
     bool premul = g_gpart_premul >= 0 ? (g_gpart_premul != 0)
-        : (rsg.rs.src == 2 /* D3DBLEND_ONE */);
+        : (rsg.src == 2 /* D3DBLEND_ONE */);
     auto set_blend = [&](int additive, int pos) {
         D3DCheck(d3d::set_render_state(D3DRS_ALPHABLENDENABLE, TRUE), pos);
         if (additive)
@@ -1701,6 +1691,17 @@ exp_real gpart_set_premul(double mode)
     return gtrue;
 }
 
+// gpart 扩展: 粒子像素对齐(点采样像素游戏防形变)。
+// mode: -1=自动检测(默认; 当前 MAGFILTER 为 POINT 时吸附), 0=强制关, 1=强制开。
+// 开启时粒子尺寸取整且锚点吸附整数网格, 未旋转粒子纹素↔像素 1:1;
+// 双线性管线下自动检测为不吸附, 平滑运动不受影响。
+exp_real gpart_set_pixelsnap(double mode)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    g_gpart_pixelsnap = (int)mode;
+    return gtrue;
+}
+
 exp_real gpart_system_create(double capacity)
 {
     if (d3d::version() != d3d::V9) return gerror;
@@ -1746,8 +1747,7 @@ exp_real gpart_system_destroy(double sys)
     {
         auto it = g_systems.find((int)sys);
         if (it == g_systems.end()) return gtrue;
-        system_tex_destroy(it->second);
-        g_systems.erase(it);
+        g_systems.erase(it);   // GSystem 析构自动释放设备资源(RAII)
         return gtrue;
     }
     simple_catch("gpart_system_destroy", gerror)
@@ -2128,7 +2128,12 @@ exp_real gpart_type_sprite(double type, double sprite, double animat, double str
 
         atlas_free_regions(*t);                // 换精灵前回收旧区域
         t->frame_rect.clear();
-        for (int k = 0; k < GP_MAX_FRAMES; ++k)
+
+        int frames_total = gm::sprite_get_number(spr);
+        if (frames_total <= 0) return gfalse;
+
+        if (frames_total > GP_RECT_TEX_FRAMES) frames_total = GP_RECT_TEX_FRAMES;
+        for (int k = 0; k < frames_total; ++k)
         {
             int tex = gm::sprite_get_texture(spr, k);
             if (tex < 0) break;
@@ -3066,10 +3071,7 @@ exp_real gpart_draw_regions(double sys, double color, double alpha)
         if (it == g_systems.end()) return gfalse;
         GSystem& s = it->second;
 
-        RsSave rs;
-        rs_save(rs);
-        void* tex[GP_STAGES] = {};
-        stages_save_textures(tex);
+        RenderStateGuard rsg;   // RAII: rs + 纹理绑定保存, 析构无条件还原(含异常路径)
 
         // 固定管线 FVF 线框绘制(无 PS, 无纹理)
         D3DCheck(d3d::set_vertex_shader(true, D3DFVF_XYZ | D3DFVF_DIFFUSE, 0), 1);
@@ -3079,7 +3081,7 @@ exp_real gpart_draw_regions(double sys, double color, double alpha)
         D3DCheck(d3d::set_render_state(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA), 5);
         D3DCheck(d3d::set_render_state(D3DRS_ZENABLE, FALSE), 6);
         D3DCheck(d3d::set_render_state(D3DRS_CULLMODE, D3DCULL_NONE), 7);
-        for (int i = 0; i < GP_STAGES; ++i)
+        for (int i = 0; i < 6; ++i)
             d3d::set_texture(i, nullptr);
 
         struct V { float x, y, z; DWORD c; };
@@ -3147,9 +3149,7 @@ exp_real gpart_draw_regions(double sys, double color, double alpha)
             poly(rect(d.xmin, d.ymin, d.xmax, d.ymax));
         }
 
-        stages_restore_textures(tex);
-        rs_restore(rs);
-        return gtrue;
+        return gtrue;   // rsg 析构自动还原状态与纹理绑定
     }
     simple_catch("gpart_draw_regions", gerror)
 }

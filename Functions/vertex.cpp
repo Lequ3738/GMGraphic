@@ -1,6 +1,7 @@
 #include "vertex.h"
 #include "../Librarys/math_s.h"
 #include "../Librarys/buffer.h"
+#include "../Librarys/state_guard.h"
 #include <cstdint>
 #include <algorithm>
 
@@ -563,11 +564,7 @@ static void submit_impl(int buf, double primitive, double texture, size_t start_
     }
 
     // Save engine state, bind our decl + a suitable VS, draw, restore.
-    dword prevVS = 0, prevFVF = 0;
-    void* prevDecl = nullptr;
-    D3DCheck(d3d::get_vertex_shader(&prevVS), 1);
-    D3DCheck(d3d::get_vertex_declaration(&prevDecl), 2);
-    D3DCheck(d3d::get_fvf(&prevFVF), 3);
+    ShaderStateGuard engine_state;   // RAII: 析构恢复 VS/decl/FVF 并释放 Get* 引用
 
     D3DCheck(d3d::set_vertex_declaration(f->decl), 4);
     dword vs = 0;
@@ -586,11 +583,7 @@ static void submit_impl(int buf, double primitive, double texture, size_t start_
         D3DCheck(d3d::draw_primitive_up((DWORD)prim, prims,
             b->data.data() + start_vert * f->stride, f->stride), 7);
     }
-
-    D3DCheck(d3d::set_vertex_shader_handle(prevVS), 8);
-    D3DCheck(d3d::set_vertex_declaration(prevDecl), 9);
-    D3DCheck(d3d::set_fvf(prevFVF), 10);
-}
+}   // engine_state 析构: 恢复引擎状态 + 释放引用
 
 exp_real vertex_submit(double buf, double primitive, double texture)
 {
