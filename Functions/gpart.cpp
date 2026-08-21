@@ -18,8 +18,9 @@ static const DWORD GP_VTS0 = 257;      // D3DVERTEXTEXTURESAMPLER0
 // gpart_* GPU particle system (DX9 only)
 //
 // Stateful GPU simulation:
-//   - Particle state lives in three A16B16G16R16F render-target textures
-//     (256x256 grid = 65536 slots), ping-ponged each step:
+//   - Particle state lives in three A32B32G32R32F render-target textures
+//     (256x256 grid = 65536 slots; fp32 避免 half 精度的 age 停滞与大坐标量化),
+//     ping-ponged each step:
 //       tex[0] : pos.xy, vel.xy
 //       tex[1] : age, life, type, frame
 //       tex[2] : base color.rgb (mix/rgb/hsv/override), has_override
@@ -41,7 +42,7 @@ static const DWORD GP_VTS0 = 257;      // D3DVERTEXTEXTURESAMPLER0
 static const int EVO_C_GLOBAL = 0;    // (now, dt, invGrid, capacity)
 static const int EVO_C_BATCHN = 4;    // (.x = batch count)
 static const int EVO_C_MODE = 5;      // (.x = 1 → 仅出生不老化)
-static const int EVO_C_BATCHES = 8;   // 48 batches * 4 float4(ps_3_0 常量上限 224)
+static const int EVO_C_BATCHES = 8;   // 16 批 × 4 float4(c8..c71, ps_3_0 常量上限内)
 static const int EVO_C_EFF = 6;       // (.x=attractor 数, .y=destroyer 数, .z=deflector 数)
 static const int RND_C_WVP = 0;       // float4x4 (c0..c3)
 static const int RND_C_SYS = 4;       // (sys_x, sys_y, invGrid, capacity)
@@ -112,6 +113,41 @@ static unsigned short f2h(float f)
         return (unsigned short)(sign | h);
     }
     return (unsigned short)(sign | ((unsigned int)e << 10) | (mant >> 13));
+}
+
+// half -> float(A16B16G16R16F 解码, 与 f2h 互逆): 把经 half 量化的值回写 CPU 影子
+// 数组, 保证 CPU/GPU 逐位一致(如 life_min/max 决定的自然死亡时机)。
+static float h2f(unsigned short h)
+{
+    unsigned int sign = (unsigned int)(h & 0x8000u) << 16;
+    unsigned int exp = (h >> 10) & 0x1fu;
+    unsigned int mant = h & 0x3ffu;
+    unsigned int x;
+    if (exp == 0)
+    {
+        if (mant == 0)
+        {
+            x = sign;
+        }
+        else
+        {
+            unsigned int e2 = 0;   // 规格化: 左移直至最高位落入隐含位
+            do { mant <<= 1; e2++; } while (!(mant & 0x400u));
+            mant &= 0x3ffu;
+            x = sign | ((127u - 15u - e2) << 23) | (mant << 13);
+        }
+    }
+    else if (exp == 31)
+    {
+        x = sign | 0x7f800000u | (mant << 13);
+    }
+    else
+    {
+        x = sign | ((exp - 15 + 127) << 23) | (mant << 13);
+    }
+    float f;
+    memcpy(&f, &x, 4);
+    return f;
 }
 
 // ============================================================================
@@ -309,7 +345,7 @@ struct GEmitter
     float stream_rate = 0;     // 流式配置: 每步数量
     // 定时渐变流(ramp): 从 ramp_start 步起 ramp_dur 步内, 每步发射数量从
     // ramp_rate0 线性渐变到 ramp_rate1(小数速率用累积器平滑), 时间到自动停止。
-    float ramp_start = -1;     // 起始步(系统时钟 s.now); -1 = 未激活
+    double ramp_start = -1;    // 起始步(系统时钟 s.now); -1 = 未激活
     float ramp_rate0 = 0;      // 起始每步数量
     float ramp_rate1 = 0;      // 结束每步数量
     float ramp_dur = 0;        // 持续步数(> 0 = 激活)
@@ -326,7 +362,7 @@ static SpawnBatch emitter_batch(const GEmitter& g)
     return b;
 }
 
-struct LiveEntry { int slot; float birth; };   // 活跃窗口项(带出生快照, 防槽复用冲突)
+struct LiveEntry { int slot; double birth; int gen; };   // 活跃窗口项(出生快照+代数号, 防槽复用/同槽双条目)
 
 // 区域特效器(GM8 part_attractor_/part_destroyer_/part_deflector_ 语义)。
 // 坐标相对粒子系统(与粒子 pos/emitter region 同坐标系, 原样比较)。
@@ -342,10 +378,13 @@ struct GSystem
     void* tex[3][2] = {};             // [kind][ping]; 0=pos/vel 1=age/life 2=color
     void* surf[3][2] = {};
     int cur = 0;
-    float now = 0;                    // 系统时钟(步)
+    double now = 0;                   // 系统时钟(步; double 防 2^24 步后 float 停摆)
     int cursor = 0;
-    std::vector<float> s_birth, s_life;
+    std::vector<double> s_birth;      // 出生步影子(与 now 同型免转换)
+    std::vector<float> s_life;
     std::vector<int> s_type, s_frame;
+    std::vector<int> s_gen;           // 槽位代数号影子(配合 LiveEntry.gen 剔除陈旧条目)
+    int spawn_gen = 0;                // 发射批次代数计数器
     std::vector<SpawnBatch> pending;
     std::unordered_map<int, GEmitter> emitters;
     int em_counter = 1;
@@ -365,6 +404,52 @@ struct GSystem
 
 static std::unordered_map<int, GSystem> g_systems;
 static int g_system_counter = 1;
+
+// 系统时钟取整包装: now 为 double 可长期精确计数, 但种子/概率哈希走 int 乘法,
+// 超 int 域是 UB; 按 2^28 取模保持确定性且远离溢出(2^28 步 ≈ 51 天连续运行)。
+static int now_wrap(const GSystem& s)
+{
+    return (int)std::fmod(s.now, 268435456.0);
+}
+
+// 清除所有系统中指向指定类型的有效窗口条目(类型销毁/id 复用时调用)。
+// 这些条目的事件已无意义(类型表已清零或易主), 滞留只会拖慢遍历, 且 id 复用后
+// 会向新类型发幽灵事件。不触发死亡事件。
+static void purge_type_window_entries(int type_id)
+{
+    for (auto& skv : g_systems)
+    {
+        GSystem& s = skv.second;
+        auto& win = s.live_window;
+        size_t w = 0;
+        for (size_t i = 0; i < win.size(); ++i)
+        {
+            const LiveEntry& e = win[i];
+            bool stale = e.gen != s.s_gen[e.slot] || s.s_type[e.slot] == type_id;
+            if (!stale) win[w++] = e;
+        }
+        win.resize(w);
+    }
+}
+
+// 全系统重算混合掩码(类型 blend 配置变更后调用): 掩码须反映当前存活粒子集合,
+// 否则运行中切换 additive 后旧粒子可能因掩码缺位而永久零 alpha(不可见)。
+static void recompute_blend_masks()
+{
+    for (auto& skv : g_systems)
+    {
+        GSystem& s = skv.second;
+        int mask = 0;
+        for (const LiveEntry& e : s.live_window)
+        {
+            if (e.gen != s.s_gen[e.slot]) continue;
+            auto it = g_types.find(s.s_type[e.slot]);
+            if (it == g_types.end()) continue;
+            mask |= (it->second.additive() > 0.5f) ? 2 : 1;
+        }
+        s.blend_mask = mask;
+    }
+}
 
 // ============================================================================
 // GPU 资源(全局, 惰性创建)
@@ -439,7 +524,7 @@ static const char* EVO_PS_HLSL =
     "float4 uBatchCount : register(c4);\n"
     "float4 uMode : register(c5);\n"      // .x = 1 → 仅出生不老化(多块演化用)
     "float4 uEff : register(c6);\n"       // .x=attractor 数, .y=destroyer 数, .z=deflector 数
-    "float4 uBatches[64] : register(c8);\n"
+    "float4 uBatches[16] : register(c8);\n"
 
     "static const float TWO_PI = 6.283185307179586;\n"
     "static const float DEG2RAD = 0.017453292519943295;\n"
@@ -563,7 +648,8 @@ static const char* EVO_PS_HLSL =
     "      else if (T3.z < 5.5) { base = lerp(T4.rgb, T5.rgb, cr); }\n"
     "      else {\n"
     "        float3 hsv = lerp(T4.rgb, T5.rgb, cr);\n"
-    "        base = hsv2rgb(hsv * float3(360.0/255.0, 1.0/255.0, 1.0/255.0));\n"
+           // h/s/v 均为 0..255(GM8 make_color_hsv 约定) → 各除 255 归一(hsv2rgb 的 h 以圈为单位)
+    "        base = hsv2rgb(hsv * float3(1.0/255.0, 1.0/255.0, 1.0/255.0));\n"
     "      }\n"
     "    } else { base = T4.rgb; }\n"
     "    has_ovr = b3.w;\n"
@@ -680,6 +766,19 @@ static const char* EVO_PS_HLSL =
     "        float dir2 = lerp(TD1.z, TD1.w, rr3);\n"
     "        float rad2 = dir2 * DEG2RAD;\n"
     "        vel = spd2 * float2(cos(rad2), -sin(rad2));\n"
+           // 按新类型重算颜色: 旧粒子的烘焙色/覆盖色不得继承(否则 mix/rgb/hsv 模式的
+           // death_type 显示旧色, override 永久粘连)。颜色随机与变形概率(id+41.7)、
+           // 寿命/速度(id+71.3/91.7)用不同偏移解耦。
+    "        float4 TM3 = tex2D(sType, float2((type + 0.5) / 256.0, 3.5 / 14.0));\n"
+    "        float4 TM4 = tex2D(sType, float2((type + 0.5) / 256.0, 4.5 / 14.0));\n"
+    "        float4 TM5 = tex2D(sType, float2((type + 0.5) / 256.0, 5.5 / 14.0));\n"
+    "        float crm = h1(id + 61.3);\n"
+    "        if (TM3.z > 3.5) {\n"
+    "          if (TM3.z < 4.5) { base = lerp(TM4.rgb, float3(TM4.w, TM5.x, TM5.y), crm); }\n"
+    "          else if (TM3.z < 5.5) { base = lerp(TM4.rgb, TM5.rgb, crm); }\n"
+    "          else { base = hsv2rgb(lerp(TM4.rgb, TM5.rgb, crm) * float3(1.0/255.0, 1.0/255.0, 1.0/255.0)); }\n"
+    "        } else { base = TM4.rgb; }\n"
+    "        has_ovr = 0.0;\n"
     "      } else {\n"
     "        age = 1.0; life = 0.0;\n"   // 无 death 配置(或概率未中): 直接销毁(age>=life 剔除)
     "      }\n"
@@ -812,11 +911,21 @@ static const char* RND_PS_HLSL =
 // .data 基址 0x189000 稳定, 与 draw_text.cpp 读引擎全局同模式)。
 // 仅当引擎标志未置位时调用(幂等)。若调用时引擎子系统未就绪, 形状表由引擎
 // 自身的 part_system_create 填充, ensure_gm8_shapes() 每帧重试兜底。
+// SEH 兜底: /EHsc 下 catch(...) 接不住硬件异常(AV), 裸地址解引用/调用收进
+// 纯 POD 的 __try 函数(不可含需展开的 C++ 对象, 否则 C2712), 地址失效时优雅降级。
+static int call_gm8_shape_init_seh()
+{
+    __try
+    {
+        if (*(volatile BYTE*)0x58D5A0) return 1;   // 引擎已生成
+        ((void(__cdecl*)())0x4BB120)();
+        return 1;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
 static void call_gm8_shape_init()
 {
-    if (*(volatile BYTE*)0x58D5A0) return;   // 引擎已生成
-    typedef void(__cdecl* fn_t)();
-    ((fn_t)0x4BB120)();
+    call_gm8_shape_init_seh();
 }
 
 // 从 GM8 引擎内置形状精灵表抓取位图(固定地址, 与 draw_text.cpp 读引擎全局同模式)。
@@ -825,36 +934,47 @@ static void call_gm8_shape_init()
 // 精灵结构: +4 = subimageCount, +8 = 帧数据指针数组, [0] = 帧数据。
 // 帧数据: +4 = 宽, +8 = 高, +12 = 像素数据指针(DWORD/像素, 实测 0xAARRGGBB)。
 // 实测形状精灵为 64×64(origin 32,32 = 中心)。成功返回 [R][G][B][A] 像素与宽高。
-static bool grab_gm8_shape(int shape, std::vector<BYTE>& out, int& ow, int& oh)
+// 结构解读在纯 POD 的 __try 函数内完成(SEH 保护), C++ 侧仅做像素拷贝。
+static int gm8_shape_read(int shape, int* w_out, int* h_out, DWORD** px_out)
 {
-    constexpr DWORD GM8_SHAPE_TABLE = 0x58F3A0;   // 变量: 值 = 精灵指针数组基址
-    try
+    __try
     {
-        DWORD array_base = *(DWORD*)GM8_SHAPE_TABLE;
-        if (!array_base) return false;
+        DWORD array_base = *(DWORD*)0x58F3A0;   // 变量: 值 = 精灵指针数组基址
+        if (!array_base) return 0;
         BYTE* spr = *(BYTE**)(array_base + 4 * shape);
-        if (!spr) return false;
+        if (!spr) return 0;
         BYTE** frames = *(BYTE***)(spr + 8);
-        if (!frames || !frames[0]) return false;
+        if (!frames || !frames[0]) return 0;
         BYTE* frame = frames[0];
         int w = *(int*)(frame + 4);
         int h = *(int*)(frame + 8);
         DWORD* px = *(DWORD**)(frame + 12);
-        if (!px || w < 1 || h < 1 || w > 128 || h > 128) return false;
-        out.resize((size_t)w * h * 4);
-        for (int i = 0; i < w * h; ++i)
-        {
-            DWORD d = px[i];
-            out[(size_t)i * 4 + 0] = (BYTE)((d >> 16) & 0xFF);   // R
-            out[(size_t)i * 4 + 1] = (BYTE)((d >> 8) & 0xFF);    // G
-            out[(size_t)i * 4 + 2] = (BYTE)(d & 0xFF);            // B
-            out[(size_t)i * 4 + 3] = (BYTE)((d >> 24) & 0xFF);    // A
-        }
-        ow = w;
-        oh = h;
-        return true;
+        if (!px || w < 1 || h < 1 || w > 128 || h > 128) return 0;
+        *w_out = w;
+        *h_out = h;
+        *px_out = px;
+        return 1;
     }
-    catch (...) { return false; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+
+static bool grab_gm8_shape(int shape, std::vector<BYTE>& out, int& ow, int& oh)
+{
+    int w = 0, h = 0;
+    DWORD* px = nullptr;
+    if (!gm8_shape_read(shape, &w, &h, &px)) return false;
+    out.resize((size_t)w * h * 4);
+    for (int i = 0; i < w * h; ++i)
+    {
+        DWORD d = px[i];
+        out[(size_t)i * 4 + 0] = (BYTE)((d >> 16) & 0xFF);   // R
+        out[(size_t)i * 4 + 1] = (BYTE)((d >> 8) & 0xFF);    // G
+        out[(size_t)i * 4 + 2] = (BYTE)(d & 0xFF);            // B
+        out[(size_t)i * 4 + 3] = (BYTE)((d >> 24) & 0xFF);    // A
+    }
+    ow = w;
+    oh = h;
+    return true;
 }
 
 // 双线性缩放到 64×64 图集 tile(任意输入尺寸)
@@ -1069,8 +1189,10 @@ static void system_tex_create(GSystem& s)
     for (int k = 0; k < 3; ++k)
         for (int p = 0; p < 2; ++p)
         {
+            // 状态纹理统一 A32B32G32R32F: 三张 MRT 同格式满足 D3D9 要求; fp32 消除
+            // half 精度缺陷(age>2048 停滞致永生粒子、大坐标 2~8px 量化抖动)。
             D3DCheck(d3d::create_texture(GP_GRID, GP_GRID, 1, D3DUSAGE_RENDERTARGET,
-                GP_FMT_16F, D3DPOOL_DEFAULT, &s.tex[k][p]), 1);
+                GP_FMT_32F, D3DPOOL_DEFAULT, &s.tex[k][p]), 1);
             D3DCheck(d3d::get_surface_level(s.tex[k][p], 0, &s.surf[k][p]), 2);
         }
     // 清零: 全 0 = age 0 / life 0 → 死亡
@@ -1163,7 +1285,7 @@ static void queue_spawn(GSystem& s, int type, int n, const SpawnBatch& tmpl)
     b.start = (float)start;
     b.count = (float)n;
     b.type = (float)type;
-    b.seed = (float)((gphashf((float)(start + (int)s.now * 7)) * 100000.0f));
+    b.seed = gphashf((float)(start + now_wrap(s) * 7)) * 100000.0f;
 
     // 跨环拆批: GPU 端按连续区间 [start, start+count) 判断, 不取模。
     // 若 start+n 越过 capacity, 拆成 [start, cap) 与 [0, n-(cap-start)) 两条,
@@ -1185,12 +1307,16 @@ static void queue_spawn(GSystem& s, int type, int n, const SpawnBatch& tmpl)
         s.pending.push_back(b);
     }
 
+    // 本批代数号: 同一步内总发射超过 capacity 环绕回同槽时, 旧条目凭 gen 失配
+    // 被剔除, 防同槽双条目导致 step 事件双发/particles_count 双计。
+    int gen = ++s.spawn_gen;
     for (int i = 0; i < n; ++i)
     {
         int slot = (start + i) % s.capacity;
         s.s_birth[slot] = s.now;
         s.s_type[slot] = type;
-        s.live_window.push_back({ slot, s.now });
+        s.s_gen[slot] = gen;
+        s.live_window.push_back({ slot, s.now, gen });
         auto it = g_types.find(type);
         if (it != g_types.end())
         {
@@ -1215,10 +1341,21 @@ static void queue_spawn(GSystem& s, int type, int n, const SpawnBatch& tmpl)
     s.cursor = (s.cursor + n) % s.capacity;
 }
 
-// 源槽位生成批次(part_type_step/death): 目的地槽位的新粒子位置 = 源粒子当前位置(GPU 读取)
-static void queue_source_spawn(GSystem& s, int type, int source_slot, int n)
+// 源槽位生成批次(part_type_step/death): 目的地槽位的新粒子位置 = 源粒子当前位置(GPU 读取)。
+// allow_expired: 自然死亡事件在 CPU 判死的同一步触发, 此时 GPU 尚未老化该槽(本步演化
+// 才判死), 源槽"刚到期"是合法状态必须放行; step 事件路径源槽刚通过存活校验无需放行。
+// 影子存活校验用于拦截越界/已被清除(-1e9 出生)/长期陈旧的槽位 —— 这些情况下 GPU 侧
+// 也只会写出出生即死的空操作粒子, 直接入队只会留下幽灵窗口条目。
+static void queue_source_spawn(GSystem& s, int type, int source_slot, int n,
+    bool allow_expired = false)
 {
     if (n <= 0 || s.capacity <= 0) return;
+    if (source_slot < 0 || source_slot >= (int)s.s_birth.size()) return;
+    double age = s.now - s.s_birth[source_slot];
+    double life = (double)s.s_life[source_slot];
+    bool alive = age >= 0.0 && age < life;
+    bool just_expired = allow_expired && age >= life && age < life + 1.0;
+    if (!alive && !just_expired) return;
     SpawnBatch b;
     b.shape = -2.0f;                 // 源槽位模式(b2.x < -1.5)
     b.distr = 0;
@@ -1239,9 +1376,9 @@ static void fire_death_event(GSystem& s, int slot)
     if (gt.death_num() == 0.0f || gt.death_type() < 1.0f
         || !g_types.count((int)gt.death_type())) return;
     if (gt.death_num() > 0.0f)
-        queue_source_spawn(s, (int)gt.death_type(), slot, (int)gt.death_num());
-    else if (gphashf((float)slot + s.now * 3.71f + 17.0f) < 1.0f / -gt.death_num())
-        queue_source_spawn(s, (int)gt.death_type(), slot, 1);
+        queue_source_spawn(s, (int)gt.death_type(), slot, (int)gt.death_num(), true);
+    else if (gphashf((float)(slot + s.now * 3.71 + 17.0)) < 1.0f / -gt.death_num())
+        queue_source_spawn(s, (int)gt.death_type(), slot, 1, true);
 }
 
 // ============================================================================
@@ -1370,7 +1507,7 @@ static void run_evolution(GSystem& s, const std::vector<SpawnBatch>& batches, in
     D3DCheck(d3d::set_stream_source(0, g_quad_vb, 16), 15);
 
     float dt = 1.0f;
-    float glob[4] = { s.now, dt, 1.0f / (float)GP_GRID, (float)s.capacity };
+    float glob[4] = { (float)s.now, dt, 1.0f / (float)GP_GRID, (float)s.capacity };
     D3DCheck(d3d::set_vs_const_typed(EVO_C_GLOBAL, d3d::CK_FLOAT, glob, 1), 16);
     D3DCheck(d3d::set_ps_const_typed(EVO_C_GLOBAL, d3d::CK_FLOAT, glob, 1), 17);
     float bn[4] = { (float)count, 0, 0, 0 };
@@ -1575,10 +1712,11 @@ exp_real gpart_system_create(double capacity)
         s.capacity = (int)capacity <= 0
             ? 4096
             : (int)std::clamp(capacity, 1.0, (double)GP_MAX_CAPACITY);
-        s.s_birth.resize(s.capacity, -1e9f);
+        s.s_birth.resize(s.capacity, -1e9);
         s.s_life.resize(s.capacity, 1.0f);
         s.s_type.resize(s.capacity, 0);
         s.s_frame.resize(s.capacity, 0);
+        s.s_gen.resize(s.capacity, 0);
         system_tex_create(s);
 
         // 静态四边形 VB: 每粒子 6 顶点(2 三角形) × (角点x, 角点y, id), 一次创建永不重建
@@ -1628,8 +1766,9 @@ exp_real gpart_system_clear(double sys)
         auto it = g_systems.find((int)sys);
         if (it == g_systems.end()) return gfalse;
         GSystem& s = it->second;
-        std::fill(s.s_birth.begin(), s.s_birth.end(), -1e9f);
+        std::fill(s.s_birth.begin(), s.s_birth.end(), -1e9);
         std::fill(s.s_life.begin(), s.s_life.end(), 1.0f);
+        std::fill(s.s_gen.begin(), s.s_gen.end(), 0);
         s.pending.clear();
         s.live_window.clear();
         s.cursor = 0;
@@ -1650,28 +1789,39 @@ exp_real gpart_system_update()
             GSystem& s = kv.second;
             // 活跃窗口家务(原地过滤): 代数校验防槽复用冲突 + 死亡剔除。
             // 静态路径没有每帧组装, 过滤必须在此处进行, 否则窗口无限增长。
+            // 死亡事件延后到压缩完成后统一触发: 遍历中 fire_death_event 会向 win
+            // 追加条目, 边压缩边追加会覆盖未处理区/被 resize 截掉。
             size_t w = 0;
             auto& win = s.live_window;
+            std::vector<int> expired;
             for (size_t i = 0; i < win.size(); ++i)
             {
                 const LiveEntry& e = win[i];
-                if (e.birth != s.s_birth[e.slot]) continue;
-                float age = s.now - e.birth;
-                if (age < 0.0f || age >= s.s_life[e.slot])
+                if (e.gen != s.s_gen[e.slot]) continue;   // 槽位已被新发射复用
+                double age = s.now - e.birth;
+                if (age < 0.0 || age >= s.s_life[e.slot])
                 {
-                    // 自然死亡 → part_type_death 事件(CPU 版本, 位置由 GPU 按源槽位读取)
-                    fire_death_event(s, e.slot);
+                    expired.push_back(e.slot);
                     continue;
                 }
                 win[w++] = e;
             }
             win.resize(w);
+            for (int slot : expired)
+            {
+                // 自然死亡 → part_type_death 事件(CPU 版本, 位置由 GPU 按源槽位读取)
+                fire_death_event(s, slot);
+            }
 
-            // part_type_step 事件: 每个带 step 配置的存活粒子, 每步按数量(或 1/|n| 概率)生成
+            // part_type_step 事件: 每个带 step 配置的存活粒子, 每步按数量(或 1/|n| 概率)生成。
+            // 快照窗口长度后按索引遍历: 循环内 queue_source_spawn 会向 win 追加条目,
+            // range-for 在 vector 重分配时迭代器悬空(UB); 新追加条目留待下步处理。
             if (g_any_step_death)
             {
-                for (auto& e : win)
+                size_t wn = win.size();
+                for (size_t wi = 0; wi < wn; ++wi)
                 {
+                    const LiveEntry& e = win[wi];
                     auto it = g_types.find(s.s_type[e.slot]);
                     if (it == g_types.end()) continue;
                     const GType& gt = it->second;
@@ -1681,7 +1831,7 @@ exp_real gpart_system_update()
                         if (gt.step_num() > 0.0f)
                             queue_source_spawn(s, (int)gt.step_type(), e.slot,
                                 (int)gt.step_num());
-                        else if (gphashf((float)e.slot + s.now * 7.31f)
+                        else if (gphashf((float)(e.slot + s.now * 7.31))
                             < 1.0f / -gt.step_num())
                             queue_source_spawn(s, (int)gt.step_type(), e.slot, 1);
                     }
@@ -1698,15 +1848,16 @@ exp_real gpart_system_update()
                 // 定时渐变流: rate(t) = lerp(rate0, rate1, t/dur); 小数累积, 到期停止
                 if (g.ramp_dur > 0.0f)
                 {
-                    float t = s.now - g.ramp_start;
-                    if (t >= g.ramp_dur)
+                    double t = s.now - g.ramp_start;
+                    if (t >= (double)g.ramp_dur)
                     {
                         g.ramp_dur = 0;      // 时间到: 停止(stream_rate=0, 普通流分支自然空转)
                         g.ramp_start = -1;
                         g.ramp_acc = 0;
                         continue;
                     }
-                    g.ramp_acc += lerp(g.ramp_rate0, g.ramp_rate1, t / g.ramp_dur);
+                    g.ramp_acc += (float)lerp(g.ramp_rate0, g.ramp_rate1,
+                        t / (double)g.ramp_dur);
                     int n = (int)g.ramp_acc;
                     if (n > 0)
                     {
@@ -1718,7 +1869,7 @@ exp_real gpart_system_update()
                 if (g.stream_rate > 0.0f)
                     queue_spawn(s, g.stream_type, (int)g.stream_rate, b);
                 else if (g.stream_rate < 0.0f
-                    && gphashf((float)(ekv.first + (int)s.now * 13)) < 1.0f / -g.stream_rate)
+                    && gphashf((float)(ekv.first + now_wrap(s) * 13)) < 1.0f / -g.stream_rate)
                     queue_spawn(s, g.stream_type, 1, b);
             }
 
@@ -1860,11 +2011,11 @@ exp_real gpart_particles_count(double sys)
         if (it == g_systems.end()) return gerror;
         GSystem& s = it->second;
         int n = 0;
-        for (auto& e : s.live_window)
-            if (e.birth == s.s_birth[e.slot])
+        for (const LiveEntry& e : s.live_window)
+            if (e.gen == s.s_gen[e.slot])
             {
-                float age = s.now - e.birth;
-                if (age >= 0.0f && age < s.s_life[e.slot]) n++;
+                double age = s.now - e.birth;
+                if (age >= 0.0 && age < (double)s.s_life[e.slot]) n++;
             }
         return (double)n;
     }
@@ -1900,6 +2051,7 @@ exp_real gpart_type_create()
         g_types.emplace(id, t);
         type_table_upload();
         g_types[id].upload_rect_table(id);
+        purge_type_window_entries(id);         // 复用 id 时清除指向它的陈旧窗口条目
         return (double)id;
     }
     simple_catch("gpart_type_create", gerror)
@@ -1931,6 +2083,7 @@ exp_real gpart_type_destroy(double type)
         g_types.erase(it);
         type_table_upload();
         recompute_step_death();
+        purge_type_window_entries(id);         // 已死类型的窗口条目只余拖累, 直接清除
         return gtrue;
     }
     simple_catch("gpart_type_destroy", gerror)
@@ -2069,8 +2222,13 @@ exp_real gpart_type_life(double type, double min, double max)
     {
         GType* t = type_at((int)type);
         if (!t) return gfalse;
-        t->life_min() = (float)std::min(min, max);
-        t->life_max() = (float)std::max(min, max);
+        // 钳制 + half 回写: 类型表以 half 存储寿命, CPU 影子必须使用与 GPU 逐位相同的
+        // 值(h2f(f2h(v))), 否则小数寿命时 GPU 提前判死、自然死亡事件丢失;
+        // 上限 65504 = half 最大有限值, 超出会编码成 inf 导致粒子永生。
+        double lo = std::clamp(std::min(min, max), 0.0, 65504.0);
+        double hi = std::clamp(std::max(min, max), 0.0, 65504.0);
+        t->life_min() = h2f(f2h((float)lo));
+        t->life_max() = h2f(f2h((float)hi));
         type_table_upload();
         return gtrue;
     }
@@ -2217,6 +2375,7 @@ exp_real gpart_type_blend(double type, double additive)
         if (!t) return gfalse;
         t->additive() = additive > 0.5 ? 1.0f : 0.0f;
         type_table_upload();
+        recompute_blend_masks();               // 掩码须随配置更新, 防存活粒子永久零 alpha
         return gtrue;
     }
     simple_catch("gpart_type_blend", gerror)

@@ -5,7 +5,7 @@
 // gpart_* GPU particle system (DX9 only, D3D8 returns gerror).
 // Semantics aligned with GM8's native particle API (part_type_*/part_system_*/
 // part_emitter_* / part_particles_*). Implementation is a stateful GPU particle
-// sim: state lives in A16B16G16R16F render-target textures (ping-pong), evolved
+// sim: state lives in A32B32G32R32F render-target textures (ping-pong), evolved
 // by a 3-MRT fullscreen pass, rendered as point sprites via VTF (vs_3_0 texldl).
 //
 // Usage (GML):
