@@ -74,11 +74,17 @@ enum class GTypeRow : size_t
 };
 
 // ============================================================================
-// 确定性 hash(CPU/GPU 同公式, 无超越函数): frac(43758.5453 * frac(x * 0.1031))
+// 确定性 hash(CPU/GPU 同公式, 无超越函数): 与演化 shader 的 h1 逐位一致
+// (frac(43758.5453 * frac(x * (x + 33.33) * (x + 19.19) ...)) 的三轮高熵形式)。
+// CPU 影子数组(life/frame)必须与 GPU 算出的值完全相同, 否则自然死亡时机错位。
 // ============================================================================
 static float gphashf(float a)
 {
     float x = a * 0.1031f;
+    x -= floorf(x);
+    x = x * (x + 19.19f);
+    x -= floorf(x);
+    x = x * (x + 33.33f);
     x -= floorf(x);
     x *= 43758.5453f;
     x -= floorf(x);
@@ -301,6 +307,13 @@ struct GEmitter
     int distr = PS_DISTR_LINEAR;
     int stream_type = -1;      // 流式配置: 每步自动发射的类型(-1 = 未启用)
     float stream_rate = 0;     // 流式配置: 每步数量
+    // 定时渐变流(ramp): 从 ramp_start 步起 ramp_dur 步内, 每步发射数量从
+    // ramp_rate0 线性渐变到 ramp_rate1(小数速率用累积器平滑), 时间到自动停止。
+    float ramp_start = -1;     // 起始步(系统时钟 s.now); -1 = 未激活
+    float ramp_rate0 = 0;      // 起始每步数量
+    float ramp_rate1 = 0;      // 结束每步数量
+    float ramp_dur = 0;        // 持续步数(> 0 = 激活)
+    float ramp_acc = 0;        // 小数速率累积器(平滑渐变)
 };
 
 // 由发射器区域模板构造 SpawnBatch(burst/stream/update 共用)
@@ -479,6 +492,8 @@ static const char* EVO_PS_HLSL =
     "  float3 base;\n"
     "  float has_ovr;\n"
     "  float frame;\n"
+    "  float killhit = 0.0;\n"   // 本步被 destroyer 命中(非免疫类型)
+    "  float srcdead = 0.0;\n"   // 源槽位粒子已死(step/death 源槽读取无效)
 
     "  if (seeded > 0.5 && dead < 0.5) {\n"
     "    type = b0.z;\n"
@@ -487,10 +502,13 @@ static const char* EVO_PS_HLSL =
     "    float2 p;\n"
 
     "    if (b2.x < -1.5) {\n"
-           // 源槽位生成(step/death): 位置 = 源粒子当前位置(读上一帧状态)
+           // 源槽位生成(step/death): 位置 = 源粒子当前位置(读上一帧状态)。
+           // 源已死(GPU 击杀/变形后的僵尸事件)则出生即死, 防 (0,0) 幽灵粒子。
     "      float src = floor(b2.z + 0.5);\n"
     "      float2 suv = (float2(fmod(src, 256.0), floor(src / 256.0)) + 0.5) * uGlobal.z;\n"
     "      p = tex2D(sPos, suv).xy;\n"
+    "      float4 sst = tex2D(sLife, suv);\n"
+    "      srcdead = (sst.y <= 0.0 || sst.x >= sst.y) ? 1.0 : 0.0;\n"
     "    } else if (b2.x < -0.5) {\n"
     "      p = b2.zw;\n"
     "    } else {\n"
@@ -536,6 +554,7 @@ static const char* EVO_PS_HLSL =
     "    vel = spd * float2(cos(rad), -sin(rad));\n"
     "    age = 0.0;\n"
     "    life = lerp(T0.x, T0.y, rnd.x);\n"
+    "    if (srcdead > 0.5) life = 0.0;\n"   // 源槽位已死: 出生即死(不渲染, 槽位自然回收)
 
     "    if (b3.w > 0.5) { base = b3.rgb; }\n"
     "    else if (T3.z > 3.5) {\n"
@@ -608,7 +627,7 @@ static const char* EVO_PS_HLSL =
     "    float ca2 = cos(da), sa2 = sin(da);\n"
     "    vel = float2(vel.x * ca2 + vel.y * sa2, -vel.x * sa2 + vel.y * ca2);\n"
     "    pos += vel * dt + (vel / max(length(vel), 0.0001)) * swing + acc_pos;\n"
-         // deflector(引擎 sub_4BDED4): 区域内方向反射 + 位置镜像 + friction 减速。
+         // deflector: 区域内方向反射 + 位置镜像 + friction 减速。
          // kind==1 horizontal(偏转水平速度): direction=180-dir → vel.x 取反 + x 镜像;
          // kind!=1 vertical(偏转垂直速度): direction=360-dir → vel.y 取反 + y 镜像。
     "    for (int de = 0; de < 4; ++de) {\n"
@@ -625,7 +644,10 @@ static const char* EVO_PS_HLSL =
     "        if (cl > 0.0001) vel *= nl / cl;\n"
     "      }\n"
     "    }\n"
-         // destroyer(引擎 sub_4BE394): 区域内(rect/ellipse/diamond)立即销毁;
+         // destroyer: 区域内(rect/ellipse/diamond)立即销毁。
+         // 有 death 配置的类型不销毁, 而是当场变形为 death_type 粒子(GPU 侧 part_type_death,
+         // 零 CPU 回读): 复用本槽位, 重新按 death_type 类型表初始化 age/life/vel。
+         // death_number > 1 时只变形 1 个(原槽位), 为 GPU 无回读语义的近似; 负值 = 概率模式。
     "    float4 T11 = tex2D(sType, float2((type + 0.5) / 256.0, 11.5 / 14.0));\n"
     "    for (int de2 = 0; de2 < 4; ++de2) {\n"
     "      if (de2 >= uEff.y) break;\n"
@@ -639,7 +661,27 @@ static const char* EVO_PS_HLSL =
     "        float hit = ds2.y < 0.5 ? 1.0\n"
     "          : (ds2.y > 0.5 && ds2.y < 1.5) ? (nx * nx + ny * ny <= 1.0 ? 1.0 : 0.0)\n"
     "          : (abs(nx) + abs(ny) <= 1.0 ? 1.0 : 0.0);\n"
-    "        if (hit > 0.5 && T11.z < 0.5) { age = 1.0; life = 0.0; }\n"   // 立即销毁(age>=life 剔除)
+    "        if (hit > 0.5 && T11.z < 0.5) killhit = 1.0;\n"
+    "      }\n"
+    "    }\n"
+    "    if (killhit > 0.5) {\n"
+    "      float4 T10 = tex2D(sType, float2((type + 0.5) / 256.0, 10.5 / 14.0));\n"
+    "      float dn = T10.z, dtype = T10.w;\n"
+    "      if (dn != 0.0 && dtype >= 1.0 && dtype < 256.0\n"
+    "          && (dn > 0.0 || h1(id + 41.7) < 1.0 / -dn)) {\n"
+    "        type = dtype;\n"
+    "        float4 TD0 = tex2D(sType, float2((type + 0.5) / 256.0, 0.5 / 14.0));\n"
+    "        float4 TD1 = tex2D(sType, float2((type + 0.5) / 256.0, 1.5 / 14.0));\n"
+    "        float rr2 = h1(id + 71.3);\n"
+    "        float rr3 = h1(id + 91.7);\n"
+    "        age = 0.0;\n"
+    "        life = lerp(TD0.x, TD0.y, rr2);\n"
+    "        float spd2 = lerp(TD1.x, TD1.y, rr2);\n"
+    "        float dir2 = lerp(TD1.z, TD1.w, rr3);\n"
+    "        float rad2 = dir2 * DEG2RAD;\n"
+    "        vel = spd2 * float2(cos(rad2), -sin(rad2));\n"
+    "      } else {\n"
+    "        age = 1.0; life = 0.0;\n"   // 无 death 配置(或概率未中): 直接销毁(age>=life 剔除)
     "      }\n"
     "    }\n"
     "    float4 T8 = tex2D(sType, float2((type + 0.5) / 256.0, 8.5 / 14.0));\n"
@@ -649,6 +691,7 @@ static const char* EVO_PS_HLSL =
     "      frame = T8.w > 0.5\n"
     "        ? min(nf - 1.0, floor(age / max(life, 0.0001) * nf))\n"
     "        : fmod(age, nf);\n"
+    "    if (killhit > 0.5) frame = 0.0;\n"   // 变形粒子从第 0 帧开始(非动画类型防旧帧越界)
     "    }\n"
     "  } else {\n"
     "    pos = 0; vel = 0; type = 0; base = float3(1,1,1); has_ovr = 0;\n"
@@ -1183,6 +1226,24 @@ static void queue_source_spawn(GSystem& s, int type, int source_slot, int n)
     queue_spawn(s, type, n, b);
 }
 
+// part_type_death 事件(CPU 侧; 自然死亡路径)。
+// 出生位置不在此处计算: 新粒子由 GPU 演化按源槽位读取状态纹理(死亡时位置仍有效)。
+// 注意: destroyer 击杀的 death 事件不走这里 —— 演化 shader 击杀分支直接做 GPU 变形
+// (被杀粒子当场变为 death_type, 零 CPU), 本函数仅覆盖自然寿命耗尽。
+static void fire_death_event(GSystem& s, int slot)
+{
+    if (!g_any_step_death) return;
+    auto it = g_types.find(s.s_type[slot]);
+    if (it == g_types.end()) return;
+    const GType& gt = it->second;
+    if (gt.death_num() == 0.0f || gt.death_type() < 1.0f
+        || !g_types.count((int)gt.death_type())) return;
+    if (gt.death_num() > 0.0f)
+        queue_source_spawn(s, (int)gt.death_type(), slot, (int)gt.death_num());
+    else if (gphashf((float)slot + s.now * 3.71f + 17.0f) < 1.0f / -gt.death_num())
+        queue_source_spawn(s, (int)gt.death_type(), slot, 1);
+}
+
 // ============================================================================
 // 演化 pass
 // ============================================================================
@@ -1337,12 +1398,12 @@ static void run_evolution(GSystem& s, const std::vector<SpawnBatch>& batches, in
     s.cur = dst;
     // 注意: s.now 不在这里推进! 一次 update 可能切块跑多次演化 pass,
     // 时钟只能推进一次(由 gpart_system_update 统一推进), 否则多批次时加速。
-    // (rsg 析构在此函数末尾还原渲染状态/纹理阶段)
 }
 
 // ============================================================================
 // 渲染 pass
 // ============================================================================
+
 // 重建渲染数据: 活跃窗口过滤(原地)+ 按出生序双桶(普通/加法)+ 图集矩形, 无排序
 static void run_render(GSystem& s)
 {
@@ -1350,10 +1411,7 @@ static void run_render(GSystem& s)
     if (s.live_window.empty()) return;
 
     RenderStateGuard rsg;    // RAII: rs + stages 保存, 析构无条件还原(含异常路径)
-    // 图集采样用 POINT(像素游戏风格, 与游戏纹理一致): 完全不改任何采样器过滤状态,
-    // 从根源避免污染引擎/后续绘制的采样过滤(此前 LINEAR 方案无论怎么恢复都有泄漏风险)。
 
-    // 渲染状态: 三角形管线(四边形粒子), 无点精灵依赖
     D3DCheck(d3d::set_render_state(D3DRS_ZENABLE, FALSE), 1);
     D3DCheck(d3d::set_render_state(D3DRS_CULLMODE, D3DCULL_NONE), 2);
 
@@ -1413,7 +1471,8 @@ static void run_render(GSystem& s)
         }
         else
         {
-            D3DCheck(d3d::set_render_state(D3DRS_SRCBLEND, premul ? D3DBLEND_ONE : D3DBLEND_SRCALPHA), pos + 1);
+            D3DCheck(d3d::set_render_state(D3DRS_SRCBLEND, 
+                premul ? D3DBLEND_ONE : D3DBLEND_SRCALPHA), pos + 1);
             D3DCheck(d3d::set_render_state(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA), pos + 2);
         }
     };
@@ -1422,7 +1481,6 @@ static void run_render(GSystem& s)
     // 静态四边形 VB, 零 CPU; 环形两弧保证出生序绘制顺序。
     int cap = s.capacity, cur = s.cursor;
     auto draw_ranges = [&](int pos) {
-        // 注意: DrawPrimitive 第三参数 = 图元数(三角形), 每粒子 2 三角形; 顶点偏移 = 粒子*6
         if (s.old_to_new)
         {
             // 旧→新: 先 [cursor, cap) 后 [0, cursor)
@@ -1474,7 +1532,6 @@ static void run_render(GSystem& s)
     d3d::set_texture(GP_VTS0 + 1, nullptr);
     d3d::set_texture(GP_VTS0 + 2, nullptr);
     d3d::set_texture(GP_VTS0 + 3, nullptr);
-    // (rsg 析构在此函数末尾还原渲染状态/纹理阶段, 异常路径也执行)
 }
 
 
@@ -1603,24 +1660,7 @@ exp_real gpart_system_update()
                 if (age < 0.0f || age >= s.s_life[e.slot])
                 {
                     // 自然死亡 → part_type_death 事件(CPU 版本, 位置由 GPU 按源槽位读取)
-                    if (g_any_step_death)
-                    {
-                        auto it = g_types.find(s.s_type[e.slot]);
-                        if (it != g_types.end())
-                        {
-                            const GType& gt = it->second;
-                            if (gt.death_num() != 0.0f && gt.death_type() >= 1.0f
-                                && g_types.count((int)gt.death_type()))
-                            {
-                                if (gt.death_num() > 0.0f)
-                                    queue_source_spawn(s, (int)gt.death_type(), e.slot,
-                                        (int)gt.death_num());
-                                else if (gphashf((float)e.slot + s.now * 3.71f + 17.0f)
-                                    < 1.0f / -gt.death_num())
-                                    queue_source_spawn(s, (int)gt.death_type(), e.slot, 1);
-                            }
-                        }
-                    }
+                    fire_death_event(s, e.slot);
                     continue;
                 }
                 win[w++] = e;
@@ -1655,6 +1695,26 @@ exp_real gpart_system_update()
                 GEmitter& g = ekv.second;
                 if (g.stream_type < 1 || !g_types.count(g.stream_type)) continue;
                 SpawnBatch b = emitter_batch(g);
+                // 定时渐变流: rate(t) = lerp(rate0, rate1, t/dur); 小数累积, 到期停止
+                if (g.ramp_dur > 0.0f)
+                {
+                    float t = s.now - g.ramp_start;
+                    if (t >= g.ramp_dur)
+                    {
+                        g.ramp_dur = 0;      // 时间到: 停止(stream_rate=0, 普通流分支自然空转)
+                        g.ramp_start = -1;
+                        g.ramp_acc = 0;
+                        continue;
+                    }
+                    g.ramp_acc += lerp(g.ramp_rate0, g.ramp_rate1, t / g.ramp_dur);
+                    int n = (int)g.ramp_acc;
+                    if (n > 0)
+                    {
+                        g.ramp_acc -= (float)n;
+                        queue_spawn(s, g.stream_type, n, b);
+                    }
+                    continue;
+                }
                 if (g.stream_rate > 0.0f)
                     queue_spawn(s, g.stream_type, (int)g.stream_rate, b);
                 else if (g.stream_rate < 0.0f
@@ -2499,9 +2559,40 @@ exp_real gpart_emitter_stream(double sys, double em, double parttype, double num
             g.stream_type = -1;
             g.stream_rate = 0;
         }
+        g.ramp_dur = 0;          // 普通流配置覆盖/取消定时渐变流
+        g.ramp_start = -1;
+        g.ramp_acc = 0;
         return gtrue;
     }
     simple_catch("gpart_emitter_stream", gerror)
+}
+
+// 定时渐变流(gpart 扩展): 从调用时刻起 duration 步内, 每步发射数量从 rate0 线性
+// 渐变到 rate1, 时间到自动停止。小数速率用累积器平滑(如 10→0 共 100 步 = 平均每步 0.1,
+// 不因取整丢失)。再次调用重新计时; gpart_emitter_stream / gpart_emitter_clear 会取消。
+exp_real gpart_emitter_stream_ramp(double sys, double em, double parttype,
+    double rate0, double rate1, double duration)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        auto e = it->second.emitters.find((int)em);
+        if (e == it->second.emitters.end()) return gfalse;
+        if (g_types.find((int)parttype) == g_types.end()) return gfalse;
+        if (duration < 1.0) return gfalse;
+        GEmitter& g = e->second;
+        g.stream_type = (int)parttype;
+        g.stream_rate = 0;                    // 定时流独占: 普通流分支关闭
+        g.ramp_start = it->second.now;        // 下次 update 的 s.now 尚未推进 → p = 0 起步
+        g.ramp_rate0 = (float)std::max(0.0, rate0);
+        g.ramp_rate1 = (float)std::max(0.0, rate1);
+        g.ramp_dur = (float)duration;
+        g.ramp_acc = 0;
+        return gtrue;
+    }
+    simple_catch("gpart_emitter_stream_ramp", gerror)
 }
 
 // ============================================================================
@@ -2801,4 +2892,105 @@ exp_real gpart_deflector_friction(double sys, double ind, double friction)
         return gtrue;
     }
     simple_catch("gpart_deflector_friction", gerror)
+}
+
+// ============================================================================
+// 调试: 绘制系统各区域轮廓(发射器/吸引器/破坏器/偏转器)
+// ============================================================================
+
+exp_real gpart_draw_regions(double sys, double color, double alpha)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        GSystem& s = it->second;
+
+        RsSave rs;
+        rs_save(rs);
+        void* tex[GP_STAGES] = {};
+        stages_save_textures(tex);
+
+        // 固定管线 FVF 线框绘制(无 PS, 无纹理)
+        D3DCheck(d3d::set_vertex_shader(true, D3DFVF_XYZ | D3DFVF_DIFFUSE, 0), 1);
+        D3DCheck(d3d::set_pixel_shader(0), 2);
+        D3DCheck(d3d::set_render_state(D3DRS_ALPHABLENDENABLE, TRUE), 3);
+        D3DCheck(d3d::set_render_state(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA), 4);
+        D3DCheck(d3d::set_render_state(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA), 5);
+        D3DCheck(d3d::set_render_state(D3DRS_ZENABLE, FALSE), 6);
+        D3DCheck(d3d::set_render_state(D3DRS_CULLMODE, D3DCULL_NONE), 7);
+        for (int i = 0; i < GP_STAGES; ++i)
+            d3d::set_texture(i, nullptr);
+
+        struct V { float x, y, z; DWORD c; };
+        const DWORD col = col_d3d((int)color, alpha);
+        auto poly = [&](const std::vector<V>& pts) {
+            if (pts.size() < 2) return;
+            D3DCheck(d3d::draw_primitive_up(D3DPT_LINESTRIP, (DWORD)(pts.size() - 1),
+                pts.data(), sizeof(V)), 20);
+        };
+        auto rect = [&](float x0, float y0, float x1, float y1) {
+            return std::vector<V>{ {x0,y0,0,col},{x1,y0,0,col},{x1,y1,0,col},{x0,y1,0,col},{x0,y0,0,col} };
+        };
+        auto ellipse = [&](float x0, float y0, float x1, float y1, int n = 32) {
+            std::vector<V> v;
+            float cx = (x0 + x1) * 0.5f, cy = (y0 + y1) * 0.5f;
+            float rx = (x1 - x0) * 0.5f, ry = (y1 - y0) * 0.5f;
+            for (int i = 0; i <= n; ++i)
+            {
+                float a = 6.2831853f * (float)i / (float)n;
+                v.push_back({ cx + rx * cosf(a), cy + ry * sinf(a), 0, col });
+            }
+            return v;
+        };
+        auto diamond = [&](float x0, float y0, float x1, float y1) {
+            float cx = (x0 + x1) * 0.5f, cy = (y0 + y1) * 0.5f;
+            return std::vector<V>{ {cx,y0,0,col},{x1,cy,0,col},{cx,y1,0,col},{x0,cy,0,col},{cx,y0,0,col} };
+        };
+
+        // 发射器区域
+        for (auto& kv : s.emitters)
+        {
+            const GEmitter& g = kv.second;
+            if (g.xmin >= g.xmax || g.ymin >= g.ymax) continue;
+            if (g.shape == PS_SHAPE_ELLIPSE)
+                poly(ellipse(g.xmin, g.ymin, g.xmax, g.ymax));
+            else if (g.shape == PS_SHAPE_DIAMOND)
+                poly(diamond(g.xmin, g.ymin, g.xmax, g.ymax));
+            else
+                poly(rect(g.xmin, g.ymin, g.xmax, g.ymax));
+        }
+        // 吸引器: 位置 + dist 圆
+        for (auto& kv : s.attractors)
+        {
+            const GAttractor& a = kv.second;
+            if (a.dist > 0)
+                poly(ellipse(a.x - a.dist, a.y - a.dist, a.x + a.dist, a.y + a.dist));
+        }
+        // 破坏器区域
+        for (auto& kv : s.destroyers)
+        {
+            const GDestroyer& d = kv.second;
+            if (d.xmin >= d.xmax || d.ymin >= d.ymax) continue;
+            if (d.shape == 1)
+                poly(ellipse(d.xmin, d.ymin, d.xmax, d.ymax));
+            else if (d.shape == 2)
+                poly(diamond(d.xmin, d.ymin, d.xmax, d.ymax));
+            else
+                poly(rect(d.xmin, d.ymin, d.xmax, d.ymax));
+        }
+        // 偏转器矩形
+        for (auto& kv : s.deflectors)
+        {
+            const GDeflector& d = kv.second;
+            if (d.xmin >= d.xmax || d.ymin >= d.ymax) continue;
+            poly(rect(d.xmin, d.ymin, d.xmax, d.ymax));
+        }
+
+        stages_restore_textures(tex);
+        rs_restore(rs);
+        return gtrue;
+    }
+    simple_catch("gpart_draw_regions", gerror)
 }

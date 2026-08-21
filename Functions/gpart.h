@@ -81,7 +81,7 @@ constexpr int GP_RECT_TEX_FRAMES = 32;    // rect table rows per type (max sprit
 // cache_dir: 着色器字节码缓存目录(空串 = 不使用缓存)。缓存跳过 d3dcompiler 的
 // HLSL→asm 编译(EVO_PS 展开后 ~1.4s), 缓存命中直接读 .bin 建设备对象。
 exp_real gpart_gpu_init(const char* cache_dir);
-exp_real gpart_set_premul(double mode);   // gpart 扩展: -1=自动检测(默认)/0=straight/1=预乘, 同 sdf_draw_set_premul
+exp_real gpart_set_premul(double mode);
 
 // ---- exports: system (9) ----
 exp_real gpart_system_create(double capacity);
@@ -116,7 +116,7 @@ exp_real gpart_type_gravity(double type, double force, double dir);
 exp_real gpart_type_drag(double type, double coeff);
 exp_real gpart_type_step(double type, double step_number, double step_type);
 exp_real gpart_type_death(double type, double death_number, double death_type);
-exp_real gpart_type_immune_destroyer(double type, double immune);   // gpart 扩展: 豁免 destroyer 特效器(锚定粒子用)
+exp_real gpart_type_immune_destroyer(double type, double immune);
 exp_real gpart_type_colour1(double type, double c1);
 exp_real gpart_type_colour2(double type, double c1, double c2);
 exp_real gpart_type_colour3(double type, double c1, double c2, double c3);
@@ -129,7 +129,7 @@ exp_real gpart_type_alpha3(double type, double a1, double a2, double a3);
 exp_real gpart_type_blend(double type, double additive);
 exp_real gpart_type_orientation(double type, double ang_min, double ang_max, double ang_incr, double ang_wiggle, double ang_relative);
 
-// ---- exports: emitters (9) ----
+// ---- exports: emitters (10) ----
 exp_real gpart_emitter_create(double sys);
 exp_real gpart_emitter_destroy(double sys, double em);
 exp_real gpart_emitter_destroy_all(double sys);
@@ -138,6 +138,7 @@ exp_real gpart_emitter_clear(double sys, double em);
 exp_real gpart_emitter_region(double sys, double em, double xmin, double xmax, double ymin, double ymax, double shape, double distribution);
 exp_real gpart_emitter_burst(double sys, double em, double parttype, double number);
 exp_real gpart_emitter_stream(double sys, double em, double parttype, double number);
+exp_real gpart_emitter_stream_ramp(double sys, double em, double parttype, double rate0, double rate1, double duration);
 
 // ---- exports: attractors (7) ----
 exp_real gpart_attractor_create(double sys);
@@ -165,3 +166,6 @@ exp_real gpart_deflector_clear(double sys, double ind);
 exp_real gpart_deflector_region(double sys, double ind, double xmin, double xmax, double ymin, double ymax);
 exp_real gpart_deflector_kind(double sys, double ind, double kind);
 exp_real gpart_deflector_friction(double sys, double ind, double friction);
+
+// ---- exports: debug (1) ----
+exp_real gpart_draw_regions(double sys, double color, double alpha);
