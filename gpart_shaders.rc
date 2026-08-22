@@ -1,0 +1,10 @@
+// gpart shader 源码资源(RCDATA)。
+// 迁移原因: MSVC 对(原始)字符串字面量有 ~16KB 的隐性上限, EVO_PS 已超限(C2026);
+// 资源是二进制数据块, 无大小限制, 且 .hlsl 以真文件存在, 可被 fxc 直接编译验证。
+// 运行时由 gpart.cpp 的 load_shader_resource() 按名字加载, 字节码缓存
+// 哈希(XXH64 源+profile)机制不变: 改 .hlsl 保存即自动失效重编译。
+// 注意: RC 的引号串不做反斜杠转义, 路径写单反斜杠。
+EVO_VS_HLSL RCDATA "Shaders/evo_vs.hlsl"
+EVO_PS_HLSL RCDATA "Shaders/evo_ps.hlsl"
+RND_VS_HLSL RCDATA "Shaders/rnd_vs.hlsl"
+RND_PS_HLSL RCDATA "Shaders/rnd_ps.hlsl"

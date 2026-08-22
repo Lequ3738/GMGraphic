@@ -14,6 +14,7 @@ using path = std::filesystem::path;
 
 extern gm::CGMAPI* gmapi;
 extern std::string str_ret; // Used to return strings by macro.
+extern HINSTANCE g_dllInstance;   // 本 DLL 模块句柄(DllMain 存入), 供 RC 资源加载用
 
 typedef double gm_real;
 typedef const char* gm_string;

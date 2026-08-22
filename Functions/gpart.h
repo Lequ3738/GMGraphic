@@ -94,9 +94,10 @@ exp_real gpart_system_draw_order(double sys, double oldtonew);
 exp_real gpart_system_position(double sys, double x, double y);
 exp_real gpart_system_capacity(double sys);
 
-// ---- exports: particles (4) ----
+// ---- exports: particles (5) ----
 exp_real gpart_particles_create(double sys, double x, double y, double parttype, double number);
 exp_real gpart_particles_create_color(double sys, double x, double y, double parttype, double color, double number);
+exp_real gpart_particles_create_box(double sys, double x, double y, double parttype, double hmin, double hmax, double vmin, double vmax, double count);   // gpart 扩展: 盒速度直造(GM8 hsp/vsp 语义)
 exp_real gpart_particles_clear(double sys);
 exp_real gpart_particles_count(double sys);
 
@@ -128,6 +129,7 @@ exp_real gpart_type_alpha2(double type, double a1, double a2);
 exp_real gpart_type_alpha3(double type, double a1, double a2, double a3);
 exp_real gpart_type_blend(double type, double additive);
 exp_real gpart_type_orientation(double type, double ang_min, double ang_max, double ang_incr, double ang_wiggle, double ang_relative);
+exp_real gpart_type_flip_random(double type, double flip);   // gpart 扩展: 随机双向镜像
 
 // ---- exports: emitters (10) ----
 exp_real gpart_emitter_create(double sys);

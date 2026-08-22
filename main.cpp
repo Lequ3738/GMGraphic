@@ -8,6 +8,7 @@
 
 gm::CGMAPI* gmapi;
 std::string str_ret = "BABEBEEF"; // Used to return strings by macro.
+HINSTANCE g_dllInstance = nullptr;
 
 bool WINAPI DllMain(HINSTANCE aModuleHandle, int aReason, int aReserved)
 {
@@ -16,6 +17,7 @@ bool WINAPI DllMain(HINSTANCE aModuleHandle, int aReason, int aReserved)
 		case DLL_PROCESS_ATTACH:
 		{
 			ulong result = 0;
+			g_dllInstance = aModuleHandle;   // 供 FindResource 加载内嵌 shader 源码
 			gmapi = gm::CGMAPI::Create(&result);
 			
 			// Check the initialization
