@@ -10,8 +10,6 @@ float4 main(float2 cuv : TEXCOORD0, float2 tinfo : TEXCOORD1, float4 col : COLOR
     
     float a = tex.a * col.a;
     
-    // uBlend.x = 当前遍(0=普通, 1=加色); uBlend.y = 预乘输出(1=预乘管线/自动检测到 ONE 混合)。
-    // 加色遍或预乘模式 → rgb *= a(预乘); 否则 straight(默认 SRCALPHA 管线)。
     float3 rgb = tex.rgb * col.rgb;
     rgb *= (uBlend.x > 0.5 || uBlend.y > 0.5) ? a : 1.0;
     

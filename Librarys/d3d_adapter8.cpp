@@ -137,10 +137,11 @@ namespace d3d
         // ---- HLSL(D3D8 不支持, 桩) ----
         HRESULT compile_hlsl(const char*, size_t, const char*, const char*,
                              std::vector<BYTE>&, void**, std::string*) { return E_NOTIMPL; }
-        HRESULT constant_table_set_defaults(void*) { return E_NOTIMPL; }
-        void*   constant_table_get_constant_by_name(void*, const char*) { return nullptr; }
-        UniformLoc constant_table_get_uniform(void*, void*) { return UniformLoc{}; }
-        int     constant_table_get_sampler_register(void*, void*) { return -1; }
+    HRESULT constant_table_set_defaults(void*) { return E_NOTIMPL; }
+    void*   constant_table_get_constant_by_name(void*, const char*) { return nullptr; }
+    UniformLoc constant_table_get_uniform(void*, void*) { return UniformLoc{}; }
+    int     constant_table_get_sampler_register(void*, void*) { return -1; }
+    HRESULT constant_table_from_bytecode(const void*, size_t, void**) { return E_NOTIMPL; }
 
         // ---- 纹理桥(纹理一律不透明 void*) ----
         HRESULT set_texture(DWORD stage, void* tex)

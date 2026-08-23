@@ -35,6 +35,9 @@ bool WINAPI DllMain(HINSTANCE aModuleHandle, int aReason, int aReserved)
 
 		case DLL_PROCESS_DETACH:
 		{
+			// 先停掉 shader 异步编译 worker(避免线程引用已卸载模块)。
+			shader_compile_shutdown();
+
 			// 如下内容提前清理，确保不会发生全局变量析构顺序问题。
 			game_texture_atlas.clear();
 			game_sdf_glyphs.clear();

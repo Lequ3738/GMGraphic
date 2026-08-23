@@ -9,6 +9,7 @@ float4 uBatchCount : register(c4);
 float4 uMode : register(c5);      // .x = 1 → 仅出生不老化(多块演化用)
 float4 uEff : register(c6);       // .x=attractor 数, .y=destroyer 数, .z=deflector 数
 float4 uBatches[16] : register(c8);
+
 static const float TWO_PI = 6.283185307179586;
 static const float DEG2RAD = 0.017453292519943295;
 static const float GRID = 256.0;

@@ -433,7 +433,6 @@
     <None Include="Direct3D_8\Msvidctl.tlb" />
     <None Include="Direct3D_8\Tuner.tlb" />
     <None Include="cpp.hint" />
-    <None Include="README.md" />
     <None Include="Shaders\evo_vs.hlsl" />
     <None Include="Shaders\evo_ps.hlsl" />
     <None Include="Shaders\rnd_vs.hlsl" />
@@ -442,6 +441,20 @@
   <ItemGroup>
     <ResourceCompile Include="gpart_shaders.rc" />
   </ItemGroup>
+  <!-- shader 源文件参与最新检查: 任一 .hlsl 变动即判定过时(IDE 快速最新检查用) -->
+  <ItemGroup>
+    <UpToDateCheckInput Include="Shaders\evo_vs.hlsl" />
+    <UpToDateCheckInput Include="Shaders\evo_ps.hlsl" />
+    <UpToDateCheckInput Include="Shaders\rnd_vs.hlsl" />
+    <UpToDateCheckInput Include="Shaders\rnd_ps.hlsl" />
+  </ItemGroup>
+  <!-- rc.exe 的 RCDATA 引用(Shaders\*.hlsl)对 msbuild 增量检查不可见, 改动 .hlsl
+       不会触发资源重编 → DLL 内嵌旧源码, 而哈希 key 却按新源码失效, 造成
+       "每次启动都重编译"。每次构建前 touch .rc 强制 rc.exe 重跑:
+       源未变时产出字节相同 → 哈希不变 → 字节码缓存照常命中。 -->
+  <PropertyGroup>
+    <PreBuildEvent>copy /b "$(ProjectDir)gpart_shaders.rc"+,, "$(ProjectDir)gpart_shaders.rc" >nul</PreBuildEvent>
+  </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

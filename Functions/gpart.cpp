@@ -717,24 +717,56 @@ static void shader_cache_write(const char* dir, const char* name, xxh::hash64_t 
     f.write(static_cast<const char*>(data), static_cast<std::streamsize>(len));
 }
 
-// 从 DLL 的 RC 资源加载 shader 源码(RCDATA, 见 gpart_shaders.rc 与 Shaders/*.hlsl)。
-// 迁移原因: MSVC 对(原始)字符串字面量有 ~16KB 隐性上限, EVO_PS 已超限;
-// 资源为二进制块无此限制, 且 .hlsl 以真文件存在可被 fxc 直接编译验证。
-// 字节含 UTF-8 中文注释(编译器按注释跳过, 已实测)。
+// 从 DLL 的 RC 资源加载 shader 源码
 static std::string load_shader_resource(const char* name)
 {
     // Unicode 工程下 RT_RCDATA 宏展开为 LPWSTR, ANSI 版 API 需 MAKEINTRESOURCEA(10)
     HRSRC res = FindResourceA(g_dllInstance, name, MAKEINTRESOURCEA(10) /*RT_RCDATA*/);
     if (!res)
         throw std::runtime_error(std::string("gpart shader 资源缺失: ") + name);
+
     HGLOBAL handle = LoadResource(g_dllInstance, res);
     if (!handle)
         throw std::runtime_error(std::string("gpart shader 资源加载失败: ") + name);
+
     DWORD size = SizeofResource(g_dllInstance, res);
     const void* data = LockResource(handle);
     if (!data || size == 0)
         throw std::runtime_error(std::string("gpart shader 资源为空: ") + name);
+
     return std::string((const char*)data, size);
+}
+
+// 读取/编译 gpart 4 个 shader 的字节码(带字节码缓存): 命中读文件, 未命中编译并写缓存。
+// cache_dir 为空 = 不使用缓存(每次重新编译)。真错误抛异常。
+// 同一函数同时被 gpu_init_internal(主线程)与异步工作流的内部任务(worker 线程)调用。
+static void gpart_compile_all(const char* cache_dir,
+    std::vector<BYTE>& evo_vs, std::vector<BYTE>& evo_ps,
+    std::vector<BYTE>& rnd_vs, std::vector<BYTE>& rnd_ps)
+{
+    auto load_or_compile = [&](const char* name, const std::string& src_str,
+        const char* entry, const char* profile, std::vector<BYTE>& code)
+    {
+        std::string key = src_str + "|" + profile;
+        xxh::hash64_t h = xxh::xxhash<64>(key.data(), key.size());
+        if (shader_cache_read(cache_dir, name, h, code))
+            return;   // 缓存命中, 跳过编译
+
+        std::string err;
+        void* table = nullptr;
+        HRESULT hr = d3d::compile_hlsl(src_str.data(), src_str.length(), entry,
+            profile, code, &table, &err);
+        if (table) d3d::release(table);
+        if (FAILED(hr))
+            throw std::runtime_error("gpart shader 编译失败 (" + std::string(entry) + "): " + err);
+
+        shader_cache_write(cache_dir, name, h, code.data(), code.size());
+    };
+
+    load_or_compile("evo_vs", load_shader_resource("EVO_VS_HLSL"), "main", "vs_3_0", evo_vs);
+    load_or_compile("evo_ps", load_shader_resource("EVO_PS_HLSL"), "main", "ps_3_0", evo_ps);
+    load_or_compile("rnd_vs", load_shader_resource("RND_VS_HLSL"), "main", "vs_3_0", rnd_vs);
+    load_or_compile("rnd_ps", load_shader_resource("RND_PS_HLSL"), "main", "ps_3_0", rnd_ps);
 }
 
 static bool gpu_init_internal(const char* cache_dir)
@@ -788,35 +820,17 @@ static bool gpu_init_internal(const char* cache_dir)
                 GP_FMT_16F, z.data(), GP_TYPE_TEX_W * 8), 10);
         }
 
-        // shader 编译(带字节码缓存: 命中直接读文件, 未命中编译并写缓存)
-        auto load_or_compile = [&](const char* name, const std::string& src_str,
-            const char* entry, const char* profile, std::vector<BYTE>& code)
-        {
-            std::string key = src_str + "|" + profile;
-            xxh::hash64_t h = xxh::xxhash<64>(key.data(), key.size());
-            if (shader_cache_read(cache_dir, name, h, code))
-                return;   // 缓存命中, 跳过编译
+        // shader 字节码(带缓存) + 创建设备对象。
+        // 若异步工作流(shader_compile_add_gpart 注册)正在编译 gpart 缓存, 先等待落定,
+        // 避免主线程与 worker 并发调用 D3DXCompileShader(无官方并发保证)。正常流程不阻塞。
+        shader_workflow_wait_finished();
 
-            std::string err;
-            void* table = nullptr;
-            HRESULT hr = d3d::compile_hlsl(src_str.data(), src_str.length(), entry,
-                profile, code, &table, &err);
-            if (table) d3d::release(table);
-            if (FAILED(hr))
-                throw std::runtime_error("gpart shader 编译失败 (" + std::string(entry) + "): " + err);
-
-            shader_cache_write(cache_dir, name, h, code.data(), code.size());
-        };
-
-        std::vector<BYTE> code;
-        load_or_compile("evo_vs", load_shader_resource("EVO_VS_HLSL"), "main", "vs_3_0", code);
-        D3DCheck(d3d::create_vertex_shader(d3d::VERT_DEFAULT, code.data(), nullptr, 0, &g_evo_vs), 9);
-        load_or_compile("evo_ps", load_shader_resource("EVO_PS_HLSL"), "main", "ps_3_0", code);
-        D3DCheck(d3d::create_pixel_shader(code.data(), &g_evo_ps), 10);
-        load_or_compile("rnd_vs", load_shader_resource("RND_VS_HLSL"), "main", "vs_3_0", code);
-        D3DCheck(d3d::create_vertex_shader(d3d::VERT_DEFAULT, code.data(), nullptr, 0, &g_rnd_vs), 11);
-        load_or_compile("rnd_ps", load_shader_resource("RND_PS_HLSL"), "main", "ps_3_0", code);
-        D3DCheck(d3d::create_pixel_shader(code.data(), &g_rnd_ps), 12);
+        std::vector<BYTE> evo_vs, evo_ps, rnd_vs, rnd_ps;
+        gpart_compile_all(cache_dir, evo_vs, evo_ps, rnd_vs, rnd_ps);
+        D3DCheck(d3d::create_vertex_shader(d3d::VERT_DEFAULT, evo_vs.data(), nullptr, 0, &g_evo_vs), 9);
+        D3DCheck(d3d::create_pixel_shader(evo_ps.data(), &g_evo_ps), 10);
+        D3DCheck(d3d::create_vertex_shader(d3d::VERT_DEFAULT, rnd_vs.data(), nullptr, 0, &g_rnd_vs), 11);
+        D3DCheck(d3d::create_pixel_shader(rnd_ps.data(), &g_rnd_ps), 12);
 
         g_gpu_ready = true;
     }
@@ -1271,6 +1285,23 @@ exp_real gpart_gpu_init(const char* cache_dir)
         return gpu_init_internal(cache_dir ? cache_dir : "") ? gtrue : gerror;
     }
     simple_catch("gpart_gpu_init", gerror)
+}
+
+// 把 gpart 的 4 个 shader 编译(内部 hash 分支, 仅改动/未缓存的加入)注册进当前异步编译工作流。
+// 须在 shader_compile_begin 之后、shader_compile_end 之前调用; 之后 gpart_gpu_init(cache_dir)
+// 读到的就是已就绪的 gpart 缓存 → 零编译直接创建设备对象。DX9 专属。
+exp_real shader_compile_add_gpart()
+{
+    try
+    {
+        if (d3d::version() != d3d::V9) return gerror;
+        return shader_workflow_add_internal([](const std::string& cache_path)
+        {
+            std::vector<BYTE> a, b, c, d;
+            gpart_compile_all(cache_path.c_str(), a, b, c, d);
+        }) ? gtrue : gerror;
+    }
+    catch (...) { return gerror; }
 }
 
 // gpart 扩展: 设置粒子输出 alpha 模式(类似 sdf_draw_set_premul)。

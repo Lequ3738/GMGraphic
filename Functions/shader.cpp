@@ -2,6 +2,15 @@
 #include "shader.h"
 #include "draw_text.h"
 #include "pixel_shader_defs.h"
+#include "xxhash.hpp"          // 用户 shader 缓存 key 哈希
+#include <cstring>
+#include <cstdio>
+#include <fstream>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
+#include <objbase.h>           // CoInitializeEx(worker 线程 COM 初始化)
 
 // ============================================================================
 // Variables
@@ -1170,3 +1179,394 @@ exp_real draw_vertex_ext_next() { return d3d_vertex_ext_next(); }
 
 // 2D equivalent.
 exp_real draw_primitive_end_ext() { return d3d_primitive_end_ext(); }
+
+// ============================================================================
+// 用户 shader 字节码缓存 + 异步编译工作流 (DX9 专属; asm 不支持缓存)
+// ============================================================================
+
+namespace
+{
+    // 聚合缓存 magic: "USCB"(User Shader Cache Bundle), 小端字节 'U','S','C','B'
+    constexpr unsigned kUsrCacheMagic = 0x42435355u;
+
+    // 聚合缓存文件: magic(4) + key_hash(8) + vs_len(4) + ps_len(4) + vs bytes + ps bytes
+    // vs_len/ps_len == 0 → 该阶段 passthrough(未创建)。vs+ps 双空 = 非法。
+    struct BundleFile
+    {
+        xxh::hash64_t key = 0;
+        unsigned vs_len = 0, ps_len = 0;
+        std::vector<BYTE> vs, ps;
+    };
+
+    // key = XXH64(src | vs_profile | vs_entry | ps_profile | ps_entry)
+    // 空 entry 规范化为 mainVS/mainPS(与 shader_create 默认入口一致)。
+    // 注意: 仅用于 key/哈希; 编译时仍按原始 entry(空 = 默认入口 passthrough 逻辑)。
+    std::string shader_cache_key(const std::string& src, const char* vs_entry, const char* ps_entry)
+    {
+        std::string vs = (vs_entry && vs_entry[0]) ? vs_entry : "mainVS";
+        std::string ps = (ps_entry && ps_entry[0]) ? ps_entry : "mainPS";
+        return src + "|" + vs_profile() + "|" + vs + "|" + ps_profile() + "|" + ps;
+    }
+
+    std::string hash_hex(xxh::hash64_t h)
+    {
+        char buf[17];
+        std::snprintf(buf, sizeof buf, "%016llx", (unsigned long long)h);
+        return std::string(buf);
+    }
+
+    bool shader_cache_read_file(const std::string& path, BundleFile& out)
+    {
+        std::ifstream f(path, std::ios::binary);
+        if (!f) return false;
+        unsigned magic = 0;
+        if (!f.read(reinterpret_cast<char*>(&magic), 4) || magic != kUsrCacheMagic
+            || !f.read(reinterpret_cast<char*>(&out.key), 8)
+            || !f.read(reinterpret_cast<char*>(&out.vs_len), 4)
+            || !f.read(reinterpret_cast<char*>(&out.ps_len), 4)
+            || out.vs_len >= (1u << 20) || out.ps_len >= (1u << 20)
+            || (out.vs_len == 0 && out.ps_len == 0))
+            return false;
+        out.vs.resize(out.vs_len);
+        out.ps.resize(out.ps_len);
+        if (out.vs_len && !f.read(reinterpret_cast<char*>(out.vs.data()), out.vs_len)) return false;
+        if (out.ps_len && !f.read(reinterpret_cast<char*>(out.ps.data()), out.ps_len)) return false;
+        return true;
+    }
+
+    void shader_cache_write_bundle(const std::string& path, xxh::hash64_t key_hash,
+                                   const std::vector<BYTE>& vs, const std::vector<BYTE>& ps)
+    {
+        std::string dir = path;
+        auto pos = dir.find_last_of("\\/");
+        if (pos != std::string::npos)
+            CreateDirectoryA(dir.substr(0, pos).c_str(), nullptr);
+        std::ofstream f(path, std::ios::binary | std::ios::trunc);
+        if (!f) return;
+        unsigned magic = kUsrCacheMagic;
+        unsigned vs_len = (unsigned)vs.size(), ps_len = (unsigned)ps.size();
+        f.write(reinterpret_cast<const char*>(&magic), 4);
+        f.write(reinterpret_cast<const char*>(&key_hash), 8);
+        f.write(reinterpret_cast<const char*>(&vs_len), 4);
+        f.write(reinterpret_cast<const char*>(&ps_len), 4);
+        if (vs_len) f.write(reinterpret_cast<const char*>(vs.data()), vs_len);
+        if (ps_len) f.write(reinterpret_cast<const char*>(ps.data()), ps_len);
+    }
+
+    // 纯编译单阶段(不建设备对象/常量表): 返回 1=真阶段, 0=passthrough; 真错误抛异常。
+    // entry 为空 → 默认入口逻辑(源里没有 fallback 名字即 passthrough);
+    // entry 显式给出但源里没有 → X3501 在默认入口下也按 passthrough 处理(与 shader_create 一致)。
+    int compile_hlsl_bytecode(const char* src, const char* entry, const char* fallback,
+                              const char* profile, std::vector<BYTE>& code)
+    {
+        const char* use = (entry && entry[0]) ? entry : nullptr;
+        bool default_entry = (use == nullptr);
+        if (!use)
+        {
+            if (!strstr(src, fallback)) return 0;
+            use = fallback;
+        }
+
+        void* table = nullptr;
+        std::string err;
+        if (FAILED(d3d::compile_hlsl(src, strlen(src), use, profile, code, &table, &err)))
+        {
+            if (table) d3d::release(table);
+            if (default_entry &&
+                (strstr(err.c_str(), "X3501") || strstr(err.c_str(), "entrypoint not found")))
+                return 0;
+            throw std::runtime_error("Shader compile error:\r\n\r\n" + err +
+                "\r\n\r\n" + std::string(src));
+        }
+        if (table) d3d::release(table);
+        return 1;
+    }
+}
+
+// ---- 异步编译工作流 ----
+namespace
+{
+    struct ShaderJob
+    {
+        std::string src;
+        std::string name;   // 缓存文件名(不含路径), 已消毒
+        // 非空 = 内部编译任务(如 gpart): 在 worker 线程执行, 参数为工作流 cache_path。
+        // 置空 = 常规用户 shader 任务(用 src + 工作流入口编译)。
+        std::function<void(const std::string& cache_path)> internal;
+    };
+
+    struct CompileWorkflow
+    {
+        std::string cache_path;
+        std::string vs_entry, ps_entry;
+        std::vector<ShaderJob> jobs;
+        std::atomic<bool> started{ false };
+        std::atomic<int> done{ 0 };
+        std::atomic<bool> finished{ false };
+        std::atomic<bool> any_error{ false };
+        std::string error;   // 首个错误; finished.store(release) 之前写入
+    };
+
+    std::mutex g_wf_mtx;
+    std::condition_variable g_wf_cv;
+    CompileWorkflow* g_wf_pending = nullptr;   // 已声明完成、待 worker 取走的批
+    CompileWorkflow* g_wf_active = nullptr;    // 当前工作流(begin 创建, 下次 begin 回收)
+    std::thread g_wf_thread;
+    bool g_wf_stop = false;
+
+    bool wf_name_valid(const std::string& name)
+    {
+        if (name.empty() || name.size() > 64) return false;
+        for (char c : name)
+            if (c == '\\' || c == '/' || c == ':' || c == '*' || c == '?' || c == '"'
+                || c == '<' || c == '>' || c == '|' || c == '.' || c == ' ')
+                return false;
+        return true;
+    }
+
+    void shader_worker_write(const CompileWorkflow* wf, const ShaderJob& job, std::string& err)
+    {
+        try
+        {
+            if (job.internal)
+            {
+                job.internal(wf->cache_path);   // 内部任务(gpart 等): 自行 hash 分支 + 写缓存
+                return;
+            }
+
+            std::vector<BYTE> vs, ps, code;
+            if (compile_hlsl_bytecode(job.src.c_str(), wf->vs_entry.c_str(), "mainVS",
+                                      vs_profile(), code) > 0)
+                vs = std::move(code);
+            if (compile_hlsl_bytecode(job.src.c_str(), wf->ps_entry.c_str(), "mainPS",
+                                      ps_profile(), code) > 0)
+                ps = std::move(code);
+            if (vs.empty() && ps.empty())
+            {
+                err = "Shader has no VS/PS stage (entry not found): " + job.name;
+                return;
+            }
+            const std::string key = shader_cache_key(job.src, wf->vs_entry.c_str(), wf->ps_entry.c_str());
+            const xxh::hash64_t h = xxh::xxhash<64>(key.data(), key.size());
+            shader_cache_write_bundle(wf->cache_path + "\\" + job.name + ".bin", h, vs, ps);
+        }
+        catch (const std::exception& e)
+        {
+            err = std::string("shader_compile: ") + e.what();
+        }
+    }
+
+    void shader_worker_process(CompileWorkflow* wf)
+    {
+        (void)CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        const size_t total = wf->jobs.size();
+        for (size_t i = 0; i < total; ++i)
+        {
+            std::string err;
+            shader_worker_write(wf, wf->jobs[i], err);
+            if (!err.empty() && wf->error.empty())
+                wf->error = std::move(err);
+            wf->done.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (!wf->error.empty())
+            wf->any_error.store(true, std::memory_order_relaxed);
+        wf->finished.store(true, std::memory_order_release);
+        CoUninitialize();
+    }
+
+    void shader_worker_main()
+    {
+        for (;;)
+        {
+            CompileWorkflow* wf = nullptr;
+            {
+                std::unique_lock<std::mutex> lk(g_wf_mtx);
+                g_wf_cv.wait(lk, [] { return g_wf_stop || g_wf_pending != nullptr; });
+                if (g_wf_stop) return;
+                wf = g_wf_pending;
+                g_wf_pending = nullptr;
+            }
+            shader_worker_process(wf);
+        }
+    }
+}
+
+// 停止 worker(DllMain 卸载时调用)。join 前 worker 若正在编译会快速收尾(单次 ms 级)。
+void shader_compile_shutdown()
+{
+    {
+        std::lock_guard<std::mutex> lk(g_wf_mtx);
+        g_wf_stop = true;
+        g_wf_cv.notify_all();
+    }
+    if (g_wf_thread.joinable())
+        g_wf_thread.join();
+    delete g_wf_active;
+    g_wf_active = nullptr;
+}
+
+// 计算聚合缓存 key 的 16 位 hex 串(GML 端新鲜度比对用)。
+exp_str shader_get_hash(const char* src, const char* vs_entry, const char* ps_entry)
+{
+    try
+    {
+        const std::string key = shader_cache_key(src ? src : "", vs_entry, ps_entry);
+        const xxh::hash64_t h = xxh::xxhash<64>(key.data(), key.size());
+        return_string(hash_hex(h));
+    }
+    catch (...) { return_string(""); }
+}
+
+// 读缓存文件头里的 key 串; 缺失/损坏返回 ""。
+exp_str shader_cache_hash(const char* path)
+{
+    try
+    {
+        BundleFile bf;
+        if (shader_cache_read_file(path ? path : "", bf))
+            return_string(hash_hex(bf.key));
+        return_string("");
+    }
+    catch (...) { return_string(""); }
+}
+
+// 从缓存文件物化聚合 shader(GML 已用哈希分支保证新鲜; 这里只校验 magic/长度/非空)。
+exp_real shader_create_cache(const char* path)
+{
+    ShaderBundle b;
+    try
+    {
+        if (!is_d3d9()) return gerror;
+
+        BundleFile bf;
+        if (!shader_cache_read_file(path ? path : "", bf))
+            throw std::runtime_error("Shader cache file missing or corrupt: " +
+                std::string(path ? path : ""));
+
+        if (!bf.vs.empty())
+        {
+            void* table = nullptr;
+            D3DCheck(d3d::constant_table_from_bytecode(bf.vs.data(), bf.vs.size(), &table), 1);
+            b.vs_table = table;
+            D3DCheck(d3d::create_vertex_shader(d3d::VERT_EXT, bf.vs.data(), nullptr, 0, &b.vs), 2);
+        }
+        if (!bf.ps.empty())
+        {
+            void* table = nullptr;
+            D3DCheck(d3d::constant_table_from_bytecode(bf.ps.data(), bf.ps.size(), &table), 3);
+            b.ps_table = table;
+            D3DCheck(d3d::create_pixel_shader(bf.ps.data(), &b.ps), 4);
+        }
+
+        int id = shader_id_counter++;
+        shaders.emplace(id, b);
+        return (double)id;
+    }
+    shader_create_catch("shader_create_cache")
+}
+
+// 异步工作流: 创建一批(DX9 专属)。vs_entry/ps_entry 为空 = 用默认 mainVS/mainPS。
+exp_real shader_compile_begin(const char* cache_path, const char* vs_entry, const char* ps_entry)
+{
+    try
+    {
+        if (!is_d3d9()) return gerror;
+        if (g_wf_active && !g_wf_active->finished.load(std::memory_order_acquire))
+            return gerror;   // 上一批未结束, 不允许并行声明
+
+        delete g_wf_active;
+        auto* wf = new CompileWorkflow();
+        wf->cache_path = cache_path ? cache_path : "";
+        wf->vs_entry = vs_entry ? vs_entry : "";
+        wf->ps_entry = ps_entry ? ps_entry : "";
+        g_wf_active = wf;
+        return gtrue;
+    }
+    catch (...) { return gerror; }
+}
+
+// 追加一个源码到当前工作流(cache_name 仅为文件名, 消毒后使用)。
+exp_real shader_compile_add(const char* src, const char* cache_name)
+{
+    try
+    {
+        if (!is_d3d9()) return gerror;
+        if (!g_wf_active || g_wf_active->started.load()) return gerror;
+        if (!src || !cache_name) return gerror;
+
+        ShaderJob job;
+        job.src = src;
+        job.name = cache_name;
+        if (!wf_name_valid(job.name)) return gerror;
+        for (const auto& j : g_wf_active->jobs)
+            if (j.name == job.name) return gerror;   // 批内重名
+
+        g_wf_active->jobs.push_back(std::move(job));
+        return gtrue;
+    }
+    catch (...) { return gerror; }
+}
+
+// 结束声明并启动异步编译(worker 线程惰性创建, 常驻到 DLL 卸载)。
+exp_real shader_compile_end()
+{
+    try
+    {
+        if (!g_wf_active || g_wf_active->started.load()) return gerror;
+        g_wf_active->started.store(true);
+
+        std::lock_guard<std::mutex> lk(g_wf_mtx);
+        if (g_wf_stop) return gerror;
+        // 先建线程(若抛异常不污染 pending), 再挂载批
+        if (!g_wf_thread.joinable())
+            g_wf_thread = std::thread(shader_worker_main);
+        g_wf_pending = g_wf_active;
+        g_wf_cv.notify_all();
+        return gtrue;
+    }
+    catch (...) { return gerror; }
+}
+
+// 进度: 0..1 进行中 / 1 成功(或无工作流/空批) / -1 有失败。
+exp_real shader_compile_progress()
+{
+    if (!g_wf_active) return 1.0;
+    if (!g_wf_active->finished.load(std::memory_order_acquire))
+    {
+        const size_t total = g_wf_active->jobs.size();
+        if (total == 0) return 1.0;
+        return (double)g_wf_active->done.load(std::memory_order_relaxed) / (double)total;
+    }
+    return g_wf_active->any_error.load() ? -1.0 : 1.0;
+}
+
+// 缓冲的首个错误串(工作流结束后有效); 无则 ""。
+exp_str shader_compile_error()
+{
+    if (!g_wf_active || !g_wf_active->finished.load(std::memory_order_acquire))
+        return_string("");
+    return_string(g_wf_active->error);
+}
+
+// 向当前工作流注册一个内部编译任务(fn 在 worker 线程执行, 参数为工作流 cache_path)。
+// 须在 shader_compile_begin 之后、shader_compile_end 之前调用; 否则返回 false。
+bool shader_workflow_add_internal(std::function<void(const std::string&)> fn)
+{
+    if (!fn) return false;
+    if (!g_wf_active || g_wf_active->started.load()) return false;
+    ShaderJob job;
+    job.internal = std::move(fn);
+    g_wf_active->jobs.push_back(std::move(job));
+    return true;
+}
+
+// 阻塞直到当前工作流落定(无活动工作流则立即返回)。
+// 防护: gpart_gpu_init 若在工作流未结束时被调用, 先等工作流收尾,
+// 避免主线程与 worker 并发调用 D3DXCompileShader(无官方并发保证)。
+void shader_workflow_wait_finished()
+{
+    CompileWorkflow* wf = g_wf_active;
+    if (!wf || wf->finished.load(std::memory_order_acquire)) return;
+    while (!wf->finished.load(std::memory_order_acquire))
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+}

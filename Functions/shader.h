@@ -1,6 +1,7 @@
 #pragma once
 #include "../main.h"
 #include "structs.h"
+#include <functional>
 
 extern vert_ext vbuff_ext_int[vb_count];
 extern vert_default vbuff_default_int[vb_count];
@@ -63,6 +64,26 @@ exp_real shader_set_uniform_b(double h, double x, double y, double z, double w);
 exp_real shader_set_uniform_color(double h, double col, double alpha);
 // mtx_type 掩码: world=1 / view=2 / projection=4 / wvp=7(gm82dx9 式)。size = 写几个寄存器(默认 4)。
 exp_real shader_set_uniform_matrix(double h, double mtx_type, double size);
+
+// ---- 用户 shader 字节码缓存 + 异步编译(DX9 专属; asm 不支持缓存) ----
+// 聚合缓存: 一个文件存 vs+ps 两段字节码; key = XXH64(src|vs_profile|vs_entry|ps_profile|ps_entry)。
+// 新鲜度分支在 GML 侧做(shader_get_hash vs shader_cache_hash), DLL 导出保持原子。
+exp_str shader_get_hash(const char* src, const char* vs_entry, const char* ps_entry); // key 的 16 位 hex 串
+exp_str shader_cache_hash(const char* path);                                          // 缓存文件头 key 串; 缺失/损坏 ""
+exp_real shader_create_cache(const char* path);                                       // 从缓存文件物化聚合 shader
+exp_real shader_compile_begin(const char* cache_path, const char* vs_entry, const char* ps_entry);
+exp_real shader_compile_add(const char* src, const char* cache_name);                 // cache_name 仅文件名(消毒)
+exp_real shader_compile_end();                                                        // 结束声明并启动异步编译
+exp_real shader_compile_progress();    // 0..1 进行中 / 1 成功 / -1 有失败(错误串见 shader_compile_error)
+exp_str shader_compile_error();        // 缓冲的首个错误串; 无则 ""
+void    shader_compile_shutdown();     // 停止 worker 线程(DllMain 卸载用)
+
+// ---- 内部: 供 gpart 等模块使用(不导出) ----
+// 向当前工作流注册一个"内部编译任务": fn 在 worker 线程执行, 参数为工作流 cache_path。
+// 返回 true=已加入(须在 shader_compile_begin 之后、end 之前); false=无活动工作流/已开始。
+bool shader_workflow_add_internal(std::function<void(const std::string& cache_path)> fn);
+// 阻塞直到当前工作流落定(无活动工作流则立即返回)。防 gpart_gpu_init 在工作流未结束时被调用的并发编译。
+void shader_workflow_wait_finished();
 
 // 采样器 stage。绑纹理用 texture_set_stage(GMS2 同名); 参数控制用 gpu_set_tex*_ext(GMS2 gpu_* 家族)。
 exp_real texture_set_stage(double samp, double tex);

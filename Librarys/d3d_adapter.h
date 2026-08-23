@@ -73,6 +73,7 @@ namespace d3d
         void*   constant_table_get_constant_by_name(void*, const char*);
         UniformLoc constant_table_get_uniform(void*, void*);   // 返回 {寄存器号, ConstKind}; 失败 reg=-1
         int     constant_table_get_sampler_register(void*, void*);
+        HRESULT constant_table_from_bytecode(const void*, size_t, void**);   // D3D8 桩
 
         HRESULT set_texture(DWORD, void*);
         HRESULT get_texture(DWORD, void**);
@@ -150,6 +151,8 @@ namespace d3d
         void*   constant_table_get_constant_by_name(void* table, const char* name);
         UniformLoc constant_table_get_uniform(void* table, void* handle);        // {寄存器号, ConstKind}; 失败 reg=-1
         int     constant_table_get_sampler_register(void* table, void* handle);  // 采样器寄存器号(sN), 非采样器返回 -1
+        // 从编译字节码重建常量表(D3DXGetShaderConstantTable, 免重新编译; 缓存命中路径用)
+        HRESULT constant_table_from_bytecode(const void*, size_t, void**);
 
         HRESULT set_texture(DWORD, void*);
         HRESULT get_texture(DWORD, void**);
@@ -247,6 +250,8 @@ namespace d3d
     { return version() == V9 ? impl9::constant_table_get_uniform(table, handle) : impl8::constant_table_get_uniform(table, handle); }
     inline int constant_table_get_sampler_register(void* table, void* handle)
     { return version() == V9 ? impl9::constant_table_get_sampler_register(table, handle) : impl8::constant_table_get_sampler_register(table, handle); }
+    inline HRESULT constant_table_from_bytecode(const void* code, size_t len, void** table)
+    { return version() == V9 ? impl9::constant_table_from_bytecode(code, len, table) : impl8::constant_table_from_bytecode(code, len, table); }
 
     inline HRESULT set_texture(DWORD stage, void* tex)
     { return version() == V9 ? impl9::set_texture(stage, tex) : impl8::set_texture(stage, tex); }
