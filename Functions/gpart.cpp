@@ -1287,14 +1287,34 @@ exp_real gpart_gpu_init(const char* cache_dir)
     simple_catch("gpart_gpu_init", gerror)
 }
 
+// 主线程侧检查 4 个 gpart shader 缓存是否全部命中。cache_dir 为空 = 不使用缓存, 恒视为"需编译"。
+static bool gpart_cache_fresh(const char* cache_dir)
+{
+    if (!cache_dir || !cache_dir[0]) return false;
+    auto hit = [&](const char* name, const std::string& src_str, const char* profile)
+    {
+        std::string key = src_str + "|" + profile;
+        xxh::hash64_t h = xxh::xxhash<64>(key.data(), key.size());
+        std::vector<BYTE> code;
+        return shader_cache_read(cache_dir, name, h, code);
+    };
+    return hit("evo_vs", load_shader_resource("EVO_VS_HLSL"), "vs_3_0")
+        && hit("evo_ps", load_shader_resource("EVO_PS_HLSL"), "ps_3_0")
+        && hit("rnd_vs", load_shader_resource("RND_VS_HLSL"), "vs_3_0")
+        && hit("rnd_ps", load_shader_resource("RND_PS_HLSL"), "ps_3_0");
+}
+
 // 把 gpart 的 4 个 shader 编译(内部 hash 分支, 仅改动/未缓存的加入)注册进当前异步编译工作流。
 // 须在 shader_compile_begin 之后、shader_compile_end 之前调用; 之后 gpart_gpu_init(cache_dir)
 // 读到的就是已就绪的 gpart 缓存 → 零编译直接创建设备对象。DX9 专属。
+// 全部命中缓存时不注册任何任务(shader_compile_count() 不计入, 进度条不虚闪)。
 exp_real shader_compile_add_gpart()
 {
     try
     {
         if (d3d::version() != d3d::V9) return gerror;
+        if (gpart_cache_fresh(shader_workflow_cache_path().c_str()))
+            return gtrue;   // 4 个 gpart shader 全部命中缓存, 无需排队
         return shader_workflow_add_internal([](const std::string& cache_path)
         {
             std::vector<BYTE> a, b, c, d;

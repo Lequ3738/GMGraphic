@@ -1316,10 +1316,12 @@ namespace
 
     bool wf_name_valid(const std::string& name)
     {
+        // 只拒路径分隔符/危险字符与穿越; 点号合法(如 "Gray.hlsl")。
         if (name.empty() || name.size() > 64) return false;
+        if (name == "." || name == "..") return false;
         for (char c : name)
             if (c == '\\' || c == '/' || c == ':' || c == '*' || c == '?' || c == '"'
-                || c == '<' || c == '>' || c == '|' || c == '.' || c == ' ')
+                || c == '<' || c == '>' || c == '|' || c == ' ')
                 return false;
         return true;
     }
@@ -1548,6 +1550,14 @@ exp_str shader_compile_error()
     return_string(g_wf_active->error);
 }
 
+// 当前工作流排队待编译的 shader 数量(含内部任务如 gpart; gpart 仅在确有陈旧时占 1)。
+// 在 shader_compile_end 之后查询: 为 0 = 全部命中缓存无需编译(可用于隐藏进度条)。
+exp_real shader_compile_count()
+{
+    if (!g_wf_active) return 0.0;
+    return (double)g_wf_active->jobs.size();
+}
+
 // 向当前工作流注册一个内部编译任务(fn 在 worker 线程执行, 参数为工作流 cache_path)。
 // 须在 shader_compile_begin 之后、shader_compile_end 之前调用; 否则返回 false。
 bool shader_workflow_add_internal(std::function<void(const std::string&)> fn)
@@ -1558,6 +1568,12 @@ bool shader_workflow_add_internal(std::function<void(const std::string&)> fn)
     job.internal = std::move(fn);
     g_wf_active->jobs.push_back(std::move(job));
     return true;
+}
+
+// 当前工作流的 cache_path(无活动工作流返回 ""), 供 gpart 主线程侧新鲜度检查用。
+std::string shader_workflow_cache_path()
+{
+    return g_wf_active ? g_wf_active->cache_path : std::string();
 }
 
 // 阻塞直到当前工作流落定(无活动工作流则立即返回)。
