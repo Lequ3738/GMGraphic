@@ -686,6 +686,35 @@ void texture_clear_all()
         d3d::set_texture(i, nullptr);
 }
 
+// [2026-08-26] 共享 1x1 白纹理(自定义 shader 下无纹理图元的采样兜底)。
+// 背景: 固定管线对空采样器透传顶点色, 可编程 PS 的 tex2D 返回黑 → 形状全黑;
+// 绑白后 tex2D(s0)*color 类 PS 在无纹理图元上退化为纯顶点色(FFP 观感)。
+// 格式/池用字面量: A8R8G8B8=21、POOL_MANAGED=1(DX8/DX9 枚举同值, 见 d3d_adapter.h 头注);
+// MANAGED 池跨设备 Reset 存活。进程生命周期内常驻(与 sdf_shader 等内部资源同策略)。
+static void* s_white_tex = nullptr;
+
+void texture_bind_white_stage0()
+{
+    for (uint i = 1; i < d3dcaps.max_tex_stages; i++)
+        d3d::set_texture(i, nullptr);
+
+    if (!s_white_tex)
+    {
+        void* t = nullptr;
+        if (SUCCEEDED(d3d::create_texture(1, 1, 1, 0, 21 /*A8R8G8B8*/, 1 /*MANAGED*/, &t)))
+        {
+            const dword px = 0xFFFFFFFFu;
+            if (SUCCEEDED(d3d::upload_texture(t, 1, 1, 21, &px, sizeof(dword))))
+                s_white_tex = t;
+            else
+                d3d::release(t);   // 上传失败不缓存, 下次重试
+        }
+    }
+
+    d3d::set_texture(0, s_white_tex);   // 创建失败时为 null → DX9+GMDirectX9 下由
+                                        // SetTexture_wrap 白像素兜底再接一层
+}
+
 // 采样器基础过滤(GMS2 gpu_set_texfilter_ext, 参数扩展为 D3D 过滤值)。
 // filter: 0=point(最近邻)/1=linear(双线性)/2=anisotropic/3=none。
 
@@ -984,7 +1013,14 @@ void vertex::begin(D3DPRIMITIVETYPE primitive, bool textured)
         std::memset(vbuff_default_int, 0, vb_default_bytes);
 
     if (!textured)
-        texture_clear_all();
+    {
+        // [2026-08-26] 自定义 shader 激活时绑白兜底(空采样器在可编程 PS 下采样为黑);
+        // 无 shader 保持清空 —— FFP 原语义, 传统渲染零改动。
+        if (current_shader >= 0)
+            texture_bind_white_stage0();
+        else
+            texture_clear_all();
+    }
 }
 
 exp_real d3d_primitive_begin_ext(double primitive, double textured)

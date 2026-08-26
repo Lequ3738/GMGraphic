@@ -105,6 +105,9 @@ exp_real gpu_get_sampler_state_ext(double sampler, double state);               
 
 // 内部助手(不导出): 清空所有纹理 stage。
 void texture_clear_all();
+// 内部助手(不导出): 自定义 shader 下无纹理图元的采样兜底 —— stage0 绑共享 1x1 白纹理,
+// 其余清空。固定管线对空采样器透传顶点色, 可编程 PS 的 tex2D 返回黑 → 绑白后退化为顶点色。
+void texture_bind_white_stage0();
 
 // ---- GPU Control(GMS2 gpu_* 系列)----
 // Fog 合并成一个 gpu_set_fog(不严格对齐 GMS2, 扩展 mode/density 保留 D3D 控制)。
