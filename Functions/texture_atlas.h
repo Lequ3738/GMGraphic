@@ -131,6 +131,9 @@ extern std::unordered_map<uint, std::unique_ptr<texture_atlas>> game_texture_atl
 extern std::unordered_map<uint, texture_atlas::images*> game_images;
 extern std::unordered_map<uint, texture_atlas::images::sub_image*> game_textures;
 
+// 整设备重建后的图集纹理恢复(见 texture_atlas.cpp; GMDirectX9 reset 回调使用)。
+void texture_atlas_on_device_recreated();
+
 // ==================== Export Functions ====================
 exp_real texture_atlas_auto_start();
 exp_real texture_atlas_auto_add_file(gm_string file);

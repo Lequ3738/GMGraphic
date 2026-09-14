@@ -19,13 +19,20 @@ bool WINAPI DllMain(HINSTANCE aModuleHandle, int aReason, int aReserved)
 			ulong result = 0;
 			g_dllInstance = aModuleHandle;   // 供 FindResource 加载内嵌 shader 源码
 			gmapi = gm::CGMAPI::Create(&result);
-			
+
 			// Check the initialization
 			if (result == gm::GMAPI_INITIALIZATION_FAILED)
 			{
 				complain("Unable to initialize GMAPI.");
 				return FALSE;
 			}
+
+			// [2026-09-14] 后端检测提前到加载时刻: 任何导出若先于 GML 的 init() 被
+			// 调用, d3d::version() 不再误判为 V8(装着 GMDirectX9 时按 D3D8 vtable
+			// 槽位调用 D3D9 设备 = 崩溃)。设备指针此刻为空也无妨 —— ensure_version
+			// 的 d3d9.dll 在场兜底仍生效, init() 会用真实指针再确认一次。
+			d3d::ensure_version((void*)gmapi->GetDirect3DDevice(),
+				(void*)gmapi->GetDirect3DInterface());
 
 #ifdef _DEBUG
 			gm::show_message("Debug Mode.");

@@ -171,3 +171,10 @@ exp_real gpart_deflector_friction(double sys, double ind, double friction);
 
 // ---- exports: debug (1) ----
 exp_real gpart_draw_regions(double sys, double color, double alpha);
+
+// ---- 设备 Reset 前后回调(GMDirectX9 注册, shader.cpp init 挂接; 2026-09-14) ----
+// pre: 释放各系统 RT 状态纹理(插件唯一的 DEFAULT 池资源, 不释放会卡死 D3D9 Reset)
+//      + 清挂起批/活跃窗口。幂等。post: recreated=false 仅重建 RT; true 全量重建
+//      (含全局纹理/着色器/精灵帧重抓)。粒子状态不跨 Reset —— 与 GM8 原生行为一致。
+void gpart_reset_pre();
+void gpart_reset_post(bool recreated);

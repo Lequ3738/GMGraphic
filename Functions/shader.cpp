@@ -2,6 +2,9 @@
 #include "shader.h"
 #include "draw_text.h"
 #include "pixel_shader_defs.h"
+#include "texture_atlas.h"    // texture_atlas_on_device_recreated(整设备重建恢复)
+#include "vertex.h"           // vertex_on_device_recreated(同上)
+#include "gpart.h"            // gpart_reset_pre/post(设备 Reset 回调)
 #include "xxhash.hpp"          // 用户 shader 缓存 key 哈希
 #include <cstring>
 #include <cstdio>
@@ -75,6 +78,10 @@ int sdf_shader_uniform_gamma = -1;  // DX9: "u_gamma"(边缘软度) 句柄
 // Initialisation
 // ============================================================================
 
+// 设备 Reset 前后总回调(定义见文件末尾; init 里注册到 GMDirectX9)。
+void gmgraphic_reset_pre();
+void gmgraphic_reset_post(bool recreated);
+
 // Initialises device pointer, GPU information, buffers, etc.
 exp_real init(gm_real arg_list)
 {
@@ -107,6 +114,20 @@ exp_real init(gm_real arg_list)
             GMDX9_FLUSHREG regf = (GMDX9_FLUSHREG)GetProcAddress(hdx9, "gmdx9_register_flush_callback");
             if (regf)
                 regf(&atlas_flush_noexcept);
+        }
+    }
+
+    // 注册设备 Reset 前后回调到 GMDirectX9(2026-09-14): 设备丢失(睡眠/锁屏/TDR)
+    // 时释放 DEFAULT 池资源解除 Reset 死锁 + Reset/重建后恢复插件资源。未装
+    // GMDirectX9 时静默跳过(D3D8 后端本无此问题)。
+    {
+        HMODULE hdx9 = GetModuleHandleA("GMDirectX9.dll");
+        if (hdx9)
+        {
+            typedef int(__cdecl* GMDX9_RESETREG)(void(*)(void), void(*)(bool));
+            GMDX9_RESETREG regr = (GMDX9_RESETREG)GetProcAddress(hdx9, "gmdx9_register_reset_callback");
+            if (regr)
+                regr(&gmgraphic_reset_pre, &gmgraphic_reset_post);
         }
     }
 
@@ -147,7 +168,7 @@ exp_real d3d_dev_get_point_max_size() { return (double)d3dcaps.max_point_size; }
 exp_real d3d_dev_get_ps_version()
 {
     uint v = (uint)d3dcaps.pixel_shader_version;
-    return (double)((((v >> 8) & 0xFF) * 10) + v & 0xFF);
+    return (double)((((v >> 8) & 0xFF) * 10) + (v & 0xFF));
 }
 
 // Maximum texture width. Applies to all graphical resources.
@@ -269,6 +290,10 @@ exp_real shader_create(const char* src, const char* vs_entry, const char* ps_ent
     {
         if (!is_d3d9()) return gerror;
 
+        // 主线程同步编译: 若异步工作流仍在编译, 先等它落定(D3DXCompileShader
+        // 无官方并发保证; 与 gpart_gpu_init 的同款防护)。
+        shader_workflow_wait_finished();
+
         compile_hlsl_stage(src, vs_entry, "mainVS", vs_profile(), true, b);
         const char* psp = ps_profile();
         compile_hlsl_stage(src, ps_entry, "mainPS", psp, false, b);
@@ -288,6 +313,8 @@ exp_real shader_create_asm(const char* vs_src, const char* ps_src)
     ShaderBundle b;
     try
     {
+        shader_workflow_wait_finished();   // 防 D3DX 汇编与 worker 并发(同 shader_create)
+
         if (vs_src && vs_src[0])
         {
             std::vector<BYTE> code, constants;
@@ -998,7 +1025,23 @@ exp_real gpu_set_alphatestref(double ref) { d3dcrs(D3DRS_ALPHAREF, (dword)clamp(
 exp_real gpu_set_alphatestfunc(double func) { d3dcrs(D3DRS_ALPHAFUNC, (dword)func); }
 
 // 深度偏移(GMS2 gpu_set_depth), 避免 z-fighting。整数 0-16, 默认 0。
-exp_real gpu_set_depth(double depth) { d3dcrs(D3DRS_ZBIAS, (uint)floor(clamp(depth, 0, 16))); }
+// [2026-09-14] D3D9 没有 D3DRS_ZBIAS(47, 已删除) —— 直传会 INVALIDCALL 静默失效。
+// V9 分支映射到 D3DRS_DEPTHBIAS(183, float 位模式): 按 16 位深度量子的近似换算
+// (depth/65535, 保持 0=关、单调递增、正值更靠近相机, 与 D3D8 ZBIAS 语义同向);
+// V8 分支保持 ZBIAS 原语义。两后端行为对齐。
+exp_real gpu_set_depth(double depth)
+{
+    double d = clamp(depth, 0.0, 16.0);
+    if (d3d::version() == d3d::V9)
+    {
+        float bias = (float)(d / 65535.0);
+        d3dcrs(183 /*D3DRS_DEPTHBIAS*/, d3dvar(bias));
+    }
+    else
+    {
+        d3dcrs(D3DRS_ZBIAS, (uint)floor(d));
+    }
+}
 
 // 多边形填充模式: point/wireframe/solid(GMS2 gpu_set_fillmode)。默认 solid。
 exp_real gpu_set_fillmode(double mode) { d3dcrs(D3DRS_FILLMODE, (dword)mode); }
@@ -1491,6 +1534,8 @@ exp_real shader_create_cache(const char* path)
     {
         if (!is_d3d9()) return gerror;
 
+        shader_workflow_wait_finished();   // 防 D3DX 常量表重建与 worker 并发(同 shader_create)
+
         BundleFile bf;
         if (!shader_cache_read_file(path ? path : "", bf))
             throw std::runtime_error("Shader cache file missing or corrupt: " +
@@ -1636,4 +1681,77 @@ void shader_workflow_wait_finished()
     if (!wf || wf->finished.load(std::memory_order_acquire)) return;
     while (!wf->finished.load(std::memory_order_acquire))
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
+}
+
+// ============================================================================
+// 设备 Reset 前后总回调(注册见 init(); GMDirectX9 的 ResetDevice 在真 Reset
+// 前后调用, 2026-09-14 设备丢失恢复配套)
+// ============================================================================
+
+// pre(真 Reset 前): 丢弃打开中的图集批(设备已丢失, 提交必然失败; 引擎随后整帧
+// 重画) + gpart 释放其 DEFAULT 池 RT 状态纹理(不释放会卡死 D3D9 Reset)。
+// 全程不抛异常 —— 回调发生在引擎绘制序列中途的钩子里, 异常会炸穿引擎帧。
+void gmgraphic_reset_pre()
+{
+    current_texture = atlas::texture_info{};   // 丢弃挂起批(等价 end_draw 的收尾赋值)
+    gpart_reset_pre();
+}
+
+// SDF 内建着色器重建(源码是常量; 整设备重建后旧设备对象已消亡)。
+static void rebuild_sdf_shaders()
+{
+    sdf_shader = -1;
+    sdf_shader_premul = -1;
+    sdf_shader_uniform = -1;
+    sdf_shader_uniform_buffer = -1;
+    sdf_shader_uniform_gamma = -1;
+
+    if (d3d::version() == d3d::V9)
+    {
+        sdf_shader = (int)shader_create(ps_sdf_hlsl, "", "mainPS");
+        sdf_shader_premul = (int)shader_create(ps_sdf_hlsl_premul, "", "mainPS");
+        sdf_shader_uniform_buffer = (int)shader_get_uniform(sdf_shader, "u_buffer");
+        sdf_shader_uniform_gamma = (int)shader_get_uniform(sdf_shader, "u_gamma");
+    }
+    else
+    {
+        sdf_shader = (int)shader_create_asm("", ps_sdf);
+        sdf_shader_premul = (int)shader_create_asm("", ps_sdf_premul);
+        sdf_shader_uniform = (int)shader_get_uniform(sdf_shader, "ps.0");
+    }
+    sdf::shader = sdf_shader;
+}
+
+// post(Reset/重建成功后): gpart 恢复 + recreated=true 时恢复本 DLL 其余设备资源。
+// 用户 shader 的字节码创建后即弃, 无法重建 —— 全部销毁(句柄失效; SEH 兜底罕见
+// 路径, 游戏需重新 shader_create)。SDF 内建着色器/顶点声明/白纹理/图集纹理均可重建。
+void gmgraphic_reset_post(bool recreated)
+{
+    gpart_reset_post(recreated);
+    if (!recreated)
+        return;   // 同设备 Reset: MANAGED 纹理/着色器/声明自动存活, 无事可做
+
+    try
+    {
+        // 惰性资源: 置空待下次使用时重建
+        if (s_white_tex) { d3d::release(s_white_tex); s_white_tex = nullptr; }
+        d3d::invalidate_cached_device_objects();      // 共享声明 + 透传 VS
+        vertex_on_device_recreated();                 // vertex_* 格式声明 + 冻结 VB 退化
+        texture_atlas_on_device_recreated();          // 图集纹理(内存数据仍在者重传)
+
+        // 用户 shader 无法重建 → 清表(先释放对象; sdf 内建的两个也在表里, 随后重建)
+        for (auto& kv : shaders)
+            bundle_release(kv.second);
+        shaders.clear();
+        uniforms.clear();
+        current_shader = -1;
+        vbuff_usevs = false;
+        g_vs_needed = false;
+
+        rebuild_sdf_shaders();
+    }
+    catch (...)
+    {
+        // 重建失败不让异常穿过钩子; 已处理的项保持已重建态, 其余留空待惰性重建
+    }
 }

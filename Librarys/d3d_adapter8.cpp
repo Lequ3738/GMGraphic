@@ -13,6 +13,9 @@ namespace d3d
         static IDirect3DDevice8* dev()  { return (IDirect3DDevice8*)device(); }
         static IDirect3D8*       intf() { return (IDirect3D8*)iface(); }
 
+        // D3D8 无惰性设备对象缓存(声明/透传 VS 是 D3D9 概念), 空操作。
+        void invalidate_cached_device_objects() {}
+
         // ---- 同签名转发(与 D3D9 签名逐字相同, 仅 vtable 槽位不同) ----
         HRESULT set_render_state(DWORD s, DWORD v)
         { return dev()->SetRenderState((D3DRENDERSTATETYPE)s, v); }

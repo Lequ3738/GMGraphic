@@ -50,6 +50,40 @@ static vertex::Format* cur_fmt()
 }
 
 // ============================================================================
+// 整设备重建后的格式/VB 恢复(GMDirectX9 reset 回调 recreated 路径, 2026-09-14)
+// 声明对象随旧设备消亡 → 逐格式重建(elems 在 CPU 侧, 原样重建即可)。
+// 冻结 VB 的 GPU 内容同样消亡且 CPU 副本已在 freeze 时清除, 无法恢复 —— 退化为
+// 空缓冲(submit 因顶点数为 0 静默跳过), 游戏可重新填充并再次 freeze。
+// 普通设备 Reset 无需本函数: VB 已是 MANAGED 池, 内容自动存活。
+// ============================================================================
+void vertex_on_device_recreated()
+{
+    if (!vtx_d3d9()) return;
+    try
+    {
+        for (auto& kv : g_formats)
+        {
+            vertex::Format& f = kv.second;
+            if (f.decl) { d3d::release(f.decl); f.decl = nullptr; }
+            if (f.ended)
+                d3d::create_vertex_declaration(f.elems.data(), (UINT)f.elems.size(), &f.decl);
+        }
+        for (auto& kv : g_buffers)
+        {
+            vertex::Buffer& b = kv.second;
+            if (b.frozen)
+            {
+                if (b.vb) { d3d::release(b.vb); b.vb = nullptr; }
+                b.frozen = false;
+                b.vert_count = 0;
+                b.in_vertex = false;
+            }
+        }
+    }
+    catch (...) {}   // 回调上下文不得抛异常(炸穿引擎帧); 失败的格式留空, submit 时报错
+}
+
+// ============================================================================
 // buffer plugin bridge
 // Reuses Librarys/buffer.h (ImportBufferModule). vertex_*_from_buffer functions
 // require the buffer plugin to be imported first (GML: ImportBufferModule("Http.dll")).

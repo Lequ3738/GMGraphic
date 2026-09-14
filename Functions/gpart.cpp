@@ -171,6 +171,7 @@ struct GType
     std::vector<FRect> frame_rect;    // 精灵各帧在粒子图集中的矩形(CPU 侧记录)
     std::vector<AtlasRegion> atlas_owned;   // 本类型在图集中占用的区域(释放时回收)
     int shape = PT_SHAPE_PIXEL;       // 无精灵时的形状
+    int sprite_id = -1;               // 来源精灵 id(-1=形状); 设备重建后按它重抓帧 [2026-09-14]
     bool animat = false, stretch = false, random_frame = false;
 
     float* row(GTypeRow r) { return t[static_cast<size_t>(r)]; }
@@ -518,6 +519,7 @@ static dword g_evo_vs = 0, g_evo_ps = 0;
 static dword g_rnd_vs = 0, g_rnd_ps = 0;
 static bool g_gpu_ready = false;
 static bool g_gpu_failed = false;
+static std::string g_last_cache_dir;       // 最近一次 gpu_init 用的缓存目录(设备重建复用)
 // 粒子输出 alpha 模式: -1=自动检测当前混合状态(ONE/INVSRCALPHA→预乘, SRCALPHA→straight),
 // 0=强制 straight(SRCALPHA/INVSRCALPHA), 1=强制预乘(ONE/INVSRCALPHA)。默认 -1 适配任意管线。
 static int g_gpart_premul = -1;
@@ -772,6 +774,7 @@ static void gpart_compile_all(const char* cache_dir,
 static bool gpu_init_internal(const char* cache_dir)
 {
     if (g_gpu_ready || g_gpu_failed) return g_gpu_ready;
+    g_last_cache_dir = cache_dir ? cache_dir : "";
     try
     {
         d3d::Caps caps;
@@ -780,16 +783,18 @@ static bool gpu_init_internal(const char* cache_dir)
         if (caps.vertex_tex_filter_caps == 0)
             throw std::runtime_error("显卡不支持顶点纹理采样(VTF), gpart 不可用。");
 
+        // [2026-09-14] 类型表/图集/矩形表改 MANAGED 池: 三者只上传+采样(从不当 RT),
+        // MANAGED 自动跨设备 Reset 存活, 设备丢失后无需重建内容。
         // 类型表纹理 256x13 A16B16G16R16F
         D3DCheck(d3d::create_texture(GP_TYPE_TEX_W, GP_TYPE_ROWS, 1, 0,
-            GP_FMT_16F, D3DPOOL_DEFAULT, &g_type_tex), 1);
+            GP_FMT_16F, D3DPOOL_MANAGED, &g_type_tex), 1);
         std::vector<unsigned short> zero((size_t)GP_TYPE_TEX_W * GP_TYPE_ROWS * 4, 0);
         D3DCheck(d3d::upload_texture(g_type_tex, GP_TYPE_TEX_W, GP_TYPE_ROWS,
             GP_FMT_16F, zero.data(), GP_TYPE_TEX_W * 8), 2);
 
         // 粒子图集 1024x1024 A8R8G8B8: 形状 tile 由 GM8 引擎形状精灵填充(第 0 行 64x64 网格)
         D3DCheck(d3d::create_texture(GP_ATLAS_SIZE, GP_ATLAS_SIZE, 1, 0,
-            D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &g_atlas_tex), 3);
+            D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &g_atlas_tex), 3);
         g_atlas_x = 0;
         g_atlas_y = GP_ATLAS_TILE;   // 形状占满第 0 行, 精灵从第 1 行开始分配
         g_atlas_row_h = 0;
@@ -813,7 +818,7 @@ static bool gpu_init_internal(const char* cache_dir)
 
         // 矩形表纹理 256x32 A16B16G16R16F (类型 x 帧 → 图集矩形)
         D3DCheck(d3d::create_texture(GP_TYPE_TEX_W, GP_RECT_TEX_FRAMES, 1, 0,
-            GP_FMT_16F, D3DPOOL_DEFAULT, &g_rect_tex), 9);
+            GP_FMT_16F, D3DPOOL_MANAGED, &g_rect_tex), 9);
         {
             std::vector<unsigned short> z((size_t)GP_TYPE_TEX_W * GP_RECT_TEX_FRAMES * 4, 0);
             D3DCheck(d3d::upload_texture(g_rect_tex, GP_TYPE_TEX_W, GP_RECT_TEX_FRAMES,
@@ -863,8 +868,11 @@ static void type_table_upload()
 
 // ============================================================================
 // 系统状态纹理创建/销毁
+// [2026-09-14] 拆分与池调整: RT 状态纹理是全插件仅有的必须 DEFAULT+RENDERTARGET 的
+// 资源(设备 Reset 前必须释放、Reset 后内容失效); 特效器表只上传+采样, 改 MANAGED
+// 自动跨 Reset 存活。gpart_reset_pre/post 按此边界工作。
 // ============================================================================
-static void system_tex_create(GSystem& s)
+static void system_rt_create(GSystem& s)
 {
     for (int k = 0; k < 3; ++k)
         for (int p = 0; p < 2; ++p)
@@ -890,12 +898,22 @@ static void system_tex_create(GSystem& s)
     d3d::release(prevRT);
     D3DCheck(d3d::set_render_target(1, nullptr), 10);
     D3DCheck(d3d::set_render_target(2, nullptr), 11);
-    // 特效器表 64x6 A16B16G16R16F(每特效器 2 行: 行0/1=attractor, 行2/3=destroyer, 行4/5=deflector)
+}
+
+// 特效器表 64x6 A16B16G16R16F(每特效器 2 行: 行0/1=attractor, 行2/3=destroyer, 行4/5=deflector)
+static void system_eff_create(GSystem& s)
+{
     D3DCheck(d3d::create_texture(GP_EFF_TEX_W, GP_EFF_TEX_H, 1, 0,
-        GP_FMT_16F, D3DPOOL_DEFAULT, &s.eff_tex), 12);
+        GP_FMT_16F, D3DPOOL_MANAGED, &s.eff_tex), 12);
     std::vector<unsigned short> ez((size_t)GP_EFF_TEX_W * GP_EFF_TEX_H * 4, 0);
     D3DCheck(d3d::upload_texture(s.eff_tex, GP_EFF_TEX_W, GP_EFF_TEX_H,
         GP_FMT_16F, ez.data(), GP_EFF_TEX_W * 8), 13);
+}
+
+static void system_tex_create(GSystem& s)
+{
+    system_rt_create(s);
+    system_eff_create(s);
 }
 
 static void system_tex_destroy(GSystem& s)
@@ -1346,6 +1364,23 @@ exp_real gpart_set_pixelsnap(double mode)
     return gtrue;
 }
 
+// 静态四边形 VB: 每粒子 6 顶点(2 三角形) × (角点x, 角点y, id), 一次创建永不重建
+// (gpart_system_create 与设备重建共用; MANAGED 池自动跨 Reset, 仅整设备重建时需重建)
+static void system_build_id_vb(GSystem& s)
+{
+    std::vector<float> qv((size_t)s.capacity * 6 * 3);
+    static const float corners[6][2] = { {0,0},{1,0},{0,1},{1,0},{1,1},{0,1} };
+    for (int i = 0; i < s.capacity; ++i)
+        for (int k = 0; k < 6; ++k)
+        {
+            qv[(size_t)(i * 6 + k) * 3 + 0] = corners[k][0];
+            qv[(size_t)(i * 6 + k) * 3 + 1] = corners[k][1];
+            qv[(size_t)(i * 6 + k) * 3 + 2] = (float)i;
+        }
+    D3DCheck(d3d::create_vertex_buffer((UINT)(qv.size() * 4), &s.id_vb), 1);
+    D3DCheck(d3d::upload_vertex_buffer(s.id_vb, qv.data(), (UINT)(qv.size() * 4)), 2);
+}
+
 exp_real gpart_system_create(double capacity)
 {
     if (d3d::version() != d3d::V9) return gerror;
@@ -1363,19 +1398,7 @@ exp_real gpart_system_create(double capacity)
         s.s_frame.resize(s.capacity, 0);
         s.s_gen.resize(s.capacity, 0);
         system_tex_create(s);
-
-        // 静态四边形 VB: 每粒子 6 顶点(2 三角形) × (角点x, 角点y, id), 一次创建永不重建
-        std::vector<float> qv((size_t)s.capacity * 6 * 3);
-        static const float corners[6][2] = { {0,0},{1,0},{0,1},{1,0},{1,1},{0,1} };
-        for (int i = 0; i < s.capacity; ++i)
-            for (int k = 0; k < 6; ++k)
-            {
-                qv[(size_t)(i * 6 + k) * 3 + 0] = corners[k][0];
-                qv[(size_t)(i * 6 + k) * 3 + 1] = corners[k][1];
-                qv[(size_t)(i * 6 + k) * 3 + 2] = (float)i;
-            }
-        D3DCheck(d3d::create_vertex_buffer((UINT)(qv.size() * 4), &s.id_vb), 1);
-        D3DCheck(d3d::upload_vertex_buffer(s.id_vb, qv.data(), (UINT)(qv.size() * 4)), 2);
+        system_build_id_vb(s);
 
         int id = g_system_counter++;
         g_systems.emplace(id, std::move(s));
@@ -1789,7 +1812,53 @@ exp_real gpart_type_clear(double type)
     simple_catch("gpart_type_clear", gerror)
 }
 
-exp_real gpart_type_sprite(double type, double sprite, double animat, double stretch, 
+// 从 GM 精灵纹理抓帧进粒子图集(gpart_type_sprite 与设备重建共用):
+// 逐帧 read_texture → 图集分配 → 上传 → frame_rect。抓取前调用方应已回收旧区域。
+// 返回 true = 至少抓到一帧。失败抛异常(超尺寸/图集满)。
+static bool type_grab_sprite_frames(GType& t, int spr)
+{
+    int frames_total = gm::sprite_get_number(spr);
+    if (frames_total <= 0) return false;
+
+    if (frames_total > GP_RECT_TEX_FRAMES) frames_total = GP_RECT_TEX_FRAMES;
+    for (int k = 0; k < frames_total; ++k)
+    {
+        int tex = gm::sprite_get_texture(spr, k);
+        if (tex < 0) break;
+        void* dtex = (void*)gmapi->GetDirect3DTexture(tex);
+        if (!dtex) break;
+
+        std::vector<BYTE> px;
+        UINT w = 0, h = 0;
+        D3DCheck(d3d::read_texture(dtex, px, w, h), 1);
+        if (w == 0 || h == 0 || w > GP_ATLAS_SIZE || h > GP_ATLAS_SIZE)
+            throw std::runtime_error("粒子精灵尺寸超出图集(最大 " +
+                std::to_string(GP_ATLAS_SIZE) + "px)。");
+
+        int ax = 0, ay = 0;
+        if (!atlas_alloc((int)w, (int)h, ax, ay))
+            throw std::runtime_error("粒子图集已满(1024x1024), 请减少精灵种类。");
+        t.atlas_owned.push_back({ ax, ay, (int)w, (int)h });   // 记录占用(异常/清理时可回收)
+        D3DCheck(d3d::upload_texture_rect(g_atlas_tex, (UINT)ax, (UINT)ay,
+            w, h, D3DFMT_A8R8G8B8, px.data(), w * 4), 2);
+
+        GType::FRect r = {
+            .u0 = (float)ax / (float)GP_ATLAS_SIZE,
+            .v0 = (float)ay / (float)GP_ATLAS_SIZE,
+            .u1 = (float)w / (float)GP_ATLAS_SIZE,
+            .v1 = (float)h / (float)GP_ATLAS_SIZE,
+        };
+        t.frame_rect.push_back(r);
+    }
+    if (t.frame_rect.empty())
+        return false;
+    // 精灵像素宽作为尺寸基准(GM8: 屏幕像素 = size × scale × 精灵宽)
+    t.pixel_scale() = t.frame_rect[0].u1 * (float)GP_ATLAS_SIZE;
+    t.frame_count() = (float)t.frame_rect.size();
+    return true;
+}
+
+exp_real gpart_type_sprite(double type, double sprite, double animat, double stretch,
     double random)
 {
     try
@@ -1803,52 +1872,17 @@ exp_real gpart_type_sprite(double type, double sprite, double animat, double str
         atlas_free_regions(*t);                // 换精灵前回收旧区域
         t->frame_rect.clear();
 
-        int frames_total = gm::sprite_get_number(spr);
-        if (frames_total <= 0) return gfalse;
-
-        if (frames_total > GP_RECT_TEX_FRAMES) frames_total = GP_RECT_TEX_FRAMES;
-        for (int k = 0; k < frames_total; ++k)
-        {
-            int tex = gm::sprite_get_texture(spr, k);
-            if (tex < 0) break;
-            void* dtex = (void*)gmapi->GetDirect3DTexture(tex);
-            if (!dtex) break;
-
-            std::vector<BYTE> px;
-            UINT w = 0, h = 0;
-            D3DCheck(d3d::read_texture(dtex, px, w, h), 1);
-            if (w == 0 || h == 0 || w > GP_ATLAS_SIZE || h > GP_ATLAS_SIZE)
-                throw std::runtime_error("粒子精灵尺寸超出图集(最大 " +
-                    std::to_string(GP_ATLAS_SIZE) + "px)。");
-
-            int ax = 0, ay = 0;
-            if (!atlas_alloc((int)w, (int)h, ax, ay))
-                throw std::runtime_error("粒子图集已满(1024x1024), 请减少精灵种类。");
-            t->atlas_owned.push_back({ ax, ay, (int)w, (int)h });   // 记录占用(异常/清理时可回收)
-            D3DCheck(d3d::upload_texture_rect(g_atlas_tex, (UINT)ax, (UINT)ay,
-                w, h, D3DFMT_A8R8G8B8, px.data(), w * 4), 2);
-
-            GType::FRect r = {
-                .u0 = (float)ax / (float)GP_ATLAS_SIZE,
-                .v0 = (float)ay / (float)GP_ATLAS_SIZE,
-                .u1 = (float)w / (float)GP_ATLAS_SIZE,
-                .v1 = (float)h / (float)GP_ATLAS_SIZE,
-            };
-            t->frame_rect.push_back(r);
-        }
-        if (t->frame_rect.empty())
+        if (!type_grab_sprite_frames(*t, spr))
         {
             atlas_free_regions(*t);            // 无有效帧 → 回退刚分配的区域
             return gfalse;
         }
-        // 精灵像素宽作为尺寸基准(GM8: 屏幕像素 = size × scale × 精灵宽)
-        t->pixel_scale() = t->frame_rect[0].u1 * (float)GP_ATLAS_SIZE;
 
         t->animat = animat > 0.5;
         t->stretch = stretch > 0.5;
         t->random_frame = random > 0.5;
+        t->sprite_id = spr;                    // 记录来源(设备重建后重抓) [2026-09-14]
         t->shape = -1;                 // 有精灵 → 形状路径失效
-        t->frame_count() = (float)t->frame_rect.size();
         t->animation_enabled() = t->animat ? 1.0f : 0.0f;
         t->stretch_animation() = t->stretch ? 1.0f : 0.0f;
         t->random_frame_flag() = t->random_frame ? 1.0f : 0.0f;
@@ -1868,6 +1902,7 @@ exp_real gpart_type_shape(double type, double shape)
         int s = (int)shape;
         if (s < 0 || s >= PT_SHAPE_COUNT) return gfalse;
         t->shape = s;
+        t->sprite_id = -1;           // 形状路径: 不再有来源精灵
         t->frame_rect.clear();
         t->frame_count() = 0;
         t->animation_enabled() = 0;
@@ -2735,6 +2770,111 @@ exp_real gpart_deflector_friction(double sys, double ind, double friction)
         return gtrue;
     }
     simple_catch("gpart_deflector_friction", gerror)
+}
+
+// ============================================================================
+// 设备 Reset 前后回调(GMDirectX9 gmdx9_register_reset_callback 注册, 2026-09-14)
+// ============================================================================
+// pre(真 Reset 前): RT 状态纹理是全插件仅有的 DEFAULT 池资源, 必须释放否则
+// D3D9 Reset 返回 INVALIDCALL、设备永久卡死。内容随纹理消亡 → 清挂起批/活跃窗口/
+// 混合掩码(update 的空窗口分支与 drawit 的空窗口早退天然跳过渲染)。幂等: 已释放
+// (tex 为空)即空操作 —— Reset 失败后 runner 每帧重试会再次进入 pre。
+void gpart_reset_pre()
+{
+    if (d3d::version() != d3d::V9) return;
+    for (auto& kv : g_systems)
+    {
+        GSystem& s = kv.second;
+        for (int k = 0; k < 3; ++k)
+            for (int p = 0; p < 2; ++p)
+            {
+                if (s.surf[k][p]) { d3d::release(s.surf[k][p]); s.surf[k][p] = nullptr; }
+                if (s.tex[k][p]) { d3d::release(s.tex[k][p]); s.tex[k][p] = nullptr; }
+            }
+        s.pending.clear();
+        s.live_window.clear();
+        s.blend_mask = 0;
+    }
+}
+
+// 全局 GPU 资源释放(整设备重建用; 引用仍有效 —— 资源对象持有设备引用, 旧设备
+// Release 后对象仍存活, 正常 Release 让其与旧设备一同消亡)。
+static void gpart_release_global_gpu_objects()
+{
+    if (g_type_tex)   { d3d::release(g_type_tex);   g_type_tex = nullptr; }
+    if (g_atlas_tex)  { d3d::release(g_atlas_tex);  g_atlas_tex = nullptr; }
+    if (g_rect_tex)   { d3d::release(g_rect_tex);   g_rect_tex = nullptr; }
+    if (g_quad_vb)    { d3d::release(g_quad_vb);    g_quad_vb = nullptr; }
+    if (g_quad_decl)  { d3d::release(g_quad_decl);  g_quad_decl = nullptr; }
+    if (g_id_decl)    { d3d::release(g_id_decl);    g_id_decl = nullptr; }
+    if (g_evo_vs)     { d3d::delete_vertex_shader(g_evo_vs); g_evo_vs = 0; }
+    if (g_evo_ps)     { d3d::delete_pixel_shader(g_evo_ps); g_evo_ps = 0; }
+    if (g_rnd_vs)     { d3d::delete_vertex_shader(g_rnd_vs); g_rnd_vs = 0; }
+    if (g_rnd_ps)     { d3d::delete_pixel_shader(g_rnd_ps); g_rnd_ps = 0; }
+}
+
+// post(Reset/重建成功后)。
+// recreated=false(同设备 Reset): MANAGED 资源/着色器/声明自动存活, 仅逐系统重建
+//   RT 状态纹理(pre 已清窗口, 粒子从零开始 —— 与 GM8 原生行为一致: 丢设备后内容重画)。
+// recreated=true(整设备重建, SEH 兜底罕见路径): 一切设备对象均已随旧设备消亡 ——
+//   释放全部资源后走完整初始化: 全局纹理+形状 tile+shader 重建, 类型表/矩形表按
+//   CPU 侧 g_types 重传, 精灵帧按 sprite_id 重新抓取, 系统重建 RT+id_vb。
+void gpart_reset_post(bool recreated)
+{
+    if (d3d::version() != d3d::V9) return;
+    try
+    {
+        if (!recreated)
+        {
+            for (auto& kv : g_systems)
+            {
+                GSystem& s = kv.second;
+                if (s.tex[0][0] != nullptr) continue;   // 已重建(重复 post) → 幂等跳过
+                system_rt_create(s);
+            }
+            return;
+        }
+
+        // ---- 整设备重建: 全量重建 ----
+        for (auto& kv : g_systems)
+            system_tex_destroy(kv.second);   // 含已为空的 RT(幂等) + eff_tex + id_vb
+        gpart_release_global_gpu_objects();
+        // 图集分配器复位 + 形状 tile 重抓
+        g_atlas_free.clear();
+        g_atlas_x = 0;
+        g_atlas_y = GP_ATLAS_TILE;
+        g_atlas_row_h = 0;
+        g_gm8_shapes_grabbed = false;
+        g_gpu_ready = false;
+        g_gpu_failed = false;
+        if (!gpu_init_internal(g_last_cache_dir.c_str()))
+            return;   // 初始化失败已弹错误框; 后续 update/drawit 的 gpu_init 守卫拦住
+
+        type_table_upload();
+        for (auto& kv : g_types)
+        {
+            GType& t = kv.second;
+            t.atlas_owned.clear();          // 旧区域随分配器复位作废(不进 free 表)
+            t.frame_rect.clear();
+            if (t.sprite_id >= 0)
+                type_grab_sprite_frames(t, t.sprite_id);   // 重新抓帧+上传图集
+            t.upload_rect_table(kv.first);
+        }
+        for (auto& kv : g_systems)
+        {
+            GSystem& s = kv.second;
+            system_tex_create(s);
+            system_build_id_vb(s);
+            s.pending.clear();
+            s.live_window.clear();
+            s.blend_mask = 0;
+        }
+    }
+    catch (const std::exception&)
+    {
+        // 重建路径的任何失败都不让异常穿过设备钩子(会炸穿引擎帧); 资源保持已释放态,
+        // 后续调用的 gpu_init 守卫/空指针检查会把 gpart 静默停用。
+    }
 }
 
 // ============================================================================

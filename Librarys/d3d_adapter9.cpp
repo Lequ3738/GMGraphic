@@ -35,7 +35,7 @@ namespace d3d
         static bool load_d3dx9()
         {
             if (s_d3dx9) return s_assemble && s_compile && s_get_ct && s_load_mem && s_load_surf;
-            s_d3dx9 = LoadLibraryW(L"D3DX9_43.dll");   // GMDirectX9 �� gex �Ѵ��� DLL
+            s_d3dx9 = LoadLibraryW(L"D3DX9_43.dll");   // GMDirectX9 的 gex 已带此 DLL
             if (!s_d3dx9) return false;
             s_assemble  = (D3DX9_ASSEMBLE_SHADER)GetProcAddress(s_d3dx9, "D3DXAssembleShader");
             s_compile   = (D3DX9_COMPILE_SHADER)GetProcAddress(s_d3dx9, "D3DXCompileShader");
@@ -337,6 +337,16 @@ namespace d3d
         // 槽始终有效(存的是变量地址, 值创建后自动可见)。
         void* get_passthrough_vs_ptr() { return &s_passthrough_vs; }
 
+        // 整设备重建后: 释放惰性缓存的声明与透传 VS(旧对象已随旧设备消亡, 置空待
+        // 下次 ensure_decl/set_vertex_shader_passthrough 惰性重建; FFP 注册槽存的是
+        // 变量地址, 值自动更新)。[2026-09-14]
+        void invalidate_cached_device_objects()
+        {
+            if (s_decl_ext)    { s_decl_ext->Release();    s_decl_ext = nullptr; }
+            if (s_decl_default){ s_decl_default->Release(); s_decl_default = nullptr; }
+            if (s_passthrough_vs) { s_passthrough_vs->Release(); s_passthrough_vs = nullptr; }
+        }
+
         // ---- vertex_* vertex-buffer pipeline (D3D9 only) ----
         // vertex_submit needs: custom decl + arbitrary VS (or passthrough VS) + save/restore
         // of the engine's VS / decl / FVF.
@@ -352,16 +362,20 @@ namespace d3d
         HRESULT set_fvf(DWORD fvf)  { return dev()->SetFVF(fvf); }
         HRESULT draw_primitive(DWORD prim, DWORD count, DWORD start)
         { return dev()->DrawPrimitive((D3DPRIMITIVETYPE)prim, start, count); }
-        // Static read-only VB (freeze): D3DUSAGE_WRITEONLY + default pool, uploaded once.
+        // Static read-only VB (freeze): MANAGED 池 —— 静态只读 VB 无需 DEFAULT 池,
+        // 且 MANAGED 自动跨设备 Reset 存活(gpart 四边形/系统 id VB/vertex_freeze 共用;
+        // [2026-09-14] 设备丢失修复配套, WRITEONLY 在 MANAGED 下无意义一并去掉)。
         HRESULT create_vertex_buffer(UINT size, void** vb)
         {
-            return dev()->CreateVertexBuffer(size, D3DUSAGE_WRITEONLY, 0, D3DPOOL_DEFAULT,
+            return dev()->CreateVertexBuffer(size, 0, 0, D3DPOOL_MANAGED,
                 (IDirect3DVertexBuffer9**)vb, nullptr);
         }
         HRESULT upload_vertex_buffer(void* vb, const void* data, UINT size)
         {
             void* p = nullptr;
-            HRESULT hr = ((IDirect3DVertexBuffer9*)vb)->Lock(0, size, &p, D3DLOCK_DISCARD);
+            // MANAGED 池(见 create_vertex_buffer)走系统内存背板, 整段写入用普通 Lock
+            // 即可; D3DLOCK_DISCARD 是 DYNAMIC+DEFAULT 池的语义, 此处不适用。
+            HRESULT hr = ((IDirect3DVertexBuffer9*)vb)->Lock(0, size, &p, 0);
             if (FAILED(hr)) return hr;
             memcpy(p, data, size);
             return ((IDirect3DVertexBuffer9*)vb)->Unlock();

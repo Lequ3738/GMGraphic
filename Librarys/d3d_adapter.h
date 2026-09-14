@@ -51,6 +51,9 @@ namespace d3d
     // ---- 初始化 / 检测 ----
     int  version();                          // 惰性检测并缓存; 未初始化时默认 V8
     void ensure_version(void* device, void* iface);
+    // 释放适配器内部惰性缓存的设备对象(共享声明/透传 VS; 整设备重建后旧对象已失效,
+    // 置空待下次惰性重建)。仅 D3D9 有此类缓存, D3D8 无操作。[2026-09-14]
+    void invalidate_cached_device_objects();
 
     // 原始 COM 指针访问(仅适配器实现内部使用)。
     void* device();
@@ -59,6 +62,7 @@ namespace d3d
     // ---- 内部实现: 中性签名, 定义在 d3d_adapter8.cpp / d3d_adapter9.cpp ----
     namespace impl8
     {
+        void   invalidate_cached_device_objects();   // D3D8 无惰性设备对象缓存, 空操作
         HRESULT set_render_state(DWORD, DWORD);
         HRESULT get_render_state(DWORD, DWORD*);
         HRESULT set_tex_stage_state(DWORD, DWORD, DWORD);
@@ -141,6 +145,7 @@ namespace d3d
     }
     namespace impl9
     {
+        void   invalidate_cached_device_objects();   // 释放共享声明/透传 VS(设备重建后)
         HRESULT set_render_state(DWORD, DWORD);
         HRESULT get_render_state(DWORD, DWORD*);
         HRESULT set_tex_stage_state(DWORD, DWORD, DWORD);
@@ -223,6 +228,8 @@ namespace d3d
     }
 
     // ---- 公共 API(运行时按后端分发, 每处一行) ----
+    inline void invalidate_cached_device_objects()
+    { if (version() == V9) impl9::invalidate_cached_device_objects(); else impl8::invalidate_cached_device_objects(); }
     inline HRESULT set_render_state(DWORD s, DWORD v)
     { return version() == V9 ? impl9::set_render_state(s, v) : impl8::set_render_state(s, v); }
     inline HRESULT get_render_state(DWORD s, DWORD* v)

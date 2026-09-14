@@ -17,6 +17,9 @@ texture_atlas::texture_atlas(uint size, uint id)
 {
 	try
 	{
+		// [2026-09-14] 4096/8192 按设备能力放开(现代 GPU 普遍 ≥8192);
+		// 64~2048 恒可用(老硬件安全下限, 与历史行为一致)。
+		bool size_ok;
 		switch (size)
 		{
 			case 64:
@@ -25,17 +28,31 @@ texture_atlas::texture_atlas(uint size, uint id)
 			case 512:
 			case 1024:
 			case 2048:
-			{
-				texture_atlas::size = size;
-				texture_atlas::id = id;
-				data = std::vector<uchar>(size * size * 4, 0);
-				bin = rbp::MaxRectsBinPack(size, size, true);
-			}
-			break;
-
+				size_ok = true;
+				break;
 			default:
-				throw std::runtime_error("Invalid texture atlas size. "
-					"Supported sizes are 64, 128, 256, 512, 1024, and 2048.");
+				if (size == 4096 || size == 8192)
+				{
+					d3d::Caps caps;
+					size_ok = d3d::get_caps(caps)
+						&& size <= caps.max_tex_w && size <= caps.max_tex_h;
+				}
+				else
+					size_ok = false;
+				break;
+		}
+		if (size_ok)
+		{
+			texture_atlas::size = size;
+			texture_atlas::id = id;
+			data = std::vector<uchar>(size * size * 4, 0);
+			bin = rbp::MaxRectsBinPack(size, size, true);
+		}
+		else
+		{
+			throw std::runtime_error("Invalid texture atlas size. "
+				"Supported sizes are 64, 128, 256, 512, 1024, and 2048 "
+				"(4096/8192 if the GPU supports them).");
 		}
 
 #ifdef _DEBUG
@@ -597,6 +614,26 @@ std::vector<texture_atlas::images*> texture_atlas::load(path& file_path)
 		return result;
 	}
 	transpond_catch("texture_atlas::load(path&)")
+}
+
+// ============================================================================
+// 整设备重建后的恢复(GMDirectX9 reset 回调 recreated 路径, 2026-09-14)
+// 图集纹理为 MANAGED 池: 普通设备 Reset 自动存活; 整设备重建时随旧设备消亡。
+// 内存数据仍在(data 未清)的图集重新创建+上传; 已删内存数据的只读图集无法恢复
+// (纹理置空, 绘制时报 "Cannot find the texture atlas" —— SEH 兜底罕见路径, 游戏
+// 应重新 texture_atlas_load)。
+// ============================================================================
+void texture_atlas_on_device_recreated()
+{
+    for (auto& kv : game_texture_atlas)
+    {
+        texture_atlas& atlas = *kv.second;
+        if (atlas.texture == nullptr) continue;
+        d3d::release(atlas.texture);
+        atlas.texture = nullptr;
+        if (!atlas.data.empty())
+            atlas.burn(false);   // 重建纹理并重传(不删内存数据)
+    }
 }
 
 // ==================== Export Functions ====================

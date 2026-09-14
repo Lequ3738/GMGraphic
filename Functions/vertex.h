@@ -61,6 +61,8 @@ namespace vertex
 }
 
 // buffer plugin bridge: reuse Librarys/buffer.h's ImportBufferModule (call it from GML first).
+// 整设备重建后恢复: 重建各格式声明, 冻结 VB 退化为空缓冲(见 vertex.cpp)。
+void vertex_on_device_recreated();
 // ---- format layer (vertex_format_*) ----
 exp_real vertex_format_begin();
 exp_real vertex_format_add_position(double fmt);
