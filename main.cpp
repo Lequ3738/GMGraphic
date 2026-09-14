@@ -57,11 +57,13 @@ atlas::texture_info current_texture;
 
 // ============================================================================
 // 批段快照(快照式合批, 2026-09-14)
-// 图集批的观感 = 烘焙顶点 + 积累时刻的设备继承态。start_draw 把继承态定格进
-// g_batch_snap, end_draw 按快照提交并还原 flush 时刻现场 —— 批与积累之后的任何
-// 状态变更(插值/混合/变换/视口/着色器)彻底解耦, flush 时机只剩"顺序"一个语义
-// (GMDirectX9 六槽设备钩子在引擎绘制提交动作前调用 atlas_flush_noexcept)。
-// premul 是唯一不经过设备状态的继承项(A8 文字批的 shader 选择), 单独定格。
+// 图集批的观感 = 烘焙顶点 + 批打开时刻的设备继承态。start_draw 把继承态定格进
+// g_batch_snap, end_draw 按快照提交并还原 flush 时刻现场。
+// flush 时机(2026-09-14 二批起): GMDirectX9 全闭合设备钩 —— 提交/内容/目标/状态
+// 全部先冲刷, 状态写入会把批切段, 因此"批打开→flush 之间"设备状态不再可能变化,
+// 本侧快照降为纵深防御(防 state block 等钩外路径)。仅剩的钩外状态 = SDF 的 CPU
+// 全局(size/sharpness/thickness/premul), 由 draw_text.cpp 的 sdf_segment_batch 在
+// 各 setter 内自律切段。
 // ============================================================================
 static d3d::DeviceStateSnap g_batch_snap;
 static bool g_sdf_snap_use_shader = false;

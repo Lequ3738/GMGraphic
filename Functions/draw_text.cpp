@@ -792,8 +792,22 @@ exp_real sdf_draw_get_font()
 	return (gm_real)current_sdf_glyphs->id; 
 }
 
+// ---- [2026-09-14] SDF 状态 setter 切段 ----
+// 批的观感定格取自 start_draw 时刻, 而 font_size/font_sharpness/font_thickness 是
+// end_draw 在 flush 时刻才读的 CPU 全局(换算 u_buffer/u_gamma 常量), use_shader/
+// shader 则定格进 g_sdf_snap —— 不切段的话, 同一 A8 纹理的连续文字批会把后设的
+// 值套到整批(粗细漂移=文字忽粗忽细; premul 漂移=alpha 观感不一)。
+// 设备钩子看不见 CPU 变量, 这类 setter 必须自律: 先关掉打开中的批再改值。
+// (布局期参数如 line_spacing/text_gap/对齐 在逐字顶点烘焙时已消费, 无需切段;
+//  sdf_draw_set_font 换字体纹理, inner_draw_text 的纹理比对自动切段。)
+static void sdf_segment_batch()
+{
+	atlas::end_draw();
+}
+
 exp_real sdf_draw_set_font_size(gm_real size)
 {
+	sdf_segment_batch();
 	sdf::game_font_size = (float)size;
 	return gtrue;
 }
@@ -815,6 +829,7 @@ exp_real sdf_draw_get_align_by_line() { return sdf::per_line_halign ? gtrue : gf
 
 exp_real sdf_draw_set_use_shader(gm_real use)
 {
+	sdf_segment_batch();
 	sdf::use_shader = (use >= 0.5);
 	return gtrue;
 }
@@ -822,6 +837,7 @@ exp_real sdf_draw_get_use_shader() { return sdf::use_shader ? gtrue : gfalse; }
 
 exp_real sdf_draw_set_premul(gm_real premul)
 {
+	sdf_segment_batch();
 	if (premul >= 0.5)
 		sdf::shader = sdf_shader_premul;
 	else
@@ -835,6 +851,7 @@ exp_real sdf_draw_get_premul()
 
 exp_real sdf_draw_set_font_sharpness(gm_real sharpness)
 {
+	sdf_segment_batch();
 	sdf::font_sharpness = (float)sharpness;
 	return gtrue;
 }
@@ -842,6 +859,7 @@ exp_real sdf_draw_get_font_sharpness() { return sdf::font_sharpness; }
 
 exp_real sdf_draw_set_font_thickness(gm_real thickness)
 {
+	sdf_segment_batch();
 	sdf::font_thickness = (float)thickness;
 	return gtrue;
 }
@@ -906,6 +924,9 @@ exp_real sdf_apply_conf(gm_real conf_id)
 {
 	try
 	{
+		// 批段隔离: size/sharpness/thickness 是 flush 时刻读取项(见 sdf_segment_batch),
+		// 字体纹理即使不变(同字体改字号)也必须先关批。
+		sdf_segment_batch();
 		sdf::font_info& conf = game_font_info.at((uint)conf_id);
 
 		current_sdf_glyphs = conf.font;
