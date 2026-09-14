@@ -436,11 +436,30 @@ gm::sprite gm::get_background_data(uint id)
 	{
 		void* texture = (void*)gmapi->Backgrounds[id].GetTexture();   // 不透明: 只用于读回
 		gm::image_data data = get_image_data(texture);
-		
-		uint width = std::min((uint)gmapi->Backgrounds[id].GetWidth(), 
+
+		uint width = std::min((uint)gmapi->Backgrounds[id].GetWidth(),
 			std::get<1>(data));
-		uint height = std::min((uint)gmapi->Backgrounds[id].GetHeight(), 
+		uint height = std::min((uint)gmapi->Backgrounds[id].GetHeight(),
 			std::get<2>(data));
+
+		// [2026-09-14] pow2 紧凑化(与 get_sprite_data 同款): GM 纹理可能按 2 的幂填充
+		// (内容位于左上角), 读回数据按物理尺寸存储, 而图集打包按逻辑宽高索引数据 ——
+		// 不紧凑化时行距错位, pow2-only GPU 上背景进图集会错位/花屏。
+		uint tex_width = std::get<1>(data);
+		uint tex_height = std::get<2>(data);
+		std::vector<uchar>& pixels = std::get<0>(data);
+		if (width != tex_width || height != tex_height)
+		{
+			std::vector<uchar> compact((size_t)width * height * 4);
+			for (uint y = 0; y < height; ++y)
+			{
+				std::memcpy(compact.data() + (size_t)y * width * 4,
+					pixels.data() + (size_t)y * tex_width * 4, (size_t)width * 4);
+			}
+			pixels = std::move(compact);
+			std::get<1>(data) = width;
+			std::get<2>(data) = height;
+		}
 
 		// 进行空白裁剪计算
 		std::vector<gm::image_rect> cropped_rects(1);
