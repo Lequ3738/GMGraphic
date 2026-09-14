@@ -117,19 +117,23 @@ exp_real init(gm_real arg_list)
         }
     }
 
-    // 注册设备 Reset 前后回调到 GMDirectX9(2026-09-14): 设备丢失(睡眠/锁屏/TDR)
-    // 时释放 DEFAULT 池资源解除 Reset 死锁 + Reset/重建后恢复插件资源。未装
-    // GMDirectX9 时静默跳过(D3D8 后端本无此问题)。
-    {
-        HMODULE hdx9 = GetModuleHandleA("GMDirectX9.dll");
-        if (hdx9)
-        {
-            typedef int(__cdecl* GMDX9_RESETREG)(void(*)(void), void(*)(bool));
-            GMDX9_RESETREG regr = (GMDX9_RESETREG)GetProcAddress(hdx9, "gmdx9_register_reset_callback");
-            if (regr)
-                regr(&gmgraphic_reset_pre, &gmgraphic_reset_post);
-        }
-    }
+	// 注册设备 Reset 前后回调到 GMDirectX9(2026-09-14): 设备丢失(睡眠/锁屏/TDR)
+	// 时释放 DEFAULT 池资源解除 Reset 死锁 + Reset/重建后恢复插件资源。未装
+	// GMDirectX9 时静默跳过(D3D8 后端本无此问题)。
+	{
+		HMODULE hdx9 = GetModuleHandleA("GMDirectX9.dll");
+		if (hdx9)
+		{
+			typedef int(__cdecl* GMDX9_RESETREG)(void(*)(void), void(*)(bool));
+			GMDX9_RESETREG regr = (GMDX9_RESETREG)GetProcAddress(hdx9, "gmdx9_register_reset_callback");
+			if (regr)
+				regr(&gmgraphic_reset_pre, &gmgraphic_reset_post);
+		}
+	}
+
+	// [2026-09-14 修复①] 解析 GMDirectX9 状态影子表读口(批冲刷最小自愈;
+	// 未装/旧版无此导出时批自愈自动落回全量快照路径)。
+	batch_state_init();
 
     gm::argument_list = (int)arg_list;
 
@@ -1064,11 +1068,10 @@ void vertex::begin(D3DPRIMITIVETYPE primitive, bool textured)
     vbuff_prim = primitive;
     vbuff_use_struct = false;
 
-    // Zero the buffer.
-    if (vbuff_use_ext)
-        std::memset(vbuff_ext_int, 0, vb_ext_bytes);
-    else
-        std::memset(vbuff_default_int, 0, vb_default_bytes);
+    // [2026-09-14 修复②] 不再整块清零(图集路径 192KB / ext 路径 768KB, 高频批重开
+    // 下为纯浪费): 绘制只读 vbuff_c 以内的顶点, 字段由写入方全量负责
+    // (push_vertex_2d / vertex::add / draw_vertex_ext); 唯一历史例外是 end() 的
+    // count+1 尾顶点, 改为提交时单槽清零。首帧缓冲为零初始化(BSS), 行为不变。
 
     if (!textured)
     {
@@ -1180,7 +1183,18 @@ void vertex::end()
     {
         uint count = vbuff_c;
         if (!vbuff_autoinc && !vbuff_use_struct)
+        {
+            // [2026-09-14 修复②] count+1 语义: 尾顶点是"进行中"的槽, 批打开已不整块
+            // 清零, 改为提交前单槽清零, 保持其历史全零行为(未完成顶点各字段读 0)。
+            if (vbuff_c < vb_count)
+            {
+                if (vbuff_use_ext)
+                    std::memset(&vbuff_ext_int[vbuff_c], 0, sizeof(vert_ext));
+                else
+                    std::memset(&vbuff_default_int[vbuff_c], 0, sizeof(vert_default));
+            }
             count += 1;
+        }
 
         if (count < 1)
             return;
@@ -1246,12 +1260,17 @@ exp_real draw_primitive_begin_ext(double primitive, double textured)
 }
 
 // 2D equivalent.
-// The buffer is zeroed by begin_ext; no need to set the 3D stuff here.
+// [2026-09-14 修复②] begin_ext 不再整块清零缓冲, 2D 版补写 z 与法线(历史 memset
+// 下恒为 0 的字段显式置 0, 保持裁剪与 FFP 光照/镜面行为不变)。
 exp_real draw_vertex_ext(double x, double y, double col, double alpha,
     double speccol, double specalpha)
 {
     vbuff_ext_int[vbuff_c].x = (float)x;
     vbuff_ext_int[vbuff_c].y = (float)y;
+    vbuff_ext_int[vbuff_c].z = 0;
+    vbuff_ext_int[vbuff_c].nx = 0;
+    vbuff_ext_int[vbuff_c].ny = 0;
+    vbuff_ext_int[vbuff_c].nz = 0;
 
     vbuff_ext_int[vbuff_c].c = col_d3d((int)col, alpha);
     vbuff_ext_int[vbuff_c].s = col_d3d((int)speccol, specalpha);

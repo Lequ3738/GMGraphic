@@ -153,18 +153,26 @@ namespace vertex
 	void next();
 	void end();
 
+	// [2026-09-14 修复②] 批打开不再整块清零顶点缓冲(见 vertex::begin), 每顶点字段
+	// 由写入方全量负责: z 恒 0(FFP/声明按 3D 位置读, 残留 z 会被近/远平面裁掉);
+	// ext 槽的法线/高光补 0(保持 FFP 光照/镜面下的历史行为)。未写入的 uv stage
+	// 1-7 依契约未定义(自定义 shader 采样未写通道自负, GMS2 同款)。
 	inline void push_vertex_2d(float x, float y, float u, float v, dword c)
     {
         vbuff_use_struct = true;
         if (vbuff_use_ext)
         {
             vert_ext* vert = &vbuff_ext_int[vbuff_c++];
-            vert->x = x; vert->y = y; vert->c = c; vert->uv[0] = u; vert->uv[1] = v;
+            vert->x = x; vert->y = y; vert->z = 0;
+            vert->nx = 0; vert->ny = 0; vert->nz = 0;
+            vert->c = c; vert->s = 0;
+            vert->uv[0] = u; vert->uv[1] = v;
         }
         else
         {
             vert_default* vert = &vbuff_default_int[vbuff_c++];
-            vert->x = x; vert->y = y; vert->c = c; vert->uv[0] = u; vert->uv[1] = v;
+            vert->x = x; vert->y = y; vert->z = 0; vert->c = c;
+            vert->uv[0] = u; vert->uv[1] = v;
         }
     }
 }

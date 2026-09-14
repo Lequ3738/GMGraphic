@@ -5,6 +5,7 @@
 #include "draw_text.h"
 #include "string_make.h"
 #include "shader.h"
+#include <cstdint>
 
 gm::CGMAPI* gmapi;
 std::string str_ret = "BABEBEEF"; // Used to return strings by macro.
@@ -76,6 +77,130 @@ static d3d::DeviceStateSnap g_batch_snap;
 static bool g_sdf_snap_use_shader = false;
 static int  g_sdf_snap_shader = -1;
 
+// ============================================================================
+// [2026-09-14 桥梁期修复①] 批冲刷最小自愈(自碰清单)
+// end_draw 实际触碰的设备状态只有: 纹理 stage0-7、TSS0 的 ADDRESSU/V/COLOROP/
+// COLORARG1/COLORARG2、PS/VS/顶点声明/FVF(vertex::end 与 SDF shader_set 所写)。
+// 在 43 槽字面闭合不变式下, flush 时刻设备状态 == 批打开时刻状态 == 引擎现场,
+// 触碰前从 GMDirectX9 状态影子表(修复③)读出的值就是引擎现场值 —— 提交后按清单
+// 精确归还(与影子现状不同者才落设备调用, 典型整段仅 stage0 纹理一写)。三轮 38 项
+// 全量快照(捕获 38 GET + 两次回放 76 SET ≈ 114 次设备调用/flush)退役为调试对照:
+// 环境变量 GMGRAPHIC_BATCH_FULL_SNAPSHOT=1 走旧路径(dssnap 捕获+两次回放), 怀疑
+// 状态污染时一键切回比对; 影子读口不可用(未装 GMDirectX9/旧版)同样自动落回。
+// ============================================================================
+
+// GMDirectX9 影子表读口 v1(ABI 镜像 GMDirectX9 source/state_shadow.h, 只增不改)。
+struct Gmdx9ShadowApiV1
+{
+    unsigned long size;
+    unsigned long version;
+    bool  (__cdecl* live)();
+    bool  (__cdecl* get_rs)(unsigned long state, unsigned long* out);
+    bool  (__cdecl* get_tss)(unsigned long stage, unsigned long type, unsigned long* out);
+    bool  (__cdecl* get_sampler)(unsigned long sampler, unsigned long type, unsigned long* out);
+    void* (__cdecl* get_texture)(unsigned long sampler);
+    bool  (__cdecl* get_xf)(unsigned long state, void* out4x4);
+    bool  (__cdecl* get_vp)(void* out);
+    bool  (__cdecl* get_fvf)(unsigned long* out);
+    void* (__cdecl* get_decl)();
+    void* (__cdecl* get_vs)();
+    void* (__cdecl* get_ps)();
+};
+static_assert(sizeof(Gmdx9ShadowApiV1) == 52, "Gmdx9ShadowApiV1 ABI 镜像失配");
+
+static const Gmdx9ShadowApiV1* g_shadow_api = nullptr;
+
+// init() 调用: 解析 GMDirectX9 影子表读口。未装/旧版无此导出 → 保持 nullptr,
+// 批自愈自动落回全量快照路径(与上一版行为一致)。
+void batch_state_init()
+{
+	if (HMODULE hdx9 = GetModuleHandleA("GMDirectX9.dll"))
+	{
+		typedef const Gmdx9ShadowApiV1* (__cdecl* GetApiFn)();
+		if (GetApiFn get = (GetApiFn)GetProcAddress(hdx9, "gmdx9_shadow_api"))
+		{
+			const Gmdx9ShadowApiV1* api = get();
+			if (api && api->size >= sizeof(Gmdx9ShadowApiV1) && api->version >= 1)
+				g_shadow_api = api;
+		}
+	}
+}
+
+namespace
+{
+	bool full_snapshot_debug()
+	{
+		static int v = -1;
+		if (v < 0)
+		{
+			char b[2] = { 0 };
+			v = (GetEnvironmentVariableA("GMGRAPHIC_BATCH_FULL_SNAPSHOT", b, 2) > 0
+				&& b[0] != '0') ? 1 : 0;
+		}
+		return v == 1;
+	}
+
+	bool minimal_heal_active()
+	{
+		return g_shadow_api != nullptr && g_shadow_api->live() && !full_snapshot_debug();
+	}
+
+	// 触碰清单快照(值来自影子 == 引擎现场; TSS 枚举两代同值:
+	// D3DTSS_ADDRESSU=13/ADDRESSV=14/COLOROP=1/COLORARG1=2/COLORARG2=3)。
+	struct TouchState
+	{
+		void* tex[8];
+		dword tss[5];
+		void* ps;
+		void* vs;
+		void* decl;
+		dword fvf;
+		bool  fvf_ok;
+	};
+	const dword touch_tss_ids[5] = { 13, 14, 1, 2, 3 };
+
+	void save_touch_state(TouchState& t)
+	{
+		for (int i = 0; i < 8; ++i)
+			t.tex[i] = g_shadow_api->get_texture((unsigned long)i);
+		for (int k = 0; k < 5; ++k)
+		{
+			dword v = 0;
+			t.tss[k] = g_shadow_api->get_tss(0, touch_tss_ids[k], &v) ? v : 0;
+		}
+		t.ps = g_shadow_api->get_ps();
+		t.vs = g_shadow_api->get_vs();
+		t.decl = g_shadow_api->get_decl();
+		unsigned long fvf = 0;
+		t.fvf_ok = g_shadow_api->get_fvf(&fvf);
+		t.fvf = (dword)fvf;
+	}
+
+	void restore_touch_state(const TouchState& t)
+	{
+		// 差异才落设备(我们的触碰已过 43 钩, 影子即设备现状); Set 全走适配器包装
+		// —— 与 dssnap_apply 同一路径, 处于 g_flush_active 重入保护之下不递归。
+		for (int i = 0; i < 8; ++i)
+			if (g_shadow_api->get_texture((unsigned long)i) != t.tex[i])
+				d3d::set_texture((dword)i, t.tex[i]);
+		for (int k = 0; k < 5; ++k)
+		{
+			dword v = 0;
+			if (g_shadow_api->get_tss(0, touch_tss_ids[k], &v) && v != t.tss[k])
+				d3d::set_tex_stage_state(0, touch_tss_ids[k], t.tss[k]);
+		}
+		if (g_shadow_api->get_ps() != t.ps)
+			d3d::set_pixel_shader((dword)(uintptr_t)t.ps);
+		if (g_shadow_api->get_vs() != t.vs)
+			d3d::set_vertex_shader_handle((dword)(uintptr_t)t.vs);
+		if (g_shadow_api->get_decl() != t.decl)
+			d3d::set_vertex_declaration(t.decl);
+		unsigned long fvf = 0;
+		if (t.fvf_ok && g_shadow_api->get_fvf(&fvf) && (dword)fvf != t.fvf)
+			d3d::set_fvf(t.fvf);
+	}
+}
+
 // 栈上快照的 COM 引用释放守卫(dssnap_free 幂等, 显式释放后再析构是空操作)。
 struct SnapReleaser
 {
@@ -108,7 +233,10 @@ void atlas::start_draw(void* texture, D3DFORMAT format)
 		// 积累时刻观感定格。仅 V9: V8 无自动 flush 钩子, 历史行为不快照。
 		if (d3d::version() == d3d::V9)
 		{
-			d3d::dssnap_capture(g_batch_snap);
+			// [修复①] 最小自愈路径不再捕获全量快照(状态来源=影子表, 见 end_draw);
+			// 全量捕获仅在全快照调试模式/影子读口不可用时保留。
+			if (!minimal_heal_active())
+				d3d::dssnap_capture(g_batch_snap);
 			g_sdf_snap_use_shader = sdf::use_shader;
 			g_sdf_snap_shader = sdf::shader;
 		}
@@ -125,13 +253,19 @@ void atlas::end_draw()
 
 		int prev_shader = -1;
 		const bool atomic = (d3d::version() == d3d::V9);
+		// [修复①] 最小自愈 = V9 + 影子读口可用 + 未开全量快照调试。
+		const bool minimal = atomic && minimal_heal_active();
 
 		// 状态原子化: 自动 flush 发生在引擎绘制序列中途(引擎已设好自己的纹理/采样/
 		// 变换/着色器), 提交完批必须原样还回。旧实现除 A8 的 TSS 分支外一概不还原,
 		// 手工 flush 靠"引擎下个绘制自带状态设置"侥幸成立, 自动化后必须显式还原。
+		TouchState pre = {};
+		if (minimal)
+			save_touch_state(pre);   // 触碰前自影子读出(= 引擎现场, 字面闭合不变式)
+
 		d3d::DeviceStateSnap now = {};
 		SnapReleaser now_guard{ &now };   // 异常路径也释放捕获期的 COM 引用(dssnap_free 幂等)
-		if (atomic)
+		if (atomic && !minimal)
 		{
 			d3d::dssnap_capture(now);
 			d3d::dssnap_apply(g_batch_snap);
@@ -192,9 +326,14 @@ void atlas::end_draw()
 			}
 		}
 
-		// 还原 flush 时刻现场(纹理/采样/TSS/PS/VS/RS/变换/视口整组; A8 分支上面的
-		// TSS 恢复被此处覆盖, 属冗余而非冲突; COM 引用由 now_guard 析构释放)。
-		if (atomic)
+		// 还原 flush 时刻现场。
+		// [修复①] 最小自愈: 按触碰清单归还, 差异者才落设备调用(典型整段仅
+		// stage0 纹理一写; TSS/着色器/FVF 多数与影子同值直接跳过)。
+		// 全快照调试路径: 全量回放 now(A8 分支上面的 TSS 恢复被此处覆盖, 属冗余
+		// 而非冲突; COM 引用由 now_guard 析构释放)。
+		if (minimal)
+			restore_touch_state(pre);
+		else if (atomic)
 			d3d::dssnap_apply(now);
 		current_texture = { nullptr, D3DFMT_A8R8G8B8 };
 	}
