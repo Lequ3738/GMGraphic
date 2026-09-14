@@ -93,6 +93,10 @@ namespace atlas
 	};
 }
 
+// GMDirectX9 设备钩子的自动 flush 入口(注册见 Functions/shader.cpp init());
+// 吞一切异常, 语义与手工 force_draw_to_screen 相同。
+void atlas_flush_noexcept(void);
+
 extern atlas::texture_info current_texture;
 
 namespace gm

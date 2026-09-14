@@ -29,6 +29,25 @@ namespace d3d
     // BOOL 按单个布尔寄存器计(bool 标量=1, bool4=4)。写入时 FLOAT/INT 恒用 1(BOOL 用 count)。
     struct UniformLoc { int reg = -1; int kind = CK_NONE; int count = 1; };   // kind 取 ConstKind
 
+    // 完整视口(旧 get/set_viewport 只暴露 w/h, 批段快照需要 X/Y/MinZ/MaxZ)。
+    struct ViewportEx { DWORD x = 0, y = 0, width = 0, height = 0; float min_z = 0, max_z = 0; };
+
+    // ---- 批段状态快照(快照式合批; 仅 D3D9 实现, D3D8 桩) ----
+    // 图集批的观感 = 烘焙顶点 + 积累时刻的设备继承态。capture 把继承态读进来(内含 Get*
+    // 带回的加引用句柄), apply 按它写回设备, free 释放引用。生命周期: capture → (期间
+    // 任意状态扰动/绘制) → apply → free。字段清单 = 绘制状态函数收集表中"批继承"项。
+    struct DeviceStateSnap
+    {
+        DWORD samp[7];    // stage0: MINFILTER,MAGFILTER,MIPFILTER,MAXANISOTROPY,ADDRESSU,ADDRESSV,BORDERCOLOR
+        DWORD tss[6];     // stage0: COLOROP,COLORARG1,COLORARG2,ALPHAOP,ALPHAARG1,ALPHAARG2
+        DWORD ps, vs, decl, fvf;   // ps/vs/decl 为 Get* 带回的加引用句柄
+        void* tex0;                // stage0 纹理(加引用)
+        DWORD rs[16];     // blend3, cull, z3, alphatest3, fillmode, fog4, colorwrite(序见实现)
+        float mtx[48];    // WORLD/VIEW/PROJECTION 各 16
+        ViewportEx vp;
+        bool valid;
+    };
+
     // ---- 初始化 / 检测 ----
     int  version();                          // 惰性检测并缓存; 未初始化时默认 V8
     void ensure_version(void* device, void* iface);
@@ -47,6 +66,12 @@ namespace d3d
         HRESULT set_sampler_state(DWORD, DWORD, DWORD);   // D3D8 无 sampler state, 桩返回 E_FAIL
         HRESULT get_sampler_state(DWORD, DWORD, DWORD*);
         HRESULT get_transform(DWORD, float*);
+        HRESULT set_transform(DWORD, const float*);
+        HRESULT get_viewport_ex(ViewportEx*);   // D3D8 桩 E_FAIL
+        HRESULT set_viewport_ex(const ViewportEx*);
+        bool   dssnap_capture(DeviceStateSnap&);   // D3D8 桩: 置 invalid 返回 false
+        void   dssnap_apply(const DeviceStateSnap&);
+        void   dssnap_free(DeviceStateSnap&);
         HRESULT draw_primitive_up(DWORD, DWORD, const void*, DWORD);
         UINT    get_available_tex_mem();
 
@@ -123,6 +148,12 @@ namespace d3d
         HRESULT set_sampler_state(DWORD, DWORD, DWORD);   // D3D9 SetSamplerState(采样器过滤正规控制)
         HRESULT get_sampler_state(DWORD, DWORD, DWORD*);
         HRESULT get_transform(DWORD, float*);
+        HRESULT set_transform(DWORD, const float*);
+        HRESULT get_viewport_ex(ViewportEx*);
+        HRESULT set_viewport_ex(const ViewportEx*);
+        bool   dssnap_capture(DeviceStateSnap&);
+        void   dssnap_apply(const DeviceStateSnap&);
+        void   dssnap_free(DeviceStateSnap&);
         HRESULT draw_primitive_up(DWORD, DWORD, const void*, DWORD);
         UINT    get_available_tex_mem();
 
@@ -206,6 +237,19 @@ namespace d3d
     { return version() == V9 ? impl9::get_sampler_state(stage, type, v) : impl8::get_sampler_state(stage, type, v); }
     inline HRESULT get_transform(DWORD state, float* m16)
     { return version() == V9 ? impl9::get_transform(state, m16) : impl8::get_transform(state, m16); }
+    inline HRESULT set_transform(DWORD state, const float* m16)
+    { return version() == V9 ? impl9::set_transform(state, m16) : impl8::set_transform(state, m16); }
+    inline HRESULT get_viewport_ex(ViewportEx* vp)
+    { return version() == V9 ? impl9::get_viewport_ex(vp) : impl8::get_viewport_ex(vp); }
+    inline HRESULT set_viewport_ex(const ViewportEx* vp)
+    { return version() == V9 ? impl9::set_viewport_ex(vp) : impl8::set_viewport_ex(vp); }
+    // 批段状态快照三件套(仅 D3D9 实现; V8 桩 capture 返回 false 且置 invalid)。
+    inline bool dssnap_capture(DeviceStateSnap& s)
+    { return version() == V9 ? impl9::dssnap_capture(s) : impl8::dssnap_capture(s); }
+    inline void dssnap_apply(const DeviceStateSnap& s)
+    { if (version() == V9) impl9::dssnap_apply(s); else impl8::dssnap_apply(s); }
+    inline void dssnap_free(DeviceStateSnap& s)
+    { if (version() == V9) impl9::dssnap_free(s); else impl8::dssnap_free(s); }
     inline HRESULT draw_primitive_up(DWORD prim, DWORD count, const void* verts, DWORD stride)
     { return version() == V9 ? impl9::draw_primitive_up(prim, count, verts, stride) : impl8::draw_primitive_up(prim, count, verts, stride); }
     inline UINT get_available_tex_mem()

@@ -95,6 +95,21 @@ exp_real init(gm_real arg_list)
         }
     }
 
+    // 注册自动 flush 到 GMDirectX9(2026-09-14): 引擎/其他 DLL 的任何绘制提交动作
+    // (DrawPrimitive(UP)/Clear/渲染目标切换/EndScene)发生前自动刷图集批 —— 与原生
+    // 绘制穿插的顺序由机制保证, 游戏侧无需再手写 force_draw_to_screen(已有的调用
+    // 退化为空操作)。未装 GMDirectX9 时静默跳过, 维持手动语义。
+    {
+        HMODULE hdx9 = GetModuleHandleA("GMDirectX9.dll");
+        if (hdx9)
+        {
+            typedef int(__cdecl* GMDX9_FLUSHREG)(void(*)(void));
+            GMDX9_FLUSHREG regf = (GMDX9_FLUSHREG)GetProcAddress(hdx9, "gmdx9_register_flush_callback");
+            if (regf)
+                regf(&atlas_flush_noexcept);
+        }
+    }
+
     gm::argument_list = (int)arg_list;
 
     // SDF 着色器按后端创建: DX8=asm ps_1.4, DX9=HLSL smoothstep(ps_sdf_hlsl)。

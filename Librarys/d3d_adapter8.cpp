@@ -26,6 +26,17 @@ namespace d3d
         HRESULT get_sampler_state(DWORD stage, DWORD type, DWORD* v) { return E_FAIL; }
         HRESULT get_transform(DWORD state, float* m16)
         { return dev()->GetTransform((D3DTRANSFORMSTATETYPE)state, (D3DMATRIX*)m16); }
+        HRESULT set_transform(DWORD state, const float* m16)
+        {
+            D3DMATRIX m; memcpy(&m, m16, sizeof(m));
+            return dev()->SetTransform((D3DTRANSFORMSTATETYPE)state, &m);
+        }
+        // 完整视口/批段快照: D3D8 无自动 flush 管线(GMDirectX9 不在), 桩即可。
+        HRESULT get_viewport_ex(ViewportEx*) { return E_FAIL; }
+        HRESULT set_viewport_ex(const ViewportEx*) { return E_FAIL; }
+        bool   dssnap_capture(DeviceStateSnap& s) { s.valid = false; return false; }
+        void   dssnap_apply(const DeviceStateSnap&) {}
+        void   dssnap_free(DeviceStateSnap&) {}
         HRESULT draw_primitive_up(DWORD prim, DWORD count, const void* verts, DWORD stride)
         { return dev()->DrawPrimitiveUP((D3DPRIMITIVETYPE)prim, count, verts, stride); }
         UINT get_available_tex_mem() { return dev()->GetAvailableTextureMem(); }

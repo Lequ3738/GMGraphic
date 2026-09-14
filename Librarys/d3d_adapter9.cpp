@@ -1,6 +1,7 @@
 // D3D9 后端实现(认识 d3d9.h/d3dx9.h; GMDirectX9 插件下设备指针 0x58d388 是 IDirect3DDevice9 对象)。
 // 与 D3D8 差异: 声明 D3DVSD→D3DVERTEXELEMENT9, 句柄 DWORD→对象指针, 释放走对象 Release(); D3DX9 不静态链 d3dx9.lib(D3DX8/D3DX9 同名 stdcall 撞名)→LoadLibrary+GetProcAddress, D3D8 仍静态链。
 #include <cstring>
+#include <cstdint>
 #include <cstdio>
 #include "d3d_adapter.h"
 #include "../Direct3D_9/d3dx9.h"
@@ -60,6 +61,98 @@ namespace d3d
         { return dev()->GetSamplerState(stage, (D3DSAMPLERSTATETYPE)type, v); }
         HRESULT get_transform(DWORD state, float* m16)
         { return dev()->GetTransform((D3DTRANSFORMSTATETYPE)state, (D3DMATRIX*)m16); }
+        HRESULT set_transform(DWORD state, const float* m16)
+        {
+            D3DMATRIX m; memcpy(&m, m16, sizeof(m));
+            return dev()->SetTransform((D3DTRANSFORMSTATETYPE)state, &m);
+        }
+        HRESULT get_viewport_ex(ViewportEx* out)
+        {
+            if (!out) return D3DERR_INVALIDCALL;
+            D3DVIEWPORT9 vp;
+            HRESULT hr = dev()->GetViewport(&vp);
+            if (SUCCEEDED(hr))
+            {
+                out->x = vp.X; out->y = vp.Y; out->width = vp.Width; out->height = vp.Height;
+                out->min_z = vp.MinZ; out->max_z = vp.MaxZ;
+            }
+            return hr;
+        }
+        HRESULT set_viewport_ex(const ViewportEx* vp)
+        {
+            if (!vp) return D3DERR_INVALIDCALL;
+            D3DVIEWPORT9 v;
+            v.X = vp->x; v.Y = vp->y; v.Width = vp->width; v.Height = vp->height;
+            v.MinZ = vp->min_z; v.MaxZ = vp->max_z;
+            return dev()->SetViewport(&v);
+        }
+
+        // ---- 批段状态快照(快照式合批, 2026-09-14) ----
+        // 清单 = 绘制状态函数收集表的"批继承"项; 常量取自真 d3d9.h —— 共享代码只见 d3d8 头,
+        // 部分状态号两代不同, 快照必须在认识 d3d9.h 的本 TU 里写, 严禁把 D3D8 枚举值传给 D3D9 设备。
+        static const DWORD snap_sampler_states[7] = {
+            D3DSAMP_MINFILTER, D3DSAMP_MAGFILTER, D3DSAMP_MIPFILTER, D3DSAMP_MAXANISOTROPY,
+            D3DSAMP_ADDRESSU, D3DSAMP_ADDRESSV, D3DSAMP_BORDERCOLOR };
+        static const DWORD snap_tss_states[6] = {
+            D3DTSS_COLOROP, D3DTSS_COLORARG1, D3DTSS_COLORARG2,
+            D3DTSS_ALPHAOP, D3DTSS_ALPHAARG1, D3DTSS_ALPHAARG2 };
+        static const DWORD snap_rs_states[16] = {
+            D3DRS_ALPHABLENDENABLE, D3DRS_SRCBLEND, D3DRS_DESTBLEND,
+            D3DRS_CULLMODE,
+            D3DRS_ZENABLE, D3DRS_ZWRITEENABLE, D3DRS_ZFUNC,
+            D3DRS_ALPHATESTENABLE, D3DRS_ALPHAFUNC, D3DRS_ALPHAREF,
+            D3DRS_FILLMODE,
+            D3DRS_FOGENABLE, D3DRS_FOGCOLOR, D3DRS_FOGSTART, D3DRS_FOGEND,
+            D3DRS_COLORWRITEENABLE };
+
+        void dssnap_free(DeviceStateSnap& s)
+        {
+            if (!s.valid) return;   // 未捕获 = 无引用
+            if (s.ps)   { release((void*)(uintptr_t)s.ps);   s.ps = 0; }
+            if (s.vs)   { release((void*)(uintptr_t)s.vs);   s.vs = 0; }
+            if (s.decl) { release((void*)(uintptr_t)s.decl); s.decl = 0; }
+            if (s.tex0) { release(s.tex0); s.tex0 = nullptr; }
+            s.valid = false;
+        }
+
+        // 注: 本 TU 处于 namespace d3d::impl9, 带自定义类型参数的调用必须写 impl9:: 前缀 ——
+        // 否则参数类型(如 ViewportEx)的 ADL 会把父命名空间的同名 inline 分派也拉进重载集, 二义。
+        bool dssnap_capture(DeviceStateSnap& s)
+        {
+            impl9::dssnap_free(s);
+            for (int i = 0; i < 7; i++) get_sampler_state(0, snap_sampler_states[i], &s.samp[i]);
+            for (int i = 0; i < 6; i++) get_tex_stage_state(0, snap_tss_states[i], &s.tss[i]);
+            get_pixel_shader(&s.ps);
+            get_vertex_shader(&s.vs);
+            void* d = nullptr;
+            if (SUCCEEDED(get_vertex_declaration(&d))) s.decl = (DWORD)(uintptr_t)d;
+            get_fvf(&s.fvf);
+            get_texture(0, &s.tex0);
+            for (int i = 0; i < 16; i++) get_render_state(snap_rs_states[i], &s.rs[i]);
+            get_transform(D3DTS_WORLD, s.mtx);
+            get_transform(D3DTS_VIEW, s.mtx + 16);
+            get_transform(D3DTS_PROJECTION, s.mtx + 32);
+            impl9::get_viewport_ex(&s.vp);
+            s.valid = true;
+            return true;
+        }
+
+        void dssnap_apply(const DeviceStateSnap& s)
+        {
+            if (!s.valid) return;
+            for (int i = 0; i < 7; i++) set_sampler_state(0, snap_sampler_states[i], s.samp[i]);
+            for (int i = 0; i < 6; i++) set_tex_stage_state(0, snap_tss_states[i], s.tss[i]);
+            set_pixel_shader(s.ps);
+            set_vertex_shader_handle(s.vs);
+            set_vertex_declaration((void*)(uintptr_t)s.decl);
+            set_fvf(s.fvf);
+            for (int i = 0; i < 16; i++) set_render_state(snap_rs_states[i], s.rs[i]);
+            set_transform(D3DTS_WORLD, s.mtx);
+            set_transform(D3DTS_VIEW, s.mtx + 16);
+            set_transform(D3DTS_PROJECTION, s.mtx + 32);
+            impl9::set_viewport_ex(&s.vp);
+            set_texture(0, s.tex0);
+        }
         HRESULT draw_primitive_up(DWORD prim, DWORD count, const void* verts, DWORD stride)
         { return dev()->DrawPrimitiveUP((D3DPRIMITIVETYPE)prim, count, verts, stride); }
         UINT get_available_tex_mem() { return dev()->GetAvailableTextureMem(); }

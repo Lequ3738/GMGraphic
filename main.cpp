@@ -55,6 +55,37 @@ bool WINAPI DllMain(HINSTANCE aModuleHandle, int aReason, int aReserved)
 
 atlas::texture_info current_texture;
 
+// ============================================================================
+// 批段快照(快照式合批, 2026-09-14)
+// 图集批的观感 = 烘焙顶点 + 积累时刻的设备继承态。start_draw 把继承态定格进
+// g_batch_snap, end_draw 按快照提交并还原 flush 时刻现场 —— 批与积累之后的任何
+// 状态变更(插值/混合/变换/视口/着色器)彻底解耦, flush 时机只剩"顺序"一个语义
+// (GMDirectX9 六槽设备钩子在引擎绘制提交动作前调用 atlas_flush_noexcept)。
+// premul 是唯一不经过设备状态的继承项(A8 文字批的 shader 选择), 单独定格。
+// ============================================================================
+static d3d::DeviceStateSnap g_batch_snap;
+static bool g_sdf_snap_use_shader = false;
+static int  g_sdf_snap_shader = -1;
+
+// 栈上快照的 COM 引用释放守卫(dssnap_free 幂等, 显式释放后再析构是空操作)。
+struct SnapReleaser
+{
+	d3d::DeviceStateSnap* s;
+	explicit SnapReleaser(d3d::DeviceStateSnap* p) : s(p) {}
+	~SnapReleaser() { if (s) d3d::dssnap_free(*s); }
+	SnapReleaser(const SnapReleaser&) = delete;
+	SnapReleaser& operator=(const SnapReleaser&) = delete;
+};
+
+// GMDirectX9 设备钩子的 flush 入口(自动 force_draw_to_screen)。调用发生在引擎
+// 绘制序列中途(vtable 钩子), 异常绝不能穿过钩子(会炸穿引擎汇编帧) —— 全部吞掉,
+// 批留在缓冲等下一次机会; end_draw 状态原子化后, 中途触发对引擎绘制零扰动。
+void atlas_flush_noexcept(void)
+{
+	try { atlas::end_draw(); }
+	catch (...) {}
+}
+
 void atlas::start_draw(void* texture, D3DFORMAT format)
 {
 	try
@@ -64,6 +95,14 @@ void atlas::start_draw(void* texture, D3DFORMAT format)
 
 		vertex::begin(D3DPT_TRIANGLELIST, true);
 		current_texture = { texture, format };
+
+		// 积累时刻观感定格。仅 V9: V8 无自动 flush 钩子, 历史行为不快照。
+		if (d3d::version() == d3d::V9)
+		{
+			d3d::dssnap_capture(g_batch_snap);
+			g_sdf_snap_use_shader = sdf::use_shader;
+			g_sdf_snap_shader = sdf::shader;
+		}
 	}
 	transpond_catch("atlas::start_draw(void*)")
 }
@@ -76,6 +115,18 @@ void atlas::end_draw()
 			return;
 
 		int prev_shader = -1;
+		const bool atomic = (d3d::version() == d3d::V9);
+
+		// 状态原子化: 自动 flush 发生在引擎绘制序列中途(引擎已设好自己的纹理/采样/
+		// 变换/着色器), 提交完批必须原样还回。旧实现除 A8 的 TSS 分支外一概不还原,
+		// 手工 flush 靠"引擎下个绘制自带状态设置"侥幸成立, 自动化后必须显式还原。
+		d3d::DeviceStateSnap now = {};
+		SnapReleaser now_guard{ &now };   // 异常路径也释放捕获期的 COM 引用(dssnap_free 幂等)
+		if (atomic)
+		{
+			d3d::dssnap_capture(now);
+			d3d::dssnap_apply(g_batch_snap);
+		}
 
 		texture_clear_all();
 		D3DCheck(d3d::set_texture(0, current_texture.texture), 0);
@@ -84,10 +135,10 @@ void atlas::end_draw()
 
 		if (current_texture.format == D3DFMT_A8)  // 字体纹理
 		{
-			if (sdf::use_shader)
+			if (g_sdf_snap_use_shader)
 			{
 				prev_shader = (int)shader_current();
-				shader_set(sdf::shader);
+				shader_set(g_sdf_snap_shader);
 
 				// 保持旧 d3d_set_ps_const 的 ps_1.4 寄存器 [-1,1] clamp 行为,
 				// 避免新 shader_set_uniform_f(不 clamp)改变 SDF 文字锐度。
@@ -122,7 +173,7 @@ void atlas::end_draw()
 
 		if (current_texture.format == D3DFMT_A8)
 		{
-			if (sdf::use_shader)
+			if (g_sdf_snap_use_shader)
 				shader_set(prev_shader);
 			else
 			{
@@ -132,6 +183,10 @@ void atlas::end_draw()
 			}
 		}
 
+		// 还原 flush 时刻现场(纹理/采样/TSS/PS/VS/RS/变换/视口整组; A8 分支上面的
+		// TSS 恢复被此处覆盖, 属冗余而非冲突; COM 引用由 now_guard 析构释放)。
+		if (atomic)
+			d3d::dssnap_apply(now);
 		current_texture = { nullptr, D3DFMT_A8R8G8B8 };
 	}
 	transpond_catch("atlas::end_draw()")
