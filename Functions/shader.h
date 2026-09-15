@@ -26,6 +26,9 @@ bool vertex_current_vs(dword* vs_out);
 // 设备真值读: 当前是否有像素着色器在绑(影子表, 零设备调用)。
 bool device_ps_bound();
 
+// D3DX 编译诊断 → 短报错: 错误行 + 对应源行与列位指示(^), 不倾倒全量源码。
+std::string format_shader_error(const std::string& err, const char* src);
+
 namespace gm
 {
 	extern int argument_list;

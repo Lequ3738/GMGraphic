@@ -7,6 +7,7 @@
 #include "gpart.h"            // gpart_reset_pre/post(设备 Reset 回调)
 #include "xxhash.hpp"          // 用户 shader 缓存 key 哈希
 #include <cstring>
+#include <cctype>
 #include <cstdio>
 #include <fstream>
 #include <thread>
@@ -236,6 +237,96 @@ static int parse_prefix(const char* uni, const char** rest)
     return 0;
 }
 
+// D3DX 编译诊断 → 短报错: 保留原始错误行, 其下附对应源行与列位指示(^),
+// 不倾倒全量源码。诊断行形如 "(行[,列]): error|warning Xnnnn: 文本";
+// 无定位的条目(如 X3501)与无法识别的行原样保留。
+std::string format_shader_error(const std::string& err, const char* src)
+{
+    std::vector<std::string> lines;   // 预拆源码行供定位引用
+    if (src && src[0])
+    {
+        const char* p = src;
+        while (true)
+        {
+            const char* nl = strchr(p, '\n');
+            std::string s = nl ? std::string(p, (size_t)(nl - p)) : std::string(p);
+            if (!s.empty() && s.back() == '\r') s.pop_back();
+            lines.push_back(std::move(s));
+            if (!nl) break;
+            p = nl + 1;
+        }
+    }
+
+    std::string out;
+    size_t pos = 0;
+    while (pos < err.size())
+    {
+        size_t eol = err.find('\n', pos);
+        std::string l = err.substr(pos, (eol == std::string::npos ? err.size() : eol) - pos);
+        pos = (eol == std::string::npos) ? err.size() : eol + 1;
+        if (!l.empty() && l.back() == '\r') l.pop_back();
+        if (l.empty()) continue;
+
+        // 解析 "(行[,列]): "
+        long line_no = 0, col = 0;
+        size_t lp = l.find('('), rp = l.find("): ");
+        if (lp != std::string::npos && rp != std::string::npos && rp > lp)
+        {
+            size_t i = lp + 1;
+            bool ok = false;
+            while (i < rp && isdigit((unsigned char)l[i]))
+                { line_no = line_no * 10 + (l[i] - '0'); ++i; ok = true; }
+            if (ok && i < rp && l[i] == ',')
+            {
+                ok = false;
+                ++i;
+                while (i < rp && isdigit((unsigned char)l[i]))
+                    { col = col * 10 + (l[i] - '0'); ++i; ok = true; }
+            }
+            if (!(ok && i == rp)) { line_no = 0; col = 0; }
+        }
+
+        out += l + "\r\n";
+
+        if (line_no > 0 && line_no <= (long)lines.size())
+        {
+            const std::string& sl = lines[(size_t)line_no - 1];
+
+            // tab 展开为 4 空格; 列位折算到展开后的显示列(无列则指首非空白字符)。
+            std::string disp;
+            size_t caret = 0, char_idx = 0;
+            bool caret_set = false;
+            const size_t target = (col > 0) ? (size_t)(col - 1) : std::string::npos;
+            for (unsigned char c : sl)
+            {
+                if (!caret_set && (target == std::string::npos
+                        ? (c != ' ' && c != '\t') : char_idx >= target))
+                    { caret = disp.size(); caret_set = true; }
+                if (c == '\t') disp += "    ";
+                else disp += (char)c;
+                ++char_idx;
+            }
+            if (!caret_set) caret = disp.size();
+
+            if (disp.size() > 160)
+            {
+                disp.resize(157);
+                disp += "...";
+                if (caret > disp.size()) caret = disp.size();
+            }
+
+            const std::string num = std::to_string(line_no);
+            out += "  " + num + " | " + disp + "\r\n";
+            out += "  " + std::string(num.size(), ' ') + " | "
+                 + std::string(caret, ' ') + "^\r\n";
+        }
+        out += "\r\n";
+    }
+
+    if (out.empty()) return "(no diagnostic from compiler)";
+    return out;
+}
+
 // ---- 创建 ----
 
 // 编译 HLSL 单个阶段并创建设备对象。
@@ -267,7 +358,8 @@ static bool compile_hlsl_stage(const char* src, const char* entry, const char* f
             return false;
         }
 
-        throw std::runtime_error("Shader compile error:\r\n\r\n" + err + "\r\n\r\n" + std::string(src));
+        throw std::runtime_error("Shader compile error (" + std::string(profile)
+            + ", entry " + use + "):\r\n\r\n" + format_shader_error(err, src));
     }
 
     // 常量表先挂到 bundle: 若创建失败, 由外层 shader_create_catch 的 bundle_release 统一释放。
@@ -323,7 +415,8 @@ exp_real shader_create_asm(const char* vs_src, const char* ps_src)
             std::string err;
 
             if (FAILED(d3d::assemble_vs(vs_src, strlen(vs_src), code, constants, &err)))
-                throw std::runtime_error("Shader assembly error:\r\n\r\n" + err + "\r\n\r\n" + vs_src);
+                throw std::runtime_error("Shader assembly error (VS):\r\n\r\n"
+                    + format_shader_error(err, vs_src));
 
             D3DCheck(d3d::create_vertex_shader(d3d::VERT_EXT, code.data(), constants.data(), 
                 constants.size(), &b.vs), 2);
@@ -337,7 +430,8 @@ exp_real shader_create_asm(const char* vs_src, const char* ps_src)
             std::vector<BYTE> code;
             std::string err;
             if (FAILED(d3d::assemble_ps(ps_src, strlen(ps_src), code, &err)))
-                throw std::runtime_error("Shader assembly error:\r\n\r\n" + err + "\r\n\r\n" + ps_src);
+                throw std::runtime_error("Shader assembly error (PS):\r\n\r\n"
+                    + format_shader_error(err, ps_src));
 
             D3DCheck(d3d::create_pixel_shader(code.data(), &b.ps), 3);
         }
@@ -1383,8 +1477,8 @@ namespace
             if (default_entry &&
                 (strstr(err.c_str(), "X3501") || strstr(err.c_str(), "entrypoint not found")))
                 return 0;
-            throw std::runtime_error("Shader compile error:\r\n\r\n" + err +
-                "\r\n\r\n" + std::string(src));
+            throw std::runtime_error("Shader compile error (" + std::string(profile)
+                + ", entry " + use + "):\r\n\r\n" + format_shader_error(err, src));
         }
         if (table) d3d::release(table);
         return 1;
