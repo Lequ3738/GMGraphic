@@ -1458,8 +1458,10 @@ namespace
     // 纯编译单阶段(不建设备对象/常量表): 返回 1=真阶段, 0=passthrough; 真错误抛异常。
     // entry 为空 → 默认入口逻辑(源里没有 fallback 名字即 passthrough);
     // entry 显式给出但源里没有 → X3501 在默认入口下也按 passthrough 处理(与 shader_create 一致)。
+    // src_name 非空时纳入错误头, 供多文件工作流定位出错文件。
     int compile_hlsl_bytecode(const char* src, const char* entry, const char* fallback,
-                              const char* profile, std::vector<BYTE>& code)
+                              const char* profile, std::vector<BYTE>& code,
+                              const char* src_name = nullptr)
     {
         const char* use = (entry && entry[0]) ? entry : nullptr;
         bool default_entry = (use == nullptr);
@@ -1477,7 +1479,8 @@ namespace
             if (default_entry &&
                 (strstr(err.c_str(), "X3501") || strstr(err.c_str(), "entrypoint not found")))
                 return 0;
-            throw std::runtime_error("Shader compile error (" + std::string(profile)
+            std::string head = src_name && src_name[0] ? std::string(src_name) + ", " : "";
+            throw std::runtime_error("Shader compile error (" + head + std::string(profile)
                 + ", entry " + use + "):\r\n\r\n" + format_shader_error(err, src));
         }
         if (table) d3d::release(table);
@@ -1540,10 +1543,10 @@ namespace
 
             std::vector<BYTE> vs, ps, code;
             if (compile_hlsl_bytecode(job.src.c_str(), wf->vs_entry.c_str(), "mainVS",
-                                      vs_profile(), code) > 0)
+                                      vs_profile(), code, job.name.c_str()) > 0)
                 vs = std::move(code);
             if (compile_hlsl_bytecode(job.src.c_str(), wf->ps_entry.c_str(), "mainPS",
-                                      ps_profile(), code) > 0)
+                                      ps_profile(), code, job.name.c_str()) > 0)
                 ps = std::move(code);
             if (vs.empty() && ps.empty())
             {

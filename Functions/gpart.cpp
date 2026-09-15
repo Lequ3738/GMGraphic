@@ -760,8 +760,9 @@ static void gpart_compile_all(const char* cache_dir,
             profile, code, &table, &err);
         if (table) d3d::release(table);
         if (FAILED(hr))
-            throw std::runtime_error("gpart shader 编译失败 (" + std::string(entry)
-                + "):\r\n\r\n" + format_shader_error(err, src_str.c_str()));
+            throw std::runtime_error("gpart shader 编译失败 (" + std::string(name)
+                + ", entry " + std::string(entry) + "):\r\n\r\n"
+                + format_shader_error(err, src_str.c_str()));
 
         shader_cache_write(cache_dir, name, h, code.data(), code.size());
     };
