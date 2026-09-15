@@ -312,7 +312,7 @@ std::string format_shader_error(const std::string& err, const char* src)
             {
                 disp.resize(157);
                 disp += "...";
-                if (caret > disp.size()) caret = disp.size();
+                if (caret > 157) caret = 157;   // 错误列在截断区 → 指省略号起点
             }
 
             const std::string num = std::to_string(line_no);
