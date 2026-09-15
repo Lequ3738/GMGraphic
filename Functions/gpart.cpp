@@ -171,7 +171,7 @@ struct GType
     std::vector<FRect> frame_rect;    // 精灵各帧在粒子图集中的矩形(CPU 侧记录)
     std::vector<AtlasRegion> atlas_owned;   // 本类型在图集中占用的区域(释放时回收)
     int shape = PT_SHAPE_PIXEL;       // 无精灵时的形状
-    int sprite_id = -1;               // 来源精灵 id(-1=形状); 设备重建后按它重抓帧 [2026-09-14]
+    int sprite_id = -1;               // 来源精灵 id(-1=形状); 设备重建后按它重抓帧
     bool animat = false, stretch = false, random_frame = false;
 
     float* row(GTypeRow r) { return t[static_cast<size_t>(r)]; }
@@ -783,8 +783,8 @@ static bool gpu_init_internal(const char* cache_dir)
         if (caps.vertex_tex_filter_caps == 0)
             throw std::runtime_error("显卡不支持顶点纹理采样(VTF), gpart 不可用。");
 
-        // [2026-09-14] 类型表/图集/矩形表改 MANAGED 池: 三者只上传+采样(从不当 RT),
-        // MANAGED 自动跨设备 Reset 存活, 设备丢失后无需重建内容。
+        // 类型表/图集/矩形表用 MANAGED 池: 只上传+采样(从不当 RT), 自动跨设备 Reset
+        // 存活, 设备丢失后无需重建内容。
         // 类型表纹理 256x13 A16B16G16R16F
         D3DCheck(d3d::create_texture(GP_TYPE_TEX_W, GP_TYPE_ROWS, 1, 0,
             GP_FMT_16F, D3DPOOL_MANAGED, &g_type_tex), 1);
@@ -868,9 +868,9 @@ static void type_table_upload()
 
 // ============================================================================
 // 系统状态纹理创建/销毁
-// [2026-09-14] 拆分与池调整: RT 状态纹理是全插件仅有的必须 DEFAULT+RENDERTARGET 的
-// 资源(设备 Reset 前必须释放、Reset 后内容失效); 特效器表只上传+采样, 改 MANAGED
-// 自动跨 Reset 存活。gpart_reset_pre/post 按此边界工作。
+// RT 状态纹理是全插件仅有的必须 DEFAULT+RENDERTARGET 的资源(Reset 前必须释放、
+// Reset 后内容失效); 特效器表只上传+采样, 用 MANAGED 自动跨 Reset 存活。
+// gpart_reset_pre/post 按此边界工作。
 // ============================================================================
 static void system_rt_create(GSystem& s)
 {
@@ -1881,7 +1881,7 @@ exp_real gpart_type_sprite(double type, double sprite, double animat, double str
         t->animat = animat > 0.5;
         t->stretch = stretch > 0.5;
         t->random_frame = random > 0.5;
-        t->sprite_id = spr;                    // 记录来源(设备重建后重抓) [2026-09-14]
+        t->sprite_id = spr;                    // 记录来源(设备重建后重抓)
         t->shape = -1;                 // 有精灵 → 形状路径失效
         t->animation_enabled() = t->animat ? 1.0f : 0.0f;
         t->stretch_animation() = t->stretch ? 1.0f : 0.0f;
@@ -2772,13 +2772,10 @@ exp_real gpart_deflector_friction(double sys, double ind, double friction)
     simple_catch("gpart_deflector_friction", gerror)
 }
 
-// ============================================================================
-// 设备 Reset 前后回调(GMDirectX9 gmdx9_register_reset_callback 注册, 2026-09-14)
-// ============================================================================
-// pre(真 Reset 前): RT 状态纹理是全插件仅有的 DEFAULT 池资源, 必须释放否则
-// D3D9 Reset 返回 INVALIDCALL、设备永久卡死。内容随纹理消亡 → 清挂起批/活跃窗口/
-// 混合掩码(update 的空窗口分支与 drawit 的空窗口早退天然跳过渲染)。幂等: 已释放
-// (tex 为空)即空操作 —— Reset 失败后 runner 每帧重试会再次进入 pre。
+// 设备 Reset 前后回调。
+// pre: RT 状态纹理是全插件仅有的 DEFAULT 池资源, 必须释放否则 D3D9 Reset 直接
+// INVALIDCALL; 内容随纹理消亡 → 顺带清挂起批/活跃窗口/混合掩码。幂等(已释放即
+// 空操作, Reset 失败重试时再次进入无害)。
 void gpart_reset_pre()
 {
     if (d3d::version() != d3d::V9) return;

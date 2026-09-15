@@ -102,10 +102,10 @@ exp_real init(gm_real arg_list)
         }
     }
 
-    // 注册自动 flush 到 GMDirectX9(2026-09-14): 引擎/其他 DLL 的任何绘制提交动作
-    // (DrawPrimitive(UP)/Clear/渲染目标切换/EndScene)发生前自动刷图集批 —— 与原生
-    // 绘制穿插的顺序由机制保证, 游戏侧无需再手写 force_draw_to_screen(已有的调用
-    // 退化为空操作)。未装 GMDirectX9 时静默跳过, 维持手动语义。
+    // 注册自动 flush 到 GMDirectX9: 引擎/其他 DLL 的任何绘制提交动作
+    // (DrawPrimitive(UP)/Clear/渲染目标切换/EndScene)发生前自动刷图集批, 与原生
+    // 绘制的穿插顺序由机制保证, 调用方无需再手写 force_draw_to_screen。未装
+    // GMDirectX9 时静默跳过, 维持手动语义。
     {
         HMODULE hdx9 = GetModuleHandleA("GMDirectX9.dll");
         if (hdx9)
@@ -117,9 +117,8 @@ exp_real init(gm_real arg_list)
         }
     }
 
-	// 注册设备 Reset 前后回调到 GMDirectX9(2026-09-14): 设备丢失(睡眠/锁屏/TDR)
-	// 时释放 DEFAULT 池资源解除 Reset 死锁 + Reset/重建后恢复插件资源。未装
-	// GMDirectX9 时静默跳过(D3D8 后端本无此问题)。
+	// 注册设备 Reset 前后回调到 GMDirectX9: Reset 前释放 DEFAULT 池资源解除死锁,
+	// Reset/重建后恢复插件资源。未装 GMDirectX9 时静默跳过(D3D8 后端本无此问题)。
 	{
 		HMODULE hdx9 = GetModuleHandleA("GMDirectX9.dll");
 		if (hdx9)
@@ -131,8 +130,7 @@ exp_real init(gm_real arg_list)
 		}
 	}
 
-	// [2026-09-14 修复①] 解析 GMDirectX9 状态影子表读口(批冲刷最小自愈;
-	// 未装/旧版无此导出时批自愈自动落回全量快照路径)。
+	// 解析 GMDirectX9 状态影子表读口; 未装/旧版无此导出时批自愈自动落回全量快照。
 	batch_state_init();
 
     gm::argument_list = (int)arg_list;
@@ -732,9 +730,8 @@ void texture_clear_all()
         d3d::set_texture(i, nullptr);
 }
 
-// [2026-08-26] 共享 1x1 白纹理(自定义 shader 下无纹理图元的采样兜底)。
-// 背景: 固定管线对空采样器透传顶点色, 可编程 PS 的 tex2D 返回黑 → 形状全黑;
-// 绑白后 tex2D(s0)*color 类 PS 在无纹理图元上退化为纯顶点色(FFP 观感)。
+// 共享 1x1 白纹理: 自定义 shader 下无纹理图元的采样兜底 —— 可编程 PS 对空采样器
+// 的 tex2D 返回黑, 绑白后退化为纯顶点色(FFP 观感)。
 // 格式/池用字面量: A8R8G8B8=21、POOL_MANAGED=1(DX8/DX9 枚举同值, 见 d3d_adapter.h 头注);
 // MANAGED 池跨设备 Reset 存活。进程生命周期内常驻(与 sdf_shader 等内部资源同策略)。
 static void* s_white_tex = nullptr;
@@ -1029,10 +1026,8 @@ exp_real gpu_set_alphatestref(double ref) { d3dcrs(D3DRS_ALPHAREF, (dword)clamp(
 exp_real gpu_set_alphatestfunc(double func) { d3dcrs(D3DRS_ALPHAFUNC, (dword)func); }
 
 // 深度偏移(GMS2 gpu_set_depth), 避免 z-fighting。整数 0-16, 默认 0。
-// [2026-09-14] D3D9 没有 D3DRS_ZBIAS(47, 已删除) —— 直传会 INVALIDCALL 静默失效。
-// V9 分支映射到 D3DRS_DEPTHBIAS(183, float 位模式): 按 16 位深度量子的近似换算
-// (depth/65535, 保持 0=关、单调递增、正值更靠近相机, 与 D3D8 ZBIAS 语义同向);
-// V8 分支保持 ZBIAS 原语义。两后端行为对齐。
+// D3D9 已无 D3DRS_ZBIAS, 直传会 INVALIDCALL 静默失效; V9 映射到 D3DRS_DEPTHBIAS
+// (按 16 位深度量子换算, 语义与 D3D8 ZBIAS 同向), V8 保持 ZBIAS 原语义。
 exp_real gpu_set_depth(double depth)
 {
     double d = clamp(depth, 0.0, 16.0);
@@ -1068,14 +1063,13 @@ void vertex::begin(D3DPRIMITIVETYPE primitive, bool textured)
     vbuff_prim = primitive;
     vbuff_use_struct = false;
 
-    // [2026-09-14 修复②] 不再整块清零(图集路径 192KB / ext 路径 768KB, 高频批重开
-    // 下为纯浪费): 绘制只读 vbuff_c 以内的顶点, 字段由写入方全量负责
-    // (push_vertex_2d / vertex::add / draw_vertex_ext); 唯一历史例外是 end() 的
-    // count+1 尾顶点, 改为提交时单槽清零。首帧缓冲为零初始化(BSS), 行为不变。
+    // 不整块清零缓冲(高频批重开下为纯浪费): 绘制只读 vbuff_c 以内的顶点, 字段由
+    // 写入方全量负责(push_vertex_2d / vertex::add / draw_vertex_ext); 唯一例外是
+    // end() 的 count+1 尾顶点, 提交时单槽清零。首帧缓冲为零初始化(BSS), 行为不变。
 
     if (!textured)
     {
-        // [2026-08-26] 自定义 shader 激活时绑白兜底(空采样器在可编程 PS 下采样为黑);
+        // 自定义 shader 激活时绑白兜底(空采样器在可编程 PS 下采样为黑);
         // 无 shader 保持清空 —— FFP 原语义, 传统渲染零改动。
         if (current_shader >= 0)
             texture_bind_white_stage0();
@@ -1184,8 +1178,7 @@ void vertex::end()
         uint count = vbuff_c;
         if (!vbuff_autoinc && !vbuff_use_struct)
         {
-            // [2026-09-14 修复②] count+1 语义: 尾顶点是"进行中"的槽, 批打开已不整块
-            // 清零, 改为提交前单槽清零, 保持其历史全零行为(未完成顶点各字段读 0)。
+            // count+1 语义: 尾顶点是"进行中"的槽, 提交前单槽清零保持其全零行为。
             if (vbuff_c < vb_count)
             {
                 if (vbuff_use_ext)
@@ -1217,7 +1210,10 @@ void vertex::end()
 
         if (!vbuff_usevs)
         {
-            if (is_d3d9() && g_vs_needed)
+            // 设备上挂着 PS 时必须走透传 VS: ps_3_0 不经 vs_3_0 喂数据则顶点色/UV
+            // 读 0, 合法状态但整批输出全透明。g_vs_needed 只是 CPU 侧标志, 在设备
+            // 状态落地前更新, 冲刷落入该窗口时以设备真值为准(device_ps_bound)。
+            if (is_d3d9() && (g_vs_needed || device_ps_bound()))
             {
                 D3DCheck(d3d::set_vertex_shader_passthrough(
                     vbuff_use_ext ? d3d::VERT_EXT : d3d::VERT_DEFAULT), 3);
@@ -1260,8 +1256,7 @@ exp_real draw_primitive_begin_ext(double primitive, double textured)
 }
 
 // 2D equivalent.
-// [2026-09-14 修复②] begin_ext 不再整块清零缓冲, 2D 版补写 z 与法线(历史 memset
-// 下恒为 0 的字段显式置 0, 保持裁剪与 FFP 光照/镜面行为不变)。
+// 缓冲不再整块清零后, 2D 版显式补写 z 与法线(FFP 裁剪/光照/镜面行为不变)。
 exp_real draw_vertex_ext(double x, double y, double col, double alpha,
     double speccol, double specalpha)
 {
@@ -1704,7 +1699,7 @@ void shader_workflow_wait_finished()
 
 // ============================================================================
 // 设备 Reset 前后总回调(注册见 init(); GMDirectX9 的 ResetDevice 在真 Reset
-// 前后调用, 2026-09-14 设备丢失恢复配套)
+// 前后调用)
 // ============================================================================
 
 // pre(真 Reset 前): 丢弃打开中的图集批(设备已丢失, 提交必然失败; 引擎随后整帧

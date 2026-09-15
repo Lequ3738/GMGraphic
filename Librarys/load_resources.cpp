@@ -442,7 +442,7 @@ gm::sprite gm::get_background_data(uint id)
 		uint height = std::min((uint)gmapi->Backgrounds[id].GetHeight(),
 			std::get<2>(data));
 
-		// [2026-09-14] pow2 紧凑化(与 get_sprite_data 同款): GM 纹理可能按 2 的幂填充
+		// pow2 紧凑化(与 get_sprite_data 同款): GM 纹理可能按 2 的幂填充
 		// (内容位于左上角), 读回数据按物理尺寸存储, 而图集打包按逻辑宽高索引数据 ——
 		// 不紧凑化时行距错位, pow2-only GPU 上背景进图集会错位/花屏。
 		uint tex_width = std::get<1>(data);

@@ -52,7 +52,7 @@ namespace d3d
     int  version();                          // 惰性检测并缓存; 未初始化时默认 V8
     void ensure_version(void* device, void* iface);
     // 释放适配器内部惰性缓存的设备对象(共享声明/透传 VS; 整设备重建后旧对象已失效,
-    // 置空待下次惰性重建)。仅 D3D9 有此类缓存, D3D8 无操作。[2026-09-14]
+    // 置空待下次惰性重建)。仅 D3D9 有此类缓存, D3D8 无操作。
     void invalidate_cached_device_objects();
 
     // 原始 COM 指针访问(仅适配器实现内部使用)。

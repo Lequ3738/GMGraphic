@@ -28,7 +28,7 @@ bool WINAPI DllMain(HINSTANCE aModuleHandle, int aReason, int aReserved)
 				return FALSE;
 			}
 
-			// [2026-09-14] 后端检测提前到加载时刻: 任何导出若先于 GML 的 init() 被
+			// 后端检测提前到加载时刻: 任何导出若先于 GML 的 init() 被
 			// 调用, d3d::version() 不再误判为 V8(装着 GMDirectX9 时按 D3D8 vtable
 			// 槽位调用 D3D9 设备 = 崩溃)。设备指针此刻为空也无妨 —— ensure_version
 			// 的 d3d9.dll 在场兜底仍生效, init() 会用真实指针再确认一次。
@@ -64,29 +64,25 @@ bool WINAPI DllMain(HINSTANCE aModuleHandle, int aReason, int aReserved)
 atlas::texture_info current_texture;
 
 // ============================================================================
-// 批段快照(快照式合批, 2026-09-14)
+// 批段快照(快照式合批)
 // 图集批的观感 = 烘焙顶点 + 批打开时刻的设备继承态。start_draw 把继承态定格进
 // g_batch_snap, end_draw 按快照提交并还原 flush 时刻现场。
-// flush 时机(2026-09-14 二批起): GMDirectX9 全闭合设备钩 —— 提交/内容/目标/状态
-// 全部先冲刷, 状态写入会把批切段, 因此"批打开→flush 之间"设备状态不再可能变化,
-// 本侧快照降为纵深防御(防 state block 等钩外路径)。仅剩的钩外状态 = SDF 的 CPU
-// 全局(size/sharpness/thickness/premul), 由 draw_text.cpp 的 sdf_segment_batch 在
-// 各 setter 内自律切段。
+// flush 时机: GMDirectX9 全闭合设备钩 —— 提交/内容/目标/状态全部先冲刷, 状态
+// 写入会把批切段, "批打开→flush 之间"设备状态不再可能变化, 本侧快照降为纵深
+// 防御(防 state block 等钩外路径)。仅剩的钩外状态 = SDF 的 CPU 全局
+// (size/sharpness/thickness/premul), 由 draw_text.cpp 的 sdf_segment_batch 切段。
 // ============================================================================
 static d3d::DeviceStateSnap g_batch_snap;
 static bool g_sdf_snap_use_shader = false;
 static int  g_sdf_snap_shader = -1;
 
 // ============================================================================
-// [2026-09-14 桥梁期修复①] 批冲刷最小自愈(自碰清单)
-// end_draw 实际触碰的设备状态只有: 纹理 stage0-7、TSS0 的 ADDRESSU/V/COLOROP/
-// COLORARG1/COLORARG2、PS/VS/顶点声明/FVF(vertex::end 与 SDF shader_set 所写)。
-// 在 43 槽字面闭合不变式下, flush 时刻设备状态 == 批打开时刻状态 == 引擎现场,
-// 触碰前从 GMDirectX9 状态影子表(修复③)读出的值就是引擎现场值 —— 提交后按清单
-// 精确归还(与影子现状不同者才落设备调用, 典型整段仅 stage0 纹理一写)。三轮 38 项
-// 全量快照(捕获 38 GET + 两次回放 76 SET ≈ 114 次设备调用/flush)退役为调试对照:
-// 环境变量 GMGRAPHIC_BATCH_FULL_SNAPSHOT=1 走旧路径(dssnap 捕获+两次回放), 怀疑
-// 状态污染时一键切回比对; 影子读口不可用(未装 GMDirectX9/旧版)同样自动落回。
+// 批冲刷最小自愈: end_draw 实际触碰的设备状态只有纹理 stage0-7、TSS0 的
+// ADDRESSU/V/COLOROP/COLORARG1/COLORARG2、PS/VS/顶点声明/FVF。闭合不变式下
+// flush 时刻设备状态 == 批打开时刻状态 == 引擎现场, 从 GMDirectX9 影子表读出
+// 触碰前的值, 提交后按清单差异归还(典型整段仅 stage0 纹理一写)。
+// 环境变量 GMGRAPHIC_BATCH_FULL_SNAPSHOT=1 退回旧的全量快照路径(捕获+两次回放)
+// 作调试对照; 影子读口不可用(未装 GMDirectX9/旧版)同样自动落回。
 // ============================================================================
 
 // GMDirectX9 影子表读口 v1(ABI 镜像 GMDirectX9 source/state_shadow.h, 只增不改)。
@@ -124,6 +120,14 @@ void batch_state_init()
 				g_shadow_api = api;
 		}
 	}
+}
+
+// 设备真值读: 当前是否有像素着色器在绑(影子表, 零设备调用)。
+// 批冲刷选顶点管线用它而非 CPU 标志 g_vs_needed: 后者由 shader_set/reset 在
+// 设备状态落地前先行更新, 冲刷若落入该窗口, 设备状态才是批积累时刻的真相。
+bool device_ps_bound()
+{
+	return g_shadow_api && g_shadow_api->live() && g_shadow_api->get_ps() != nullptr;
 }
 
 namespace
@@ -233,7 +237,7 @@ void atlas::start_draw(void* texture, D3DFORMAT format)
 		// 积累时刻观感定格。仅 V9: V8 无自动 flush 钩子, 历史行为不快照。
 		if (d3d::version() == d3d::V9)
 		{
-			// [修复①] 最小自愈路径不再捕获全量快照(状态来源=影子表, 见 end_draw);
+			// 最小自愈路径不再捕获全量快照(状态来源=影子表, 见 end_draw);
 			// 全量捕获仅在全快照调试模式/影子读口不可用时保留。
 			if (!minimal_heal_active())
 				d3d::dssnap_capture(g_batch_snap);
@@ -253,7 +257,7 @@ void atlas::end_draw()
 
 		int prev_shader = -1;
 		const bool atomic = (d3d::version() == d3d::V9);
-		// [修复①] 最小自愈 = V9 + 影子读口可用 + 未开全量快照调试。
+		// 最小自愈 = V9 + 影子读口可用 + 未开全量快照调试。
 		const bool minimal = atomic && minimal_heal_active();
 
 		// 状态原子化: 自动 flush 发生在引擎绘制序列中途(引擎已设好自己的纹理/采样/
@@ -327,7 +331,7 @@ void atlas::end_draw()
 		}
 
 		// 还原 flush 时刻现场。
-		// [修复①] 最小自愈: 按触碰清单归还, 差异者才落设备调用(典型整段仅
+		// 最小自愈: 按触碰清单归还, 差异者才落设备调用(典型整段仅
 		// stage0 纹理一写; TSS/着色器/FVF 多数与影子同值直接跳过)。
 		// 全快照调试路径: 全量回放 now(A8 分支上面的 TSS 恢复被此处覆盖, 属冗余
 		// 而非冲突; COM 引用由 now_guard 析构释放)。

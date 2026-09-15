@@ -97,7 +97,7 @@ namespace atlas
 // 吞一切异常, 语义与手工 force_draw_to_screen 相同。
 void atlas_flush_noexcept(void);
 
-// 解析 GMDirectX9 状态影子表读口(批自愈修复①; 见 main.cpp, init() 调用)。
+// 解析 GMDirectX9 状态影子表读口(见 main.cpp, init() 调用)。
 void batch_state_init();
 
 extern atlas::texture_info current_texture;

@@ -23,6 +23,9 @@ extern int sdf_shader_uniform_gamma;    // DX9: "u_gamma"(边缘软度) 句柄
 // vertex_* submit: return current shader's VS handle (false = no VS / no shader).
 bool vertex_current_vs(dword* vs_out);
 
+// 设备真值读: 当前是否有像素着色器在绑(影子表, 零设备调用)。
+bool device_ps_bound();
+
 namespace gm
 {
 	extern int argument_list;
@@ -153,10 +156,9 @@ namespace vertex
 	void next();
 	void end();
 
-	// [2026-09-14 修复②] 批打开不再整块清零顶点缓冲(见 vertex::begin), 每顶点字段
-	// 由写入方全量负责: z 恒 0(FFP/声明按 3D 位置读, 残留 z 会被近/远平面裁掉);
-	// ext 槽的法线/高光补 0(保持 FFP 光照/镜面下的历史行为)。未写入的 uv stage
-	// 1-7 依契约未定义(自定义 shader 采样未写通道自负, GMS2 同款)。
+	// 批打开不整块清零顶点缓冲(见 vertex::begin), 每顶点字段由写入方全量负责:
+	// z 恒 0(残留 z 会被近/远平面裁掉), ext 槽法线/高光补 0(FFP 光照/镜面行为不变);
+	// 未写入的 uv stage 1-7 未定义(自定义 shader 采样未写通道自负, GMS2 同款)。
 	inline void push_vertex_2d(float x, float y, float u, float v, dword c)
     {
         vbuff_use_struct = true;

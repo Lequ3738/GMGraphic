@@ -17,8 +17,8 @@ texture_atlas::texture_atlas(uint size, uint id)
 {
 	try
 	{
-		// [2026-09-14] 4096/8192 按设备能力放开(现代 GPU 普遍 ≥8192);
-		// 64~2048 恒可用(老硬件安全下限, 与历史行为一致)。
+		// 图集尺寸 4096/8192 按设备能力放开(现代 GPU 普遍 ≥8192);
+		// 64~2048 恒可用(老硬件安全下限)。
 		bool size_ok;
 		switch (size)
 		{
@@ -617,11 +617,10 @@ std::vector<texture_atlas::images*> texture_atlas::load(path& file_path)
 }
 
 // ============================================================================
-// 整设备重建后的恢复(GMDirectX9 reset 回调 recreated 路径, 2026-09-14)
+// 整设备重建后的恢复(GMDirectX9 reset 回调 recreated 路径)。
 // 图集纹理为 MANAGED 池: 普通设备 Reset 自动存活; 整设备重建时随旧设备消亡。
 // 内存数据仍在(data 未清)的图集重新创建+上传; 已删内存数据的只读图集无法恢复
-// (纹理置空, 绘制时报 "Cannot find the texture atlas" —— SEH 兜底罕见路径, 游戏
-// 应重新 texture_atlas_load)。
+// (纹理置空, 绘制时报 "Cannot find the texture atlas", 调用方需重新 texture_atlas_load)。
 // ============================================================================
 void texture_atlas_on_device_recreated()
 {

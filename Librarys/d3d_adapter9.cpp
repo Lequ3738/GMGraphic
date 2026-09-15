@@ -87,7 +87,7 @@ namespace d3d
             return dev()->SetViewport(&v);
         }
 
-        // ---- 批段状态快照(快照式合批, 2026-09-14) ----
+        // ---- 批段状态快照(快照式合批) ----
         // 清单 = 绘制状态函数收集表的"批继承"项; 常量取自真 d3d9.h —— 共享代码只见 d3d8 头,
         // 部分状态号两代不同, 快照必须在认识 d3d9.h 的本 TU 里写, 严禁把 D3D8 枚举值传给 D3D9 设备。
         static const DWORD snap_sampler_states[7] = {
@@ -331,7 +331,7 @@ namespace d3d
             if (FAILED(hr)) return hr;
             return dev()->SetVertexShader(s_passthrough_vs);
         }
-        // [GM80-2026-08-09] 透传 VS 槽地址: 返回 &s_passthrough_vs(变量地址, 非值)。注册到
+        // 透传 VS 槽地址: 返回 &s_passthrough_vs(变量地址, 非值)。注册到
         // GMDirectX9 后, 其 SetVertexShader 钩子读此槽识别"当前绑的是透传 VS" → 刷新 c0-c3 WVP
         // 到当前投影(surface_set_target 重设投影后不失真)。懒创建: 首次 shader_set ps-only 才非空,
         // 槽始终有效(存的是变量地址, 值创建后自动可见)。
@@ -339,7 +339,7 @@ namespace d3d
 
         // 整设备重建后: 释放惰性缓存的声明与透传 VS(旧对象已随旧设备消亡, 置空待
         // 下次 ensure_decl/set_vertex_shader_passthrough 惰性重建; FFP 注册槽存的是
-        // 变量地址, 值自动更新)。[2026-09-14]
+        // 变量地址, 值自动更新)。
         void invalidate_cached_device_objects()
         {
             if (s_decl_ext)    { s_decl_ext->Release();    s_decl_ext = nullptr; }
@@ -364,7 +364,7 @@ namespace d3d
         { return dev()->DrawPrimitive((D3DPRIMITIVETYPE)prim, start, count); }
         // Static read-only VB (freeze): MANAGED 池 —— 静态只读 VB 无需 DEFAULT 池,
         // 且 MANAGED 自动跨设备 Reset 存活(gpart 四边形/系统 id VB/vertex_freeze 共用;
-        // [2026-09-14] 设备丢失修复配套, WRITEONLY 在 MANAGED 下无意义一并去掉)。
+        // WRITEONLY 在 MANAGED 下无意义, 一并去掉)。
         HRESULT create_vertex_buffer(UINT size, void** vb)
         {
             return dev()->CreateVertexBuffer(size, 0, 0, D3DPOOL_MANAGED,

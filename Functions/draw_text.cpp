@@ -792,14 +792,9 @@ exp_real sdf_draw_get_font()
 	return (gm_real)current_sdf_glyphs->id; 
 }
 
-// ---- [2026-09-14] SDF 状态 setter 切段 ----
-// 批的观感定格取自 start_draw 时刻, 而 font_size/font_sharpness/font_thickness 是
-// end_draw 在 flush 时刻才读的 CPU 全局(换算 u_buffer/u_gamma 常量), use_shader/
-// shader 则定格进 g_sdf_snap —— 不切段的话, 同一 A8 纹理的连续文字批会把后设的
-// 值套到整批(粗细漂移=文字忽粗忽细; premul 漂移=alpha 观感不一)。
-// 设备钩子看不见 CPU 变量, 这类 setter 必须自律: 先关掉打开中的批再改值。
-// (布局期参数如 line_spacing/text_gap/对齐 在逐字顶点烘焙时已消费, 无需切段;
-//  sdf_draw_set_font 换字体纹理, inner_draw_text 的纹理比对自动切段。)
+// SDF 状态 setter 切段: font_size/sharpness/thickness 等 CPU 全局是 end_draw 在
+// flush 时刻才读的观感参数, 设备钩子看不见 —— setter 必须先切段再改值, 否则
+// 同一 A8 批内前后文字套用不同粗细/ premul(批内漂移)。换字体纹理由纹理比对切段。
 static void sdf_segment_batch()
 {
 	atlas::end_draw();
