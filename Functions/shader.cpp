@@ -445,6 +445,28 @@ exp_real shader_create_asm(const char* vs_src, const char* ps_src)
     shader_create_catch("shader_create_asm")
 }
 
+// ---- #include VFS ----
+
+// 推入/覆盖一个编译期包含(启动与热重载前全量重推; 键 = #include 引号内原文,
+// 大小写不敏感匹配)。仅 D3D9 实际生效(D3D8 接受但编译器无 include 能力)。
+exp_real shader_include_set(const char* name, const char* content)
+{
+    if (!name || !name[0] || !content) return gerror;
+    return d3d::include_set(name, content) ? gtrue : gerror;
+}
+
+exp_real shader_include_delete(const char* name)
+{
+    if (!name || !name[0]) return gerror;
+    return d3d::include_delete(name) ? gtrue : gerror;
+}
+
+exp_real shader_include_clear()
+{
+    d3d::include_clear();
+    return gtrue;
+}
+
 // ---- 销毁 / 设置 ----
 
 // 释放 vs/ps 对象 + 常量表; 清理该 shader 的 uniform map 条目(设计 §2)。
@@ -1400,14 +1422,16 @@ namespace
         std::vector<BYTE> vs, ps;
     };
 
-    // key = XXH64(src | vs_profile | vs_entry | ps_profile | ps_entry)
+    // key = XXH64(src | vs_profile | vs_entry | ps_profile | ps_entry | include_digest)
     // 空 entry 规范化为 mainVS/mainPS(与 shader_create 默认入口一致)。
     // 注意: 仅用于 key/哈希; 编译时仍按原始 entry(空 = 默认入口 passthrough 逻辑)。
+    // 末段为 #include VFS 摘要: 主源码未变但包含文件变了也能使缓存失效。
     std::string shader_cache_key(const std::string& src, const char* vs_entry, const char* ps_entry)
     {
         std::string vs = (vs_entry && vs_entry[0]) ? vs_entry : "mainVS";
         std::string ps = (ps_entry && ps_entry[0]) ? ps_entry : "mainPS";
-        return src + "|" + vs_profile() + "|" + vs + "|" + ps_profile() + "|" + ps;
+        return src + "|" + vs_profile() + "|" + vs + "|" + ps_profile() + "|" + ps
+             + "|" + d3d::include_digest();
     }
 
     std::string hash_hex(xxh::hash64_t h)

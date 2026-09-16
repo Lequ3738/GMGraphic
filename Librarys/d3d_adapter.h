@@ -98,6 +98,11 @@ namespace d3d
         // HLSL 依赖 D3DX9 常量表, D3D8 不支持 —— 桩实现(一律失败/返回空)。
         HRESULT compile_hlsl(const char*, size_t, const char*, const char*,
                              std::vector<BYTE>&, void**, std::string*);
+        // #include VFS: D3D8 无 include 能力(d3dx8 的 Assemble 无 pInclude), 桩接受但无效。
+        bool include_set(const std::string&, const std::string&);
+        bool include_delete(const std::string&);
+        void include_clear();
+        std::string include_digest();
         HRESULT constant_table_set_defaults(void*);
         void*   constant_table_get_constant_by_name(void*, const char*);
         UniformLoc constant_table_get_uniform(void*, void*);   // 返回 {寄存器号, ConstKind}; 失败 reg=-1
@@ -183,6 +188,12 @@ namespace d3d
         // 用公共 release(void*) 释放。table 可为空(如 compile_hlsl 失败时不写)。
         HRESULT compile_hlsl(const char* src, size_t len, const char* entry, const char* profile,
                              std::vector<BYTE>& code, void** table, std::string* err);
+        // #include VFS(编译期包含的内存源): 键 = #include 引号内原文, 大小写不敏感,
+        // set 为 upsert。set/delete/clear 来自 GML 主线程, Open 来自编译线程, 内部互斥。
+        bool include_set(const std::string&, const std::string&);
+        bool include_delete(const std::string&);
+        void include_clear();
+        std::string include_digest();   // 键序稳定的 name\0content 拼接, 供缓存 key 用
         HRESULT constant_table_set_defaults(void* table);
         void*   constant_table_get_constant_by_name(void* table, const char* name);
         UniformLoc constant_table_get_uniform(void* table, void* handle);        // {寄存器号, ConstKind}; 失败 reg=-1
@@ -303,6 +314,16 @@ namespace d3d
     { return version() == V9 ? impl9::constant_table_get_sampler_register(table, handle) : impl8::constant_table_get_sampler_register(table, handle); }
     inline HRESULT constant_table_from_bytecode(const void* code, size_t len, void** table)
     { return version() == V9 ? impl9::constant_table_from_bytecode(code, len, table) : impl8::constant_table_from_bytecode(code, len, table); }
+
+    // ---- #include VFS(编译期包含; 仅 D3D9 有实际作用) ----
+    inline bool include_set(const std::string& name, const std::string& content)
+    { return version() == V9 ? impl9::include_set(name, content) : impl8::include_set(name, content); }
+    inline bool include_delete(const std::string& name)
+    { return version() == V9 ? impl9::include_delete(name) : impl8::include_delete(name); }
+    inline void include_clear()
+    { if (version() == V9) impl9::include_clear(); else impl8::include_clear(); }
+    inline std::string include_digest()
+    { return version() == V9 ? impl9::include_digest() : impl8::include_digest(); }
 
     inline HRESULT set_texture(DWORD stage, void* tex)
     { return version() == V9 ? impl9::set_texture(stage, tex) : impl8::set_texture(stage, tex); }

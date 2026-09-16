@@ -3,6 +3,9 @@
 #include <cstring>
 #include <cstdint>
 #include <cstdio>
+#include <cctype>
+#include <map>
+#include <mutex>
 #include "d3d_adapter.h"
 #include "../Direct3D_9/d3dx9.h"
 
@@ -44,6 +47,85 @@ namespace d3d
             s_load_surf = (D3DX9_LOAD_SURFACE_FROM_SURFACE)GetProcAddress(s_d3dx9, "D3DXLoadSurfaceFromSurface");
             return s_assemble && s_compile && s_get_ct && s_load_mem && s_load_surf;
         }
+
+        // ---- #include VFS: 编译期包含的内存源 ----
+        // 键 = #include "x" 引号内原文(不做路径解释), 值 = 内容。大小写不敏感匹配
+        // (贴合 Windows 文件系统直觉), 经 CiLess 排序使键序确定(缓存摘要依赖此)。
+        // set/delete/clear 来自 GML(主线程), Open 来自编译线程 —— 互斥保护; 编译期间
+        // 禁止 mutate(Open 虽拷出快照, 规则上仍禁止, 便于推理)。
+        struct CiLess
+        {
+            bool operator()(const std::string& a, const std::string& b) const
+            {
+                size_t n = a.size() < b.size() ? a.size() : b.size();
+                for (size_t i = 0; i < n; ++i)
+                {
+                    int ca = tolower((unsigned char)a[i]), cb = tolower((unsigned char)b[i]);
+                    if (ca != cb) return ca < cb;
+                }
+                return a.size() < b.size();
+            }
+        };
+        static std::mutex s_include_mtx;
+        static std::map<std::string, std::string, CiLess> s_include_map;
+
+        bool include_set(const std::string& name, const std::string& content)
+        {
+            if (name.empty()) return false;
+            std::lock_guard<std::mutex> lk(s_include_mtx);
+            s_include_map[name] = content;
+            return true;
+        }
+        bool include_delete(const std::string& name)
+        {
+            std::lock_guard<std::mutex> lk(s_include_mtx);
+            return s_include_map.erase(name) > 0;
+        }
+        void include_clear()
+        {
+            std::lock_guard<std::mutex> lk(s_include_mtx);
+            s_include_map.clear();
+        }
+        // 缓存 key 摘要(name\0content 拼接): 主源码未变但包含文件变了也能使缓存失效。
+        std::string include_digest()
+        {
+            std::lock_guard<std::mutex> lk(s_include_mtx);
+            std::string d;
+            for (std::map<std::string, std::string, CiLess>::const_iterator it = s_include_map.begin();
+                 it != s_include_map.end(); ++it)
+                d += it->first + '\0' + it->second + '\0';
+            return d;
+        }
+
+        // ID3DXInclude 是独立接口(非 IUnknown 派生), 仅 Open/Close 两个纯虚。
+        // Open 从 VFS 拷出内容快照返回; Close 释放(编译失败也保证逐缓冲调用)。未命中
+        // 返回 E_FAIL → 编译器报 cannot open include file, 走行号诊断。
+        class IncludeVfs : public ID3DXInclude
+        {
+            HRESULT __stdcall Open(D3DXINCLUDE_TYPE, LPCSTR name, LPCVOID,
+                                   LPCVOID* data, UINT* bytes) override
+            {
+                if (!name || !name[0] || !data || !bytes) return E_INVALIDARG;
+                std::string content;
+                {
+                    std::lock_guard<std::mutex> lk(s_include_mtx);
+                    std::map<std::string, std::string, CiLess>::const_iterator it = s_include_map.find(name);
+                    if (it == s_include_map.end()) return E_FAIL;
+                    content = it->second;
+                }
+                char* buf = new char[content.size()];
+                memcpy(buf, content.data(), content.size());
+                *data = buf;
+                *bytes = (UINT)content.size();
+                return S_OK;
+            }
+            HRESULT __stdcall Close(LPCVOID data) override
+            {
+                delete[] static_cast<const char*>(data);
+                return S_OK;
+            }
+        };
+        static IncludeVfs s_include_vfs;
 
         // ---- 同签名转发(与 D3D8 签名逐字相同, 仅 vtable 槽位不同) ----
         HRESULT set_render_state(DWORD s, DWORD v)
@@ -163,7 +245,7 @@ namespace d3d
         {
             if (!load_d3dx9()) return E_FAIL;
             LPD3DXBUFFER shader = nullptr, errors = nullptr;
-            HRESULT hr = s_assemble(src, (UINT)len, nullptr, nullptr, 0, &shader, &errors);
+            HRESULT hr = s_assemble(src, (UINT)len, nullptr, &s_include_vfs, 0, &shader, &errors);
             if (FAILED(hr))
             {
                 if (err && errors)
@@ -483,7 +565,7 @@ namespace d3d
             if (!load_d3dx9()) return E_FAIL;
             LPD3DXBUFFER shader = nullptr, errors = nullptr;
             ID3DXConstantTable* ct = nullptr;
-            HRESULT hr = s_compile(src, (UINT)len, nullptr, nullptr, entry, profile, 0,
+            HRESULT hr = s_compile(src, (UINT)len, nullptr, &s_include_vfs, entry, profile, 0,
                                    &shader, &errors, &ct);
             if (FAILED(hr))
             {

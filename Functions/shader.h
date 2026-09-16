@@ -29,6 +29,12 @@ bool device_ps_bound();
 // D3DX 编译诊断 → 短报错: 错误行 + 对应源行与列位指示(^), 不倾倒全量源码。
 std::string format_shader_error(const std::string& err, const char* src);
 
+// #include VFS: 编译期包含的内存源(仅 D3D9 实际生效)。键 = #include "x" 引号内
+// 原文, 大小写不敏感; set 为 upsert。启动与热重载前应全量重推(shaderDir\*.hlsli)。
+exp_real shader_include_set(const char* name, const char* content);
+exp_real shader_include_delete(const char* name);
+exp_real shader_include_clear();
+
 namespace gm
 {
 	extern int argument_list;
