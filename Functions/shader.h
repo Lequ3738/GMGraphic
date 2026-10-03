@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "../main.h"
 #include "structs.h"
 #include <functional>
@@ -74,7 +74,7 @@ exp_real shader_set_uniform_f(double h, double x, double y, double z, double w);
 exp_real shader_set_uniform_i(double h, double x, double y, double z, double w);
 exp_real shader_set_uniform_b(double h, double x, double y, double z, double w);
 exp_real shader_set_uniform_color(double h, double col, double alpha);
-// mtx_type 掩码: world=1 / view=2 / projection=4 / wvp=7(gm82dx9 式)。size = 写几个寄存器(默认 4)。
+// mtx_type 掩码: world=1 / view=2 / projection=4 / wvp=7。size = 写几个寄存器(默认 4)。
 exp_real shader_set_uniform_matrix(double h, double mtx_type, double size);
 
 // ---- 用户 shader 字节码缓存 + 异步编译(DX9 专属; asm 不支持缓存) ----

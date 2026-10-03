@@ -1,4 +1,4 @@
-#include "math_s.h"
+﻿#include "math_s.h"
 #include "shader.h"
 #include "draw_text.h"
 #include "pixel_shader_defs.h"
@@ -401,7 +401,7 @@ exp_real shader_create(const char* src, const char* vs_entry, const char* ps_ent
     shader_create_catch("shader_create")
 }
 
-// 创建 asm 着色器(D3D8/9 通用)。vs/ps 空字符串 = 不用该阶段; 双空返回 -1(设计 §1)。
+// 创建 asm 着色器(D3D8/9 通用)。vs/ps 空字符串 = 不用该阶段; 双空返回 -1。
 exp_real shader_create_asm(const char* vs_src, const char* ps_src)
 {
     ShaderBundle b;
@@ -469,7 +469,7 @@ exp_real shader_include_clear()
 
 // ---- 销毁 / 设置 ----
 
-// 释放 vs/ps 对象 + 常量表; 清理该 shader 的 uniform map 条目(设计 §2)。
+// 释放 vs/ps 对象 + 常量表; 清理该 shader 的 uniform map 条目。
 exp_real shader_destroy(double sh)
 {
     try
@@ -678,7 +678,7 @@ exp_real shader_get_sampler_index(double sh, const char* uni)
 
 // ---- uniform 写入(固定参导出, GML 层变参脚本分发到 _4f/_4i/_4b) ----
 
-// 查句柄 → 按结构体写对应阶段(设计 §2: 对 -1 的阶段跳过)。
+// 查句柄 → 按结构体写对应阶段(-1 的阶段跳过)。
 // 非法句柄 / D3D 调用失败 → 抛异常, 由各导出 try/simple_catch 统一兜底(弹错误框)。
 static void uniform_set_impl(double h, const float v[4])
 {
@@ -764,8 +764,8 @@ static void mat_mul(float* c, const float* a, const float* b)
     }
 }
 
-// 设矩阵 uniform。mtx_type 掩码: world=1 / view=2 / projection=4 / wvp=7(gm82dx9 式)。
-// size = 写几个寄存器(默认 4)。行主序直写不转置(与 gm82dx9 一致, HLSL 用 mul(pos, mtx))。
+// 设矩阵 uniform。mtx_type 掩码: world=1 / view=2 / projection=4 / wvp=7。
+// size = 写几个寄存器(默认 4)。行主序直写不转置(HLSL 用 mul(pos, mtx))。
 exp_real shader_set_uniform_matrix(double h, double mtx_type, double size)
 {
     try
@@ -941,7 +941,7 @@ exp_real gpu_set_texrepeat_ext(double sampler, double h, double v, double border
         return gerror;
 
     dword u = (dword)h, w = (dword)v;
-    if (u == 0) u = D3DTADDRESS_CLAMP;   // 0 = clamp(gm82dx9 式)
+    if (u == 0) u = D3DTADDRESS_CLAMP;   // 0 = clamp
     if (w == 0) w = D3DTADDRESS_CLAMP;
 
     // D3D9: D3DSAMP_ADDRESSU=1/ADDRESSV=2/BORDERCOLOR=4
