@@ -610,6 +610,9 @@ namespace d3d
             UINT count = 1;
             if (FAILED(((ID3DXConstantTable*)table)->GetConstantDesc((D3DXHANDLE)handle, &desc, &count)))
                 return loc;
+            // 采样器在独立寄存器空间, 按常量寄存器写会串进同名 c 槽 → 判为无效
+            if (desc.RegisterSet == D3DXRS_SAMPLER)
+                return loc;
             loc.reg = (int)desc.RegisterIndex;
             loc.count = (int)desc.RegisterCount;
             // 寄存器组决定写入路径: SM3.0 int→INT4/bool→BOOL, SM2.0 全在 FLOAT4。
@@ -630,7 +633,9 @@ namespace d3d
             UINT count = 1;
             if (FAILED(((ID3DXConstantTable*)table)->GetConstantDesc((D3DXHANDLE)handle, &desc, &count)))
                 return -1;
-            if (desc.Class != D3DXPC_OBJECT || desc.Type != D3DXPT_SAMPLER)
+            // 采样器判定认寄存器组: sampler2D 编译后 Class/Type 报 MATRIX/SAMPLER2D
+            // 而非 OBJECT/SAMPLER, 只有 D3DXRS_SAMPLER 对全部采样器类型都成立。
+            if (desc.RegisterSet != D3DXRS_SAMPLER)
                 return -1;
             return (int)desc.RegisterIndex;
         }

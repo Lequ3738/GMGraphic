@@ -50,6 +50,7 @@ struct ShaderBundle
     void* vs_table = nullptr; // ID3DXConstantTable*(HLSL 编译才有); asm 恒 NULL
     dword ps = NULL;
     void* ps_table = nullptr;
+    std::unordered_map<std::string, int> uniform_cache;   // 名字 → 句柄备忘：同名重查返回同一句柄，不向 uniforms 表重复插入
 };
 
 struct UniformHandle
@@ -573,6 +574,10 @@ exp_real shader_get_uniform(double sh, const char* uni)
     const char* name = nullptr;
     int prefix = parse_prefix(uni, &name);
 
+    // 备忘命中直接返回；键取原始实参，ps./vs. 前缀变体各自成键，语义与逐次查询一致
+    auto hit = b.uniform_cache.find(uni);
+    if (hit != b.uniform_cache.end()) return (double)hit->second;
+
     UniformHandle uh;
     uh.owner_shader = id;
 
@@ -618,6 +623,7 @@ exp_real shader_get_uniform(double sh, const char* uni)
 
     int hid = uniform_counter++;
     uniforms.emplace(hid, uh);
+    b.uniform_cache.emplace(uni, hid);
     return (double)hid;
 }
 
@@ -661,7 +667,7 @@ exp_real shader_get_sampler_index(double sh, const char* uni)
         return (double)atoi(name);
     }
 
-    // HLSL: 查 ps 表优先, 其次 vs 表; 只认采样器(D3DXPC_OBJECT + D3DXPT_SAMPLER)。
+    // HLSL: 查 ps 表优先, 其次 vs 表; 只认采样器(按寄存器组判定, 采样器不占常量寄存器空间)。
     void* h = nullptr;
     if ((prefix == 0 || prefix == 1) && b.ps_table)
         h = d3d::constant_table_get_constant_by_name(b.ps_table, name);
