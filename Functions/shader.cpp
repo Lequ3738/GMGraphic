@@ -613,10 +613,13 @@ exp_real shader_get_uniform(double sh, const char* uni)
     }
     else
     {
-        int reg = atoi(name);
-        if (prefix == 0)      { uh.ps_reg = reg; uh.vs_reg = reg; }
-        else if (prefix == 1) { uh.ps_reg = reg; uh.vs_reg = -1; }
-        else                  { uh.ps_reg = -1; uh.vs_reg = reg; }
+        // asm 句柄只认纯数字寄存器串; 非数字(HLSL 习惯名/手误)报 -1, 不得静默落成 0 号寄存器
+        char* end = nullptr;
+        long reg = strtol(name, &end, 10);
+        if (end == name || *end != '\0') return gerror;
+        if (prefix == 0)      { uh.ps_reg = (int)reg; uh.vs_reg = (int)reg; }
+        else if (prefix == 1) { uh.ps_reg = (int)reg; uh.vs_reg = -1; }
+        else                  { uh.ps_reg = -1; uh.vs_reg = (int)reg; }
     }
 
     if (uh.ps_reg < 0 && uh.vs_reg < 0) return gerror;
@@ -663,8 +666,11 @@ exp_real shader_get_sampler_index(double sh, const char* uni)
 
     if (!b.ps_table && !b.vs_table)
     {
-        // asm: 数字字符串转整数
-        return (double)atoi(name);
+        // asm: 只认纯数字采样器号, 非数字报 -1; 与 shader_get_uniform 的 asm 侧同一口径
+        char* end = nullptr;
+        long reg = strtol(name, &end, 10);
+        if (end == name || *end != '\0') return gerror;
+        return (double)reg;
     }
 
     // HLSL: 查 ps 表优先, 其次 vs 表; 只认采样器(按寄存器组判定, 采样器不占常量寄存器空间)。
@@ -694,13 +700,15 @@ static void uniform_set_impl(double h, const float v[4])
 
     const UniformHandle& uh = it->second;
     // 按寄存器类型分发(SM3.0 int→SetI/bool→SetB, SM2.0 恒 float→SetF)。
-    // BOOL 写 RegisterCount 个(标量=1/bool4=4); 矩阵 uniform(RegisterCount=4)也避免越界读。
+    // BOOL 寄存器是标量库, 每寄存器吃 v 的 1 个分量, 数量钳到 4 —— 导出只有 4 个 float,
+    // 更长的 bool 数组经本 API 只能写前 4 个; FLOAT/INT 恒 1 个寄存器, 矩阵走
+    // shader_set_uniform_matrix(自带 16 float 缓冲)。
+    const DWORD ps_n = (uh.ps_kind == d3d::CK_BOOL) ? (DWORD)(uh.ps_count < 4 ? uh.ps_count : 4) : 1;
+    const DWORD vs_n = (uh.vs_kind == d3d::CK_BOOL) ? (DWORD)(uh.vs_count < 4 ? uh.vs_count : 4) : 1;
     if (uh.ps_reg >= 0)
-        D3DCheck(d3d::set_ps_const_typed((DWORD)uh.ps_reg, (d3d::ConstKind)uh.ps_kind, v,
-            (uh.ps_kind == d3d::CK_BOOL) ? (DWORD)uh.ps_count : 1), 1);
+        D3DCheck(d3d::set_ps_const_typed((DWORD)uh.ps_reg, (d3d::ConstKind)uh.ps_kind, v, ps_n), 1);
     if (uh.vs_reg >= 0)
-        D3DCheck(d3d::set_vs_const_typed((DWORD)uh.vs_reg, (d3d::ConstKind)uh.vs_kind, v,
-            (uh.vs_kind == d3d::CK_BOOL) ? (DWORD)uh.vs_count : 1), 2);
+        D3DCheck(d3d::set_vs_const_typed((DWORD)uh.vs_reg, (d3d::ConstKind)uh.vs_kind, v, vs_n), 2);
 }
 
 exp_real shader_set_uniform_f(double h, double x, double y, double z, double w)

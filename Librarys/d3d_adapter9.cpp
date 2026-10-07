@@ -288,7 +288,8 @@ namespace d3d
             }
             case CK_BOOL:
             {
-                std::vector<BOOL> bv((size_t)count * 4);
+                // BOOL 是标量寄存器库: count 个寄存器吃 v 的前 count 个分量(FLOAT/INT 才是每寄存器 4 分量)
+                std::vector<BOOL> bv((size_t)count);
                 for (size_t i = 0; i < bv.size(); ++i) bv[i] = (v[i] >= 0.5f) ? TRUE : FALSE;
                 return dev()->SetPixelShaderConstantB(reg, bv.data(), count);
             }
@@ -547,7 +548,8 @@ namespace d3d
             }
             case CK_BOOL:
             {
-                std::vector<BOOL> bv((size_t)count * 4);
+                // BOOL 是标量寄存器库: count 个寄存器吃 v 的前 count 个分量(FLOAT/INT 才是每寄存器 4 分量)
+                std::vector<BOOL> bv((size_t)count);
                 for (size_t i = 0; i < bv.size(); ++i) bv[i] = (v[i] >= 0.5f) ? TRUE : FALSE;
                 return dev()->SetVertexShaderConstantB(reg, bv.data(), count);
             }
