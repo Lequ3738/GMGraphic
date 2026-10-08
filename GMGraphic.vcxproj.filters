@@ -632,6 +632,9 @@
     <ClCompile Include="Functions\gpart.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="Functions\window.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
     <ClCompile Include="Librarys\string_make.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
