@@ -11,7 +11,7 @@ uint texture_atlas_id_position = 1,
 
 enum class file_type { gmspr, png };
 
-bool texture_atlas::texture_amplification = false;
+uint texture_atlas::texture_amplify_mask = 0;
 
 texture_atlas::texture_atlas(uint size, uint id)
 {
@@ -87,55 +87,52 @@ texture_atlas::~texture_atlas()
 #endif
 }
 
-void texture_atlas::add_image_to_memory(std::vector<uchar>& image_data, 
+void texture_atlas::add_image_to_memory(std::vector<uchar>& image_data,
 	copy_image_rect& rect)
 {
 	try
 	{
+		// 边带样本源始终经 clamp 取到边缘行/列，掩码只决定每边写法：
+		// 0 = 写边缘 RGB 并清 alpha，1 = 复制边缘整像素；角像素随相邻两边中较强的一档（扩张优先）。
 		if (!rect.is_rotated)
 		{
-			int top = 0, bottom = (int)rect.texture_height - 1;
-			if (texture_amplification)
-			{
-				top = -1;
-				bottom = (int)rect.texture_height;
-			}
-
 			// 上下各扩增1像素，以匹配 GameMaker 在边缘插值的特性
-			for (int y = top; y <= bottom; ++y)
+			for (int y = -1; y <= (int)rect.texture_height; ++y)
 			{
-				uint dst_y = rect.draw_y + (uint)y;
+				bool band_row = (y < 0 || y >= (int)rect.texture_height);
 				uint src_y = (rect.bleed_y + (uint)std::clamp(y, 0, (int)rect.texture_height - 1));
 
-				uchar* const dst_ptr = data.data() + (dst_y * size + rect.draw_x) * 4;
-				const uchar* const src_ptr = image_data.data() + (src_y * rect.image_width + 
+				uchar* const dst_ptr = data.data() + ((rect.draw_y + (uint)y) * size + rect.draw_x) * 4;
+				const uchar* const src_ptr = image_data.data() + (src_y * rect.image_width +
 					rect.bleed_x) * 4;
 
-				std::memcpy(dst_ptr, src_ptr, rect.texture_width * 4);
-
-				if (!texture_amplification)
-				{
-					uchar* edge_ptr = dst_ptr - 4;
-					edge_ptr[0] = src_ptr[0]; // B
-					edge_ptr[1] = src_ptr[1]; // G
-					edge_ptr[2] = src_ptr[2]; // R
-					edge_ptr[3] = 0;          // A强制为0
-
-					const uchar* right_ptr = src_ptr + (rect.texture_width - 1) * 4;
-					edge_ptr = dst_ptr + rect.texture_width * 4;
-					edge_ptr[0] = right_ptr[0]; // B
-					edge_ptr[1] = right_ptr[1]; // G
-					edge_ptr[2] = right_ptr[2]; // R
-					edge_ptr[3] = 0;            // A强制为0
-				}
+				if (!band_row)
+					std::memcpy(dst_ptr, src_ptr, rect.texture_width * 4);
 				else
 				{
-					*((uint32_t*)(dst_ptr - 4)) = *(uint32_t*)src_ptr;  // 处理左边缘重复
+					uint band_bit = (y < 0 ? ATLAS_BAND_TOP : ATLAS_BAND_BOTTOM);
+					bool expand = (rect.amplify_mask & band_bit) != 0;
 
-					// 处理右边缘重复
-					uint32_t right_pixel = *(uint32_t*)(src_ptr + (rect.texture_width - 1) * 4);
-					*(uint32_t*)(dst_ptr + rect.texture_width * 4) = right_pixel;
+					for (uint x = 0; x < rect.texture_width; ++x)
+					{
+						uint32_t px = *(uint32_t*)(src_ptr + x * 4);
+						((uint32_t*)dst_ptr)[x] = expand ? px : (px & 0x00FFFFFF);
+					}
 				}
+
+				// 行首行尾的左右边带像素；在边带行上同时就是角像素，随上/下边共同判定
+				uint band_bit_v = (y < 0 ? ATLAS_BAND_TOP : (y >= (int)rect.texture_height ?
+					ATLAS_BAND_BOTTOM : 0));
+
+				uint32_t left_px = *(uint32_t*)src_ptr;
+				uint32_t right_px = *(uint32_t*)(src_ptr + (rect.texture_width - 1) * 4);
+
+				((uint32_t*)dst_ptr)[-1] =
+					((rect.amplify_mask & (ATLAS_BAND_LEFT | band_bit_v)) != 0) ?
+					left_px : (left_px & 0x00FFFFFF);
+				((uint32_t*)dst_ptr)[rect.texture_width] =
+					((rect.amplify_mask & (ATLAS_BAND_RIGHT | band_bit_v)) != 0) ?
+					right_px : (right_px & 0x00FFFFFF);
 			}
 		}
 		else
@@ -143,45 +140,44 @@ void texture_atlas::add_image_to_memory(std::vector<uchar>& image_data,
 			uint dest_w = rect.texture_height;
 			uint dest_h = rect.texture_width;
 
-			int left = 0, right = (int)dest_w - 1, top = 0, bottom = (int)dest_h - 1;
-			if (texture_amplification)
-			{
-				left = -1;
-				right = (int)dest_w;
-				top = -1;
-				bottom = (int)dest_h;
-			}
-
-			for (int v = top; v <= bottom; ++v)
-			{
-				for (int u = left; u <= right; ++u)
+			// 旋转 90 度存储时图集方向与源图方向的边带对应关系：
+			// 图集左/右带 ← 源图下/上边，图集上/下带 ← 源图左/右边
+				for (int v = -1; v <= (int)dest_h; ++v)
 				{
-					uchar* const dst_pixel = data.data() + ((rect.draw_y + v) * 
-						size + rect.draw_x + u) * 4;
-
-					const uint src_x = rect.bleed_x + (uint)std::clamp(v, 0, (int)dest_h - 1);
-					const uint src_y = rect.bleed_y + (rect.texture_height - 1 - 
-						(uint)std::clamp(u, 0, (int)dest_w - 1));
-
-					const uchar* src_pixel = image_data.data() + (src_y * 
-						rect.image_width + src_x) * 4;
-
-					bool is_edge = (u < 0 || u >= (int)dest_w || v < 0 || v >= (int)dest_h);
-					if (texture_amplification || !is_edge)
-						*(uint32_t*)dst_pixel = *(uint32_t*)src_pixel;
-					else
+					for (int u = -1; u <= (int)dest_w; ++u)
 					{
-						dst_pixel[0] = src_pixel[0]; // B
-						dst_pixel[1] = src_pixel[1]; // G
-						dst_pixel[2] = src_pixel[2]; // R
-						dst_pixel[3] = 0;            // A强制为0
+						uchar* const dst_pixel = data.data() + ((rect.draw_y + v) *
+							size + rect.draw_x + u) * 4;
+
+						const uint src_x = rect.bleed_x + (uint)std::clamp(v, 0, (int)dest_h - 1);
+						const uint src_y = rect.bleed_y + (rect.texture_height - 1 -
+							(uint)std::clamp(u, 0, (int)dest_w - 1));
+
+						const uchar* src_pixel = image_data.data() + (src_y *
+							rect.image_width + src_x) * 4;
+
+						if (u >= 0 && u < (int)dest_w && v >= 0 && v < (int)dest_h)
+						{
+							*(uint32_t*)dst_pixel = *(uint32_t*)src_pixel;
+							continue;
+						}
+
+						// 边带与角像素才按掩码取值；角像素命中两条带，扩张优先
+						uint band_bits = 0;
+						if (u < 0) band_bits |= ATLAS_BAND_BOTTOM;
+						if (u >= (int)dest_w) band_bits |= ATLAS_BAND_TOP;
+						if (v < 0) band_bits |= ATLAS_BAND_LEFT;
+						if (v >= (int)dest_h) band_bits |= ATLAS_BAND_RIGHT;
+
+						uint32_t px = *(uint32_t*)src_pixel;
+						*(uint32_t*)dst_pixel = ((rect.amplify_mask & band_bits) != 0) ?
+							px : (px & 0x00FFFFFF);
 					}
 				}
-			}
 		}
 	}
 	transpond_catch("texture_atlas::add_image_to_memory(std::vector<uchar>&," 
-		"images::sub_image&, copy_image_rect&)")
+		"copy_image_rect&)")
 }
 
 // 判断某帧是否为"真空帧"。cropped_rect 为 {0,0,0,0} 既可能是真空帧,
@@ -294,8 +290,9 @@ int texture_atlas::add_image(gm::sprite& spr)
 				.bleed_x = (uint)spr.cropped_rects[i].left,
 				.bleed_y = (uint)spr.cropped_rects[i].top,
 				.image_width = spr.width, .image_height = spr.height,
-				
-				.is_rotated = is_rotated
+
+				.is_rotated = is_rotated,
+				.amplify_mask = texture_amplify_mask
 			};
 
 			add_image_to_memory(spr.data[i], rect);
@@ -1102,13 +1099,53 @@ exp_real texture_atlas_get_crop() { return gm::crop_blank; }
 
 exp_real texture_atlas_set_amplificate(gm_real ampl)
 {
-	texture_atlas::texture_amplification = (ampl >= 0.5);
+	texture_atlas::texture_amplify_mask = (ampl >= 0.5) ? ATLAS_BAND_ALL : 0;
 	return gtrue;
 }
 
 exp_real texture_atlas_get_amplificate()
 {
-	return texture_atlas::texture_amplification;
+	return texture_atlas::texture_amplify_mask == ATLAS_BAND_ALL;
+}
+
+exp_real texture_atlas_set_amplificate_mask(gm_real mask)
+{
+	texture_atlas::texture_amplify_mask = (uint)mask & ATLAS_BAND_ALL;
+	return gtrue;
+}
+
+exp_real texture_atlas_get_amplificate_mask()
+{
+	return texture_atlas::texture_amplify_mask;
+}
+
+exp_real texture_atlas_set_origin(gm_real id, gm_real x, gm_real y)
+{
+	try
+	{
+		// 原生精灵委托原生行为；图集图像按多帧统一生效设置原点。
+		// 图集侧只改元数据不动像素，burn 前后与缓存加载后均可调用
+		if (id < IMAGE_START_POSITION)
+		{
+			gm::sprite_set_offset((int)id, (int)x, (int)y);
+			return gtrue;
+		}
+
+		// find 守卫：id 无效时静默返 0，不弹错误框（setter 的文档契约）
+		auto it = game_images.find((uint)id);
+		if (it == game_images.end())
+			return 0;
+		texture_atlas::images* image = it->second;
+		for (auto& sub : image->frames)
+		{
+			if (sub == nullptr)  // 空白帧
+				continue;
+			sub->orig_x = (int)x;
+			sub->orig_y = (int)y;
+		}
+		return gtrue;
+	}
+	simple_catch("texture_atlas_set_origin", 0)
 }
 
 #pragma endregion

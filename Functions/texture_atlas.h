@@ -6,6 +6,14 @@
 constexpr uint IMAGE_START_POSITION = 100000;
 constexpr uint TEXTURE_START_POSITION = 1000000;
 
+// 子图边带的逐边写入策略：bit0..3 = 源图左/右/上/下边。
+// 0 = 写边缘 RGB 并清 alpha（保色淡出），1 = 复制边缘整像素（边缘扩张）。
+constexpr uint ATLAS_BAND_LEFT = 0x1;
+constexpr uint ATLAS_BAND_RIGHT = 0x2;
+constexpr uint ATLAS_BAND_TOP = 0x4;
+constexpr uint ATLAS_BAND_BOTTOM = 0x8;
+constexpr uint ATLAS_BAND_ALL = 0xF;
+
 struct copy_image_rect
 {
 	uint draw_x = 0;
@@ -19,6 +27,7 @@ struct copy_image_rect
 	uint image_height = 0;
 
 	bool is_rotated = false;
+	uint amplify_mask = 0;  // 本子图边带的逐边写入策略（加入图集时从 texture_amplify_mask 快照）
 };
 
 /// 纹理图集结构体。
@@ -84,7 +93,8 @@ struct texture_atlas
 
 	uint id = 0;							// 纹理图集 ID
 
-	static bool texture_amplification;		// 是否按照“边缘像素重复”的方式添加纹理到纹理图集中
+	// 当前的边带写入策略（ATLAS_BAND_* 位组合），add_image 时快照进各子图
+	static uint texture_amplify_mask;
 
 	/// 创建新的纹理图集。size: 256/512/1024/2048；id: game_texture_atlas 的 ID。
 	texture_atlas(uint size, uint id);
@@ -175,3 +185,6 @@ exp_real texture_atlas_set_crop(gm_real crop);
 exp_real texture_atlas_get_crop();
 exp_real texture_atlas_set_amplificate(gm_real ampl);
 exp_real texture_atlas_get_amplificate();
+exp_real texture_atlas_set_amplificate_mask(gm_real mask);
+exp_real texture_atlas_get_amplificate_mask();
+exp_real texture_atlas_set_origin(gm_real id, gm_real x, gm_real y);
