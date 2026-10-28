@@ -71,7 +71,9 @@ constexpr int GP_GRID = 256;              // state texture grid size (256x256 = 
 constexpr int GP_MAX_CAPACITY = 65536;    // hard cap
 constexpr int GP_MAX_BATCHES = 16;        // spawn batches per evolution pass chunk(ps_3_0 指令预算限制循环展开, 实测仅 ~24 批; 16 保守, 多块演化兜底)
 constexpr int GP_TYPE_TEX_W = 256;        // type table texture width (max 256 types)
-constexpr int GP_TYPE_TEX_H = 14;         // float4 texels per type (0..9 参数, 10/11 = step/death, 12 = 渲染尺寸, 13 = 方向增量/摆动)
+constexpr int GP_TYPE_TEX_H = 16;         // float4 texels per type (0..9 参数, 10/11 = step/death, 12 = 渲染尺寸, 13 = 方向增量/摆动, 14 = 深度分桶, 15 = 帧率/循环模式)
+// 类型表行数与 shader 里 TYPE_ROWS_INV 是同一契约的两半: 改这里必须同步改
+// rnd_vs.hlsl / evo_ps.hlsl 的 TYPE_ROWS_INV, 漏改一处即采样错位读相邻行且不报错。
 constexpr int GP_ATLAS_SIZE = 1024;       // particle atlas texture size (px)
 constexpr int GP_ATLAS_TILE = 64;         // built-in shape tile size (px, 16 per row)
 constexpr int GP_RECT_TEX_FRAMES = 32;    // rect table rows per type = 每类型最大帧数(采集/存储共用上限; 提升时须同步 RND_PS 的 /32.0)
@@ -83,7 +85,7 @@ exp_real gpart_gpu_init(const char* cache_dir);
 exp_real gpart_set_premul(double mode);
 exp_real gpart_set_pixelsnap(double mode);   // gpart 扩展: 像素对齐(-1 自动/0 关/1 开)
 
-// ---- exports: system (9) ----
+// ---- exports: system (10) ----
 exp_real gpart_system_create(double capacity);
 exp_real gpart_system_destroy(double sys);
 exp_real gpart_system_exists(double sys);
@@ -93,6 +95,7 @@ exp_real gpart_system_drawit(double sys);
 exp_real gpart_system_draw_order(double sys, double oldtonew);
 exp_real gpart_system_position(double sys, double x, double y);
 exp_real gpart_system_capacity(double sys);
+exp_real gpart_system_pause(double sys, double paused);
 
 // ---- exports: particles (5) ----
 exp_real gpart_particles_create(double sys, double x, double y, double parttype, double number);
@@ -101,7 +104,7 @@ exp_real gpart_particles_create_box(double sys, double x, double y, double partt
 exp_real gpart_particles_clear(double sys);
 exp_real gpart_particles_count(double sys);
 
-// ---- exports: types (24) ----
+// ---- exports: types (27) ----
 exp_real gpart_type_create();
 exp_real gpart_type_destroy(double type);
 exp_real gpart_type_exists(double type);
@@ -130,6 +133,9 @@ exp_real gpart_type_alpha3(double type, double a1, double a2, double a3);
 exp_real gpart_type_blend(double type, double additive);
 exp_real gpart_type_orientation(double type, double ang_min, double ang_max, double ang_incr, double ang_wiggle, double ang_relative);
 exp_real gpart_type_flip_random(double type, double flip);   // gpart 扩展: 随机双向镜像
+exp_real gpart_type_depth_bucket(double type, double bucket);   // gpart 扩展: 绘制深度分桶(0-3, 越大越靠前)
+exp_real gpart_type_frame_rate(double type, double fps);        // gpart 扩展: 动画帧率(每步帧数, 0 = 跟随寿命)
+exp_real gpart_type_frame_loop(double type, double mode);       // gpart 扩展: 帧率循环模式(0 单次/1 循环/2 往返)
 
 // ---- exports: emitters (10) ----
 exp_real gpart_emitter_create(double sys);

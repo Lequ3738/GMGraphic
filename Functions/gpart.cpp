@@ -47,7 +47,7 @@ static const int EVO_C_BATCHES = 8;   // 16 批 × 4 float4(c8..c71, ps_3_0 常�
 static const int EVO_C_EFF = 6;       // (.x=attractor 数, .y=destroyer 数, .z=deflector 数)
 static const int RND_C_WVP = 0;       // float4x4 (c0..c3)
 static const int RND_C_SYS = 4;       // (sys_x, sys_y, invGrid, pixelsnap)
-static const int RND_C_BLEND = 5;     // (当前遍混合模式: 0=普通, 1=加法)
+static const int RND_C_BLEND = 5;     // (.x=当前遍混合模式 0=普通/1=加法, .y=预乘输出, .z=当前深度桶号)
 
 static const int GP_TYPE_ROWS = GP_TYPE_TEX_H;   // 类型表纹理行数(与 gpart.h 一致)
 static const int GP_QUAD_VERTS = 4;
@@ -73,6 +73,8 @@ enum class GTypeRow : size_t
     FeatureFlags = 11,
     RenderSize = 12,
     DirectionExt = 13,   // 方向增量/摆动(每步方向 += incr + ±wiggle, GM8 part_type_direction)
+    DepthBucket = 14,    // 绘制分桶号(0-3), 存 .x
+    FrameRate = 15,      // .x = 帧率(每步帧数, 0 = 跟随寿命), .y = 循环模式(0 单次/1 循环/2 往返)
 };
 
 // ============================================================================
@@ -240,6 +242,14 @@ struct GType
     float& speed_increment() { return field(GTypeRow::DirectionExt, 2); }
     float& speed_wiggle() { return field(GTypeRow::DirectionExt, 3); }
 
+    float& depth_bucket() { return field(GTypeRow::DepthBucket, 0); }
+    const float& depth_bucket() const { return field(GTypeRow::DepthBucket, 0); }
+
+    float& frame_rate() { return field(GTypeRow::FrameRate, 0); }
+    float& frame_loop() { return field(GTypeRow::FrameRate, 1); }
+    const float& frame_rate() const { return field(GTypeRow::FrameRate, 0); }
+    const float& frame_loop() const { return field(GTypeRow::FrameRate, 1); }
+
     void set_defaults()
     {
         life_min() = life_max() = 100;
@@ -249,6 +259,7 @@ struct GType
         direction_min() = direction_max() = 0;
         direction_increment() = direction_wiggle() = 0;
         speed_increment() = speed_wiggle() = 0;
+        depth_bucket() = 0;   // 默认桶 0: 未配置的类型与单桶行为完全等价
         gravity_direction() = 270;
         gravity_amount() = drag() = additive() = 0;
         scale_x() = scale_y() = 1;
@@ -263,6 +274,7 @@ struct GType
         relative_angle() = 0;
         frame_count() = animation_enabled() = stretch_animation() = 0;
         random_frame_flag() = 0;
+        frame_rate() = frame_loop() = 0;   // 0 = 跟随寿命, 与无帧率配置的行为一致
         step_number() = step_type_id() = death_number() = death_type_id() = 0;
         field(GTypeRow::FeatureFlags, 0) = field(GTypeRow::FeatureFlags, 1) =
             field(GTypeRow::FeatureFlags, 2) = 0;
@@ -401,6 +413,12 @@ struct GSystem
     void* id_vb = nullptr;
     // 系统内已使用过的混合类型掩码: 位 0=普通, 位 1=加法(静态路径判定)
     int blend_mask = 0;
+    // 系统内已使用过的深度桶掩码: 位 n = 桶 n 有粒子(低 4 位)。
+    // 与 blend_mask 独立维护(语义不同, 混用位会互相污染): 桶掩码决定画几遍, 混合掩码决定每遍拆不拆。
+    int bucket_mask = 0;
+    // 暂停: update 跳过整个系统(演化/事件/流式发射/时钟), 绘制不受影响 → 画面定格。
+    // 时钟不推进使 CPU 影子年龄判定一并冻结, 恢复后从暂停点续算, 不补偿时间。
+    bool paused = false;
     // 区域特效器(attractor/destroyer/deflector), id 自增分配(GM8 复用空槽, 自增即可)
     std::unordered_map<int, GAttractor> attractors;
     std::unordered_map<int, GDestroyer> destroyers;
@@ -447,6 +465,8 @@ private:
         live_window = std::move(o.live_window);
         id_vb = o.id_vb; o.id_vb = nullptr;
         blend_mask = o.blend_mask;
+        bucket_mask = o.bucket_mask;
+        paused = o.paused;
         attractors = std::move(o.attractors);
         destroyers = std::move(o.destroyers);
         deflectors = std::move(o.deflectors);
@@ -487,29 +507,39 @@ static void purge_type_window_entries(int type_id)
     }
 }
 
-// 全系统重算混合掩码(类型 blend 配置变更后调用): 掩码须反映当前存活粒子集合,
-// 否则运行中切换 additive 后旧粒子可能因掩码缺位而永久零 alpha(不可见)。
-static void recompute_blend_masks()
+// 深度桶号钳制: 类型配置可能来自任意 GML 值, 越界一律钳进 0..3。
+static int clamp_bucket(float v)
+{
+    int b = (int)v;
+    return b < 0 ? 0 : (b > 3 ? 3 : b);
+}
+
+// 全系统重算绘制掩码(类型 blend/桶配置变更后调用): 掩码须反映当前存活粒子集合,
+// 否则运行中切换 additive 或桶号后, 旧粒子可能因掩码缺位而永久零 alpha(不可见)。
+static void recompute_masks()
 {
     for (auto& skv : g_systems)
     {
         GSystem& s = skv.second;
-        int mask = 0;
+        int blend = 0, bucket = 0;
         for (const LiveEntry& e : s.live_window)
         {
             if (e.gen != s.s_gen[e.slot]) continue;
             auto it = g_types.find(s.s_type[e.slot]);
             if (it == g_types.end()) continue;
-            mask |= (it->second.additive() > 0.5f) ? 2 : 1;
+            const GType& gt = it->second;
+            blend |= (gt.additive() > 0.5f) ? 2 : 1;
+            bucket |= 1 << clamp_bucket(gt.depth_bucket());
         }
-        s.blend_mask = mask;
+        s.blend_mask = blend;
+        s.bucket_mask = bucket;
     }
 }
 
 // ============================================================================
 // GPU 资源(全局, 惰性创建)
 // ============================================================================
-static void* g_type_tex = nullptr;         // 类型表纹理 256x13 A16B16G16R16F
+static void* g_type_tex = nullptr;         // 类型表纹理 256x16 A16B16G16R16F
 static void* g_atlas_tex = nullptr;        // 粒子图集 1024x1024 A8R8G8B8(形状+精灵帧)
 static int g_atlas_x = 0, g_atlas_y = 0, g_atlas_row_h = 0;   // 图集 shelf 分配器
 static void* g_quad_vb = nullptr;          // 全屏四边形(剪辑空间, 4 顶点)
@@ -787,7 +817,7 @@ static bool gpu_init_internal(const char* cache_dir)
 
         // 类型表/图集/矩形表用 MANAGED 池: 只上传+采样(从不当 RT), 自动跨设备 Reset
         // 存活, 设备丢失后无需重建内容。
-        // 类型表纹理 256x13 A16B16G16R16F
+        // 类型表纹理 256x16 A16B16G16R16F
         D3DCheck(d3d::create_texture(GP_TYPE_TEX_W, GP_TYPE_ROWS, 1, 0,
             GP_FMT_16F, D3DPOOL_MANAGED, &g_type_tex), 1);
         std::vector<unsigned short> zero((size_t)GP_TYPE_TEX_W * GP_TYPE_ROWS * 4, 0);
@@ -1032,8 +1062,9 @@ static void queue_spawn(GSystem& s, int type, int n, const SpawnBatch& tmpl)
                 s.s_frame[slot] = (int)(gphashf((float)slot + b.seed * 17.0f + 9.0f) * frames) % frames;
             else
                 s.s_frame[slot] = 0;
-            // 系统混合掩码(静态路径判定用)
+            // 系统混合/深度桶掩码(静态路径判定用)
             s.blend_mask |= (gt.additive() > 0.5f) ? 2 : 1;
+            s.bucket_mask |= 1 << clamp_bucket(gt.depth_bucket());
         }
         else
         {
@@ -1098,7 +1129,12 @@ static void run_evolution(GSystem& s, const std::vector<SpawnBatch>& batches, in
     D3DCheck(d3d::set_render_target(0, s.surf[0][dst]), 1);
     D3DCheck(d3d::set_render_target(1, s.surf[1][dst]), 2);
     D3DCheck(d3d::set_render_target(2, s.surf[2][dst]), 3);
-    D3DCheck(d3d::set_viewport(GP_GRID, GP_GRID), 4);
+    // 视口只覆盖 id < rows*GP_GRID 的行: rows 由 capacity 上取整得出, 故 rows*GP_GRID >= capacity,
+    // 全部有效槽都在视口内; capacity 上限 GP_MAX_CAPACITY = 65536 所以 rows 不会超过 GP_GRID。
+    // 视口外的行是死区(shader 里 id >= uGlobal.w 判死), 不写就不必光栅化。
+    int rows = (s.capacity + GP_GRID - 1) / GP_GRID;
+    if (rows < 1) rows = 1;
+    D3DCheck(d3d::set_viewport(GP_GRID, (UINT)rows), 4);
     D3DCheck(d3d::set_render_state(D3DRS_ZENABLE, FALSE), 5);
     D3DCheck(d3d::set_render_state(D3DRS_ALPHABLENDENABLE, FALSE), 6);
     D3DCheck(d3d::set_render_state(D3DRS_POINTSPRITEENABLE, FALSE), 7);
@@ -1231,8 +1267,10 @@ static void run_render(GSystem& s)
         }
     };
 
-    // 混合分遍绘制: 每遍设 blend 状态 + uBlend 常量, VS 把不匹配粒子的 alpha 归零。
-    // 静态四边形 VB, 零 CPU; 环形两弧保证出生序绘制顺序。
+    // 分遍绘制: 先按深度桶 0→3 由下往上叠(桶号大 = 更靠前/更上层, 与发射顺序无关),
+    // 桶内再按混合掩码决定拆不拆普通/加色两遍。每遍设 blend 状态 + uBlend 常量,
+    // VS 把不匹配(混合模式或桶号)的粒子 alpha 归零, 静态四边形 VB 逐遍复用, 零 CPU。
+    // 环形两弧保证桶内出生序绘制顺序。
     int cap = s.capacity, cur = s.cursor;
     auto draw_ranges = [&](int pos) {
         if (s.old_to_new)
@@ -1257,28 +1295,29 @@ static void run_render(GSystem& s)
         }
     };
 
-    float bl[4] = { 0, premul ? 1.0f : 0.0f, 0, 0 };   // .x=加色遍, .y=预乘输出
-    if (s.blend_mask == 3)
-    {
-        // 混合系统: 普通 + 加法两遍(VS/PS 按 uBlend 零化不匹配粒子/切换预乘)
-        set_blend(0, 20);
-        D3DCheck(d3d::set_vs_const_typed(RND_C_BLEND, d3d::CK_FLOAT, bl, 1), 22);
-        D3DCheck(d3d::set_ps_const_typed(RND_C_BLEND, d3d::CK_FLOAT, bl, 1), 22);
-        draw_ranges(23);
-        set_blend(1, 25);
-        bl[0] = 1.0f;
-        D3DCheck(d3d::set_vs_const_typed(RND_C_BLEND, d3d::CK_FLOAT, bl, 1), 26);
-        D3DCheck(d3d::set_ps_const_typed(RND_C_BLEND, d3d::CK_FLOAT, bl, 1), 26);
-        draw_ranges(27);
-    }
-    else
-    {
-        int additive = (s.blend_mask & 2) ? 1 : 0;
-        set_blend(additive, 20);
+    float bl[4] = { 0, premul ? 1.0f : 0.0f, 0, 0 };   // .x=加色遍, .y=预乘输出, .z=当前桶号
+    auto draw_pass = [&](int additive, int pos) {
+        set_blend(additive, pos);
         bl[0] = (float)additive;
-        D3DCheck(d3d::set_vs_const_typed(RND_C_BLEND, d3d::CK_FLOAT, bl, 1), 22);
-        D3DCheck(d3d::set_ps_const_typed(RND_C_BLEND, d3d::CK_FLOAT, bl, 1), 22);
-        draw_ranges(23);
+        D3DCheck(d3d::set_vs_const_typed(RND_C_BLEND, d3d::CK_FLOAT, bl, 1), pos + 2);
+        D3DCheck(d3d::set_ps_const_typed(RND_C_BLEND, d3d::CK_FLOAT, bl, 1), pos + 2);
+        draw_ranges(pos + 3);
+    };
+
+    // 桶掩码缺位(理论上不可达: 出生累积与全量重算已覆盖全部入口)兜底为画全部 4 桶 ——
+    // 宁可多付 3 遍 VS 开销, 也不能让某个桶的粒子整体消失。
+    int bmask = s.bucket_mask ? s.bucket_mask : 0xF;
+    for (int bucket = 0; bucket < 4; ++bucket)
+    {
+        if ((bmask & (1 << bucket)) == 0) continue;   // 该桶无粒子: 不付 VS 开销
+        bl[2] = (float)bucket;
+        if (s.blend_mask == 3)
+        {
+            draw_pass(0, 20);   // 普通
+            draw_pass(1, 26);   // 加法
+        }
+        else
+            draw_pass((s.blend_mask & 2) ? 1 : 0, 20);
     }
 
     // 解绑 VS 采样槽位: 防止游戏自己的 shader(FFP 模拟/SDF)在 VS 采样到我们的状态纹理
@@ -1442,6 +1481,7 @@ exp_real gpart_system_clear(double sys)
         s.live_window.clear();
         s.cursor = 0;
         s.blend_mask = 0;
+        s.bucket_mask = 0;
         return gtrue;
     }
     simple_catch("gpart_system_clear", gerror)
@@ -1456,6 +1496,11 @@ exp_real gpart_system_update()
         for (auto& kv : g_systems)
         {
             GSystem& s = kv.second;
+            // 暂停跳过整个系统而非只跳演化 pass: 活跃窗口家务、death/step 事件、流式发射器
+            // 与演化共享 s.now 时间轴, 只跳演化会让事件照常按时间触发而粒子不老化, 两者脱钩。
+            // 外部直造的批次(gpart_emitter_burst / gpart_particles_create*)仍会进入 s.pending,
+            // 留到恢复后统一出生, 语义等同暂停期间调用被缓存。
+            if (s.paused) continue;
             // 活跃窗口家务(原地过滤): 代数校验防槽复用冲突 + 死亡剔除。
             // 静态路径没有每帧组装, 过滤必须在此处进行, 否则窗口无限增长。
             // 死亡事件延后到压缩完成后统一触发: 遍历中 fire_death_event 会向 win
@@ -1630,6 +1675,20 @@ exp_real gpart_system_capacity(double sys)
     return it == g_systems.end() ? gerror : (double)it->second.capacity;
 }
 
+// gpart 扩展: 暂停/恢复系统。暂停只冻结 update 链路(演化/事件/流式发射/时钟), 绘制照常,
+// 画面定格在最后一帧; 暂停期间塞入的批次留到恢复后统一出生。
+exp_real gpart_system_pause(double sys, double paused)
+{
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        it->second.paused = paused > 0.5;
+        return gtrue;
+    }
+    simple_catch("gpart_system_pause", gerror)
+}
+
 // ============================================================================
 // 导出: 粒子(直造)
 // ============================================================================
@@ -1782,6 +1841,7 @@ exp_real gpart_type_destroy(double type)
         type_table_upload();
         recompute_step_death();
         purge_type_window_entries(id);         // 已死类型的窗口条目只余拖累, 直接清除
+        recompute_masks();                     // 窗口条目已清, 掩码须跟着收敛(否则多付空遍)
         return gtrue;
     }
     simple_catch("gpart_type_destroy", gerror)
@@ -1809,6 +1869,9 @@ exp_real gpart_type_clear(double type)
         type_table_upload();
         t->upload_rect_table((int)type);
         recompute_step_death();
+        // 桶号随重置回到默认 0: 存活粒子的类型行已变, 掩码不重算会让它们落在
+        // 没有任何绘制遍匹配的桶位, 整批不可见。
+        recompute_masks();
         return gtrue;
     }
     simple_catch("gpart_type_clear", gerror)
@@ -2086,10 +2149,59 @@ exp_real gpart_type_blend(double type, double additive)
         if (!t) return gfalse;
         t->additive() = additive > 0.5 ? 1.0f : 0.0f;
         type_table_upload();
-        recompute_blend_masks();               // 掩码须随配置更新, 防存活粒子永久零 alpha
+        recompute_masks();                     // 掩码须随配置更新, 防存活粒子永久零 alpha
         return gtrue;
     }
     simple_catch("gpart_type_blend", gerror)
+}
+
+// 设置类型的绘制深度桶(0-3)。桶号只影响绘制顺序: 逐桶分遍绘制, 桶号大的后画
+// (更靠前)。同一系统内跨类型的遮挡不再取决于发射顺序。越界钳到 0-3。
+exp_real gpart_type_depth_bucket(double type, double bucket)
+{
+    try
+    {
+        GType* t = type_at((int)type);
+        if (!t) return gfalse;
+        t->depth_bucket() = (float)clamp_bucket((float)bucket);
+        type_table_upload();
+        recompute_masks();                     // 桶掩码须随配置更新, 防存活粒子落在无绘制遍的桶
+        return gtrue;
+    }
+    simple_catch("gpart_type_depth_bucket", gerror)
+}
+
+// 设置动画播放帧率。0 = 跟随寿命比例(与未配置帧率时的行为一致);
+// >0 时按固定帧率推进, 由 gpart_type_frame_loop 决定播完后如何处理。
+// 参数单位是"每步帧数": 演化 shader 的 age 以 update 步计数(dt 恒为 1), 与
+// gpart_type_life 的步语义一致。按每秒帧数调用时由 GML 包装层用 room_speed 折算。
+// 负值钳到 0: 负帧率无物理意义, 等同于关闭固定帧率。
+exp_real gpart_type_frame_rate(double type, double fps)
+{
+    try
+    {
+        GType* t = type_at((int)type);
+        if (!t) return gfalse;
+        t->frame_rate() = fps > 0.0 ? (float)fps : 0.0f;
+        type_table_upload();
+        return gtrue;
+    }
+    simple_catch("gpart_type_frame_rate", gerror)
+}
+
+// 设置帧率模式的循环方式: 0 = 单次(播完停在末帧), 1 = 循环, 2 = 往返。
+// 越界钳到 0-2。仅在 frame_rate > 0 时生效。
+exp_real gpart_type_frame_loop(double type, double mode)
+{
+    try
+    {
+        GType* t = type_at((int)type);
+        if (!t) return gfalse;
+        t->frame_loop() = (float)(mode < 0.0 ? 0.0 : (mode > 2.0 ? 2.0 : mode));
+        type_table_upload();
+        return gtrue;
+    }
+    simple_catch("gpart_type_frame_loop", gerror)
 }
 
 // 颜色模式统一入口: mode + 颜色分量(0..1)
@@ -2793,6 +2905,7 @@ void gpart_reset_pre()
         s.pending.clear();
         s.live_window.clear();
         s.blend_mask = 0;
+        s.bucket_mask = 0;
     }
 }
 
@@ -2867,6 +2980,7 @@ void gpart_reset_post(bool recreated)
             s.pending.clear();
             s.live_window.clear();
             s.blend_mask = 0;
+            s.bucket_mask = 0;
         }
     }
     catch (const std::exception&)

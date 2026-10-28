@@ -5,7 +5,9 @@ sampler sType : register(s3);
 
 float4x4 uWVP : register(c0);
 float4 uSys : register(c4);
-float4 uBlend : register(c5);
+float4 uBlend : register(c5);   // .x = 当前遍混合模式(0=普通, 1=加法), .y = 预乘输出, .z = 当前桶号
+// 类型表行数倒数: 必须与 GP_TYPE_TEX_H 一致, 漏同步即采样错位读相邻行且不报错。
+static const float TYPE_ROWS_INV = 1.0 / 16.0;
 
 struct VSIN
 {
@@ -81,8 +83,11 @@ float3 particle_color(float4 ov, float4 T3, float4 T4, float4 T5, float4 T6, flo
         : lerp(float3(T4.w, T5.x, T5.y), float3(T5.z, T5.w, T6.x), (t - 0.5) * 2.0);
 }
 
-// alpha 渐变: 按 alpha 模式 1/2/3 随寿命 t 插值
-float particle_alpha(float4 T3, float4 T6, float t, float blendMode, float additiveFlag)
+// alpha 渐变: 按 alpha 模式 1/2/3 随寿命 t 插值。
+// blendMode/additiveFlag 与 bucketFlag/当前桶号 任一不匹配当前遍 → 零贡献,
+// 使同一静态 VB 可被逐遍复用(每遍只让目标粒子通过)。
+float particle_alpha(float4 T3, float4 T6, float t, float blendMode, float additiveFlag,
+    float bucketFlag)
 {
     float am = T3.w;
     
@@ -98,8 +103,8 @@ float particle_alpha(float4 T3, float4 T6, float t, float blendMode, float addit
             : lerp(T6.z, T6.w, (t - 0.5) * 2.0);
     }
 
-    if (abs(additiveFlag - blendMode) > 0.5)
-        a = 0.0;   // 混合模式不匹配当前遍 → 零贡献
+    if (abs(additiveFlag - blendMode) > 0.5 || abs(bucketFlag - uBlend.z) > 0.5)
+        a = 0.0;   // 混合模式或深度桶不匹配当前遍 → 零贡献
     return a;
 }
 
@@ -116,16 +121,17 @@ VSOUT main(VSIN v) {
     float dead = (age >= life) ? 1.0 : 0.0;
     float2 tuv = float2((type + 0.5) / 256.0, 0.0);
 
-    float4 T0 = tex2Dlod(sType, float4(tuv.x, 0.5 / 14.0, 0, 0));
-    float4 T2 = tex2Dlod(sType, float4(tuv.x, 2.5 / 14.0, 0, 0));
-    float4 T3 = tex2Dlod(sType, float4(tuv.x, 3.5 / 14.0, 0, 0));
-    float4 T4 = tex2Dlod(sType, float4(tuv.x, 4.5 / 14.0, 0, 0));
-    float4 T5 = tex2Dlod(sType, float4(tuv.x, 5.5 / 14.0, 0, 0));
-    float4 T6 = tex2Dlod(sType, float4(tuv.x, 6.5 / 14.0, 0, 0));
-    float4 T7 = tex2Dlod(sType, float4(tuv.x, 7.5 / 14.0, 0, 0));
-    float4 T8 = tex2Dlod(sType, float4(tuv.x, 8.5 / 14.0, 0, 0));
+    float4 T0 = tex2Dlod(sType, float4(tuv.x, 0.5 * TYPE_ROWS_INV, 0, 0));
+    float4 T2 = tex2Dlod(sType, float4(tuv.x, 2.5 * TYPE_ROWS_INV, 0, 0));
+    float4 T3 = tex2Dlod(sType, float4(tuv.x, 3.5 * TYPE_ROWS_INV, 0, 0));
+    float4 T4 = tex2Dlod(sType, float4(tuv.x, 4.5 * TYPE_ROWS_INV, 0, 0));
+    float4 T5 = tex2Dlod(sType, float4(tuv.x, 5.5 * TYPE_ROWS_INV, 0, 0));
+    float4 T6 = tex2Dlod(sType, float4(tuv.x, 6.5 * TYPE_ROWS_INV, 0, 0));
+    float4 T7 = tex2Dlod(sType, float4(tuv.x, 7.5 * TYPE_ROWS_INV, 0, 0));
+    float4 T8 = tex2Dlod(sType, float4(tuv.x, 8.5 * TYPE_ROWS_INV, 0, 0));
     float4 ov = tex2Dlod(sOvr, float4(uv, 0, 0));
-    float4 T12 = tex2Dlod(sType, float4(tuv.x, 12.5 / 14.0, 0, 0));
+    float4 T12 = tex2Dlod(sType, float4(tuv.x, 12.5 * TYPE_ROWS_INV, 0, 0));
+    float4 T14 = tex2Dlod(sType, float4(tuv.x, 14.5 * TYPE_ROWS_INV, 0, 0));   // .x = 深度桶号
 
     bool snap = uSys.w > 0.5;
     float2 psize = particle_size(T0, T3, T12, id, age, snap);
@@ -145,7 +151,7 @@ VSOUT main(VSIN v) {
 
     float t = life > 0.0001 ? clamp(age / life, 0.0, 1.0) : 1.0;
     float3 col = particle_color(ov, T3, T4, T5, T6, t);
-    float a = particle_alpha(T3, T6, t, uBlend.x, T2.w);
+    float a = particle_alpha(T3, T6, t, uBlend.x, T2.w, T14.x);
     o.col = float4(col, a);
     return o;
 }
