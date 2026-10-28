@@ -9,6 +9,8 @@ float4 uBatchCount : register(c4);
 float4 uMode : register(c5);      // .x = 1 → 仅出生不老化(多块演化用)
 float4 uEff : register(c6);       // .x=attractor 数, .y=destroyer 数, .z=deflector 数
 float4 uBatches[16] : register(c8);
+float4 uPath[32] : register(c24); // 路径点表: 每 float4 装两点 xyxy(与 CPU 打包同契约)
+float4 uPathMeta : register(c56); // .x = 路径点数(0 = 无路径模式)
 
 static const float TWO_PI = 6.283185307179586;
 static const float DEG2RAD = 0.017453292519943295;
@@ -71,7 +73,7 @@ float find_batch(float id, out float4 b0, out float4 b1,
     return seeded;
 }
 
-// 出生位置四模式: 盒速度(-3)/源槽位(-2)/点(-1)/区域(≥0)。
+// 出生位置五模式: 路径(-4)/盒速度(-3)/源槽位(-2)/点(-1)/区域(≥0)。
 // 源已死时置 srcdead, 出生分支据此令其出生即死。
 float2 spawn_position(float4 b1, float4 b2, float3 rnd, float invGrid,
     out float srcdead)
@@ -79,7 +81,23 @@ float2 spawn_position(float4 b1, float4 b2, float3 rnd, float invGrid,
     float2 p;
     srcdead = 0.0;
 
-    if (b2.x < -2.5)
+    if (b2.x < -3.5)
+    {
+        // 路径模式(shape=-4): uPath 全局点表线性插值, 同帧多路径发射器只有第一个
+        // 生效。点表为参数等距采样, 段内线性; floor 保证段号不越末点。
+        float np = max(uPathMeta.x, 0.0);
+        float f = rnd.x * max(np - 1.0, 1.0);            // 连续参数位置 0..np-1
+        float seg = max(min(floor(f), np - 2.0), 0.0);   // 段号: P[seg]→P[seg+1]
+        float t = f - seg;
+        float k = floor(seg * 0.5);                      // 段起点所在 float4 下标(整数, 防相对寻址取整歧义)
+        float4 p0 = uPath[k];                            // 偶数下标: xy = 点 2k, zw = 点 2k+1
+        float4 p1 = uPath[k + 1];
+        float even = 1.0 - fmod(seg, 2.0);               // 段起点在 p0 的 xy(偶段)或 zw(奇段)
+        float2 a = (even > 0.5) ? p0.xy : p0.zw;
+        float2 bq = (even > 0.5) ? p0.zw : p1.xy;
+        p = lerp(a, bq, t);
+    }
+    else if (b2.x < -2.5)
     {
         // 盒速度发射(shape=-3, gpart_particles_create_box): 位置=点,
         // 初速在 b1=(hmin,vmin,hmax,vmax) 盒内两轴独立均匀(GM8 hsp/vsp 语义)
@@ -143,9 +161,10 @@ float2 spawn_position(float4 b1, float4 b2, float3 rnd, float invGrid,
 }
 
 // 出生初速: 盒速度模式直取盒采样, 否则按类型表速度/方向扇区。
+// 路径模式(-4)走类型表分支: 路径只决定出生位置, 初速不受区域 b1 影响。
 float2 spawn_velocity(float4 b1, float4 b2, float4 T1, float3 rnd)
 {
-    if (b2.x < -2.5)
+    if (b2.x > -3.5 && b2.x < -2.5)
         return float2(lerp(b1.x, b1.z, rnd.y), lerp(b1.y, b1.w, rnd.z));
 
     float spd = lerp(T1.x, T1.y, rnd.y);

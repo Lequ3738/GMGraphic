@@ -147,13 +147,14 @@ exp_real gpart_type_depth_bucket(double type, double bucket);   // gpart 扩展:
 exp_real gpart_type_frame_rate(double type, double fps);        // gpart 扩展: 动画帧率(每步帧数, 0 = 跟随寿命)
 exp_real gpart_type_frame_loop(double type, double mode);       // gpart 扩展: 帧率循环模式(0 单次/1 循环/2 往返)
 
-// ---- exports: emitters (10) ----
+// ---- exports: emitters (11) ----
 exp_real gpart_emitter_create(double sys);
 exp_real gpart_emitter_destroy(double sys, double em);
 exp_real gpart_emitter_destroy_all(double sys);
 exp_real gpart_emitter_exists(double sys, double em);
 exp_real gpart_emitter_clear(double sys, double em);
 exp_real gpart_emitter_region(double sys, double em, double xmin, double xmax, double ymin, double ymax, double shape, double distribution);
+exp_real gpart_emitter_path(double sys, double em, const char* points, double count);   // gpart 扩展: 路径发射(points = GML 层等距采样打包串 "x1,y1,...", count<=0 清除回落区域, 上限 64 点)
 exp_real gpart_emitter_burst(double sys, double em, double parttype, double number);
 exp_real gpart_emitter_stream(double sys, double em, double parttype, double number);
 exp_real gpart_emitter_stream_ramp(double sys, double em, double parttype, double rate0, double rate1, double duration);

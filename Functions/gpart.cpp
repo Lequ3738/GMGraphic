@@ -4,6 +4,7 @@
 #include "../Librarys/math_s.h"
 #include "../Librarys/state_guard.h"
 #include <cstring>
+#include <cstdlib>
 #include <cmath>
 #include <algorithm>
 #include <fstream>
@@ -45,6 +46,8 @@ static const int EVO_C_BATCHN = 4;    // (.x = batch count)
 static const int EVO_C_MODE = 5;      // (.x = 1 → 仅出生不老化)
 static const int EVO_C_BATCHES = 8;   // 16 批 × 4 float4(c8..c71, ps_3_0 常量上限内)
 static const int EVO_C_EFF = 6;       // (.x=attractor 数, .y=destroyer 数, .z=deflector 数)
+static const int EVO_C_PATH = 24;     // 路径点表 32 float4(c24..c55, 每 float4 两点 xyxy)
+static const int EVO_C_PATHMETA = 56; // (.x = 路径点数, 0 = 无路径模式)
 static const int RND_C_WVP = 0;       // float4x4 (c0..c3)
 static const int RND_C_SYS = 4;       // (sys_x, sys_y, invGrid, pixelsnap)
 static const int RND_C_BLEND = 5;     // (.x=当前遍混合模式 0=普通/1=加法, .y=预乘输出, .z=当前深度桶号)
@@ -57,6 +60,7 @@ static const int GP_QUAD_VERTS = 4;
 static const int GP_EFF_TEX_W = 64;              // 特效器表宽(每行一特效器)
 static const int GP_EFF_TEX_H = 6;               // 特效器表高(3 类 × 2 行)
 static const int GP_EFF_MAX = 4;                 // 每类最多生效特效器(ps_3_0 展开预算)
+static const int GP_PATH_MAX = 64;               // 路径发射点数上限(uPath 32 float4 × 每 float4 两点)
 
 // The GPU table is still a compact float4 matrix. Keep its physical layout in
 // one named enum so the CPU-side code does not depend on unexplained row ids.
@@ -359,6 +363,11 @@ struct GEmitter
     float xmin = -8, xmax = 8, ymin = -8, ymax = 8;
     int shape = PS_SHAPE_RECTANGLE;
     int distr = PS_DISTR_LINEAR;
+    // 路径发射点表(GML 层等距采样后传入, 调用时采样一次, 路径改动需重调):
+    // path_count >= 2 时发射位置改由 uPath 点表插值(shape=-4), 区域字段原样保留,
+    // 清除路径后回落区域模式。同帧多路径发射器只有第一个生效(uPath 为全局常量)。
+    std::vector<float> path_x, path_y;
+    int path_count = 0;
     int stream_type = -1;      // 流式配置: 每步自动发射的类型(-1 = 未启用)
     float stream_rate = 0;     // 流式配置: 每步数量
     // 定时渐变流(ramp): 从 ramp_start 步起 ramp_dur 步内, 每步发射数量从
@@ -374,7 +383,10 @@ struct GEmitter
 static SpawnBatch emitter_batch(const GEmitter& g)
 {
     SpawnBatch b;
-    b.shape = (float)g.shape;
+    // 路径模式: 位置由 shader 从 uPath 点表插值, b1 区域值与 distr 不再被使用。
+    // 初速仍按类型表(spawn_velocity 对 -4 走类型表分支)。
+    // 区域模式必须照旧带上 g.shape(椭圆/菱形), 落默认 0 会静默变矩形。
+    b.shape = (g.path_count >= 2) ? -4.0f : (float)g.shape;
     b.distr = (float)g.distr;
     b.xmin = g.xmin; b.ymin = g.ymin; b.xmax = g.xmax; b.ymax = g.ymax;
     return b;
@@ -1019,6 +1031,33 @@ static void upload_effectors(GSystem& s)
         GP_FMT_16F, px.data(), GP_EFF_TEX_W * 8), 14);
 }
 
+// 路径点表 uniform 上传: uPath 是演化 pass 的全局常量而非逐发射器数据, 同帧多路径
+// 发射器只有第一个生效(与文档 §5 的已知约束一致)。无路径发射器时点数写 0,
+// shader 侧没有 shape=-4 的批次, 点表内容不会被采样; 常量无条件全量写, 防多系统
+// 间残留串台(与 set_overlayer_consts 同口径)。每 float4 装两点 xyxy, 与 evo_ps
+// 的 uPath 打包契约一致。
+static void set_path_consts(GSystem& s)
+{
+    float path[GP_PATH_MAX * 2] = {};
+    float meta[4] = { 0, 0, 0, 0 };
+    for (auto& kv : s.emitters)
+    {
+        const GEmitter& g = kv.second;
+        if (g.path_count < 2) continue;
+        int n = std::min(g.path_count, GP_PATH_MAX);
+        meta[0] = (float)n;
+        for (int i = 0; i < n; ++i)
+        {
+            float* q = &path[(i / 2) * 4];
+            q[(i % 2) * 2 + 0] = g.path_x[i];
+            q[(i % 2) * 2 + 1] = g.path_y[i];
+        }
+        break;
+    }
+    D3DCheck(d3d::set_ps_const_typed(EVO_C_PATH, d3d::CK_FLOAT, path, GP_PATH_MAX), 21);
+    D3DCheck(d3d::set_ps_const_typed(EVO_C_PATHMETA, d3d::CK_FLOAT, meta, 1), 22);
+}
+
 // ============================================================================
 // 发射批次入队(CPU 影子数组同步记录)
 // ============================================================================
@@ -1182,6 +1221,8 @@ static void run_evolution(GSystem& s, const std::vector<SpawnBatch>& batches, in
         eff[2] = (float)std::min((int)s.deflectors.size(), GP_EFF_MAX);
     }
     D3DCheck(d3d::set_ps_const_typed(EVO_C_EFF, d3d::CK_FLOAT, eff, 1), 20);
+    // 路径点表: spawn_only 分块也上传(路径批次可能落在任意块)
+    set_path_consts(s);
 
     for (int b = 0; b < count; ++b)
     {
@@ -2627,6 +2668,61 @@ exp_real gpart_emitter_stream_ramp(double sys, double em, double parttype,
         return gtrue;
     }
     simple_catch("gpart_emitter_stream_ramp", gerror)
+}
+
+// 路径发射: 把 GML 层等距采样的路径点表写入发射器, 此后发射位置沿点表线性插值
+// (初速仍按类型表)。区域设置原样保留, count <= 0 清除路径模式回落区域。
+// points 格式 = "x1,y1,x2,y2,..." 逗号分隔浮点; count 为点数, 解析出的浮点个数
+// 必须与 count*2 完全一致否则返回 gfalse。count 超过 64 时钳到 64(点表截断)。
+// 同一系统同一帧只有第一个路径发射器生效(uPath 是演化 pass 的全局常量)。
+exp_real gpart_emitter_path(double sys, double em, const char* points, double count)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        auto e = it->second.emitters.find((int)em);
+        if (e == it->second.emitters.end()) return gfalse;
+        GEmitter& g = e->second;
+
+        int n = (int)count;
+        if (n <= 0)
+        {
+            g.path_x.clear();
+            g.path_y.clear();
+            g.path_count = 0;
+            return gtrue;
+        }
+        if (!points) return gfalse;
+
+        // 解析逗号分隔浮点: 非数字起点即停止, 总数必须与 count*2 一致
+        std::vector<float> vals;
+        vals.reserve((size_t)n * 2);
+        const char* p = points;
+        while (*p)
+        {
+            char* end = nullptr;
+            float v = strtof(p, &end);
+            if (end == p) break;
+            vals.push_back(v);
+            p = end;
+            while (*p == ',' || *p == ' ') ++p;
+        }
+        if ((int)vals.size() != n * 2) return gfalse;
+
+        n = std::clamp(n, 1, GP_PATH_MAX);
+        g.path_x.resize(n);
+        g.path_y.resize(n);
+        for (int i = 0; i < n; ++i)
+        {
+            g.path_x[i] = vals[i * 2 + 0];
+            g.path_y[i] = vals[i * 2 + 1];
+        }
+        g.path_count = n;
+        return gtrue;
+    }
+    simple_catch("gpart_emitter_path", gerror)
 }
 
 // ============================================================================
