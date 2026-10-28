@@ -30,8 +30,9 @@ static const DWORD GP_VTS0 = 257;      // D3DVERTEXTEXTURESAMPLER0
 //     integrates gravity/drag/motion, initialises newly spawned slots and
 //     computes the animation frame per particle.
 //   - gpart_system_drawit(): STATIC vertex buffer (0..capacity-1, built once),
-//     dead particles are skipped by the rasterizer via PSIZE=0. One or two
-//     point-sprite draws (ring arcs for draw order). The VS reads particle
+//     dead particles are skipped by the rasterizer via PSIZE=0. Draw range is
+//     [0, live_high) (槽位序 = 出生序, 见 live_high 注释): old_to_new 单段升序,
+//     new_to_old 按 256 槽一段降序。The VS reads particle
 //     state via VTF (vs_3_0 tex2Dlod); the PS fetches the atlas rect from a
 //     rect-table texture keyed by (type, frame). Zero per-frame CPU work.
 //   - A mixed-blend system falls back to a per-frame assembled id VB.
@@ -420,6 +421,10 @@ struct GSystem
     int cur = 0;
     double now = 0;                   // 系统时钟(步; double 防 2^24 步后 float 停摆)
     int cursor = 0;
+    // 分配高水位: [0, live_high) 是"活粒子或待回收空洞", ≥live_high 是干净死区。
+    // 线性分配(常态)从 live_high 续段, 出生区间恒 ⊆ [0, live_high); 环形回退(饱和)
+    // 时提到 capacity。演化视口行数与绘制范围都由它推出, 压缩把它收回实际活量。
+    int live_high = 0;
     std::vector<double> s_birth;      // 出生步影子(与 now 同型免转换)
     std::vector<float> s_life;
     std::vector<int> s_type, s_frame;
@@ -449,6 +454,9 @@ struct GSystem
     std::unordered_map<int, GOverlayer> overlayers;
     int ovl_counter = 1;
     void* eff_tex = nullptr;          // 特效器表 64x6 A16B16G16R16F(每特效器 2 行)
+    // 压缩逆映射表 256x256 A32B32G32R32F(惰性建): 每新槽一像素 .x = 源槽号或 -1,
+    // 只上传前 ceil(live_count/256) 行。内容只在上传行内被采样, 无需跨压缩保存。
+    void* remap_tex = nullptr;
 
     // 所有权 RAII: 设备资源随对象生死, 创建中途抛异常也不再泄漏已建资源。
     // 拷贝禁用(指针会被双重释放); 移动后源对象指针置空, system_tex_destroy 幂等。
@@ -478,6 +486,7 @@ private:
         cur = o.cur;
         now = o.now;
         cursor = o.cursor;
+        live_high = o.live_high;
         s_birth = std::move(o.s_birth);
         s_life = std::move(o.s_life);
         s_type = std::move(o.s_type);
@@ -498,6 +507,7 @@ private:
         overlayers = std::move(o.overlayers);
         ovl_counter = o.ovl_counter;
         eff_tex = o.eff_tex; o.eff_tex = nullptr;
+        remap_tex = o.remap_tex; o.remap_tex = nullptr;
     }
 
 public:
@@ -573,6 +583,7 @@ static void* g_id_decl = nullptr;          // 渲染 pass 顶点声明(float1 id
 static void* g_quad_decl = nullptr;
 static dword g_evo_vs = 0, g_evo_ps = 0;
 static dword g_rnd_vs = 0, g_rnd_ps = 0;
+static dword g_compact_ps = 0;             // 压缩搬移像素着色器(重映射转发/死槽写约定)
 static bool g_gpu_ready = false;
 static bool g_gpu_failed = false;
 static std::string g_last_cache_dir;       // 最近一次 gpu_init 用的缓存目录(设备重建复用)
@@ -795,12 +806,13 @@ static std::string load_shader_resource(const char* name)
     return std::string((const char*)data, size);
 }
 
-// 读取/编译 gpart 4 个 shader 的字节码(带字节码缓存): 命中读文件, 未命中编译并写缓存。
+// 读取/编译 gpart 5 个 shader 的字节码(带字节码缓存): 命中读文件, 未命中编译并写缓存。
 // cache_dir 为空 = 不使用缓存(每次重新编译)。真错误抛异常。
 // 同一函数同时被 gpu_init_internal(主线程)与异步工作流的内部任务(worker 线程)调用。
 static void gpart_compile_all(const char* cache_dir,
     std::vector<BYTE>& evo_vs, std::vector<BYTE>& evo_ps,
-    std::vector<BYTE>& rnd_vs, std::vector<BYTE>& rnd_ps)
+    std::vector<BYTE>& rnd_vs, std::vector<BYTE>& rnd_ps,
+    std::vector<BYTE>& compact_ps)
 {
     auto load_or_compile = [&](const char* name, const std::string& src_str,
         const char* entry, const char* profile, std::vector<BYTE>& code)
@@ -827,6 +839,7 @@ static void gpart_compile_all(const char* cache_dir,
     load_or_compile("evo_ps", load_shader_resource("EVO_PS_HLSL"), "main", "ps_3_0", evo_ps);
     load_or_compile("rnd_vs", load_shader_resource("RND_VS_HLSL"), "main", "vs_3_0", rnd_vs);
     load_or_compile("rnd_ps", load_shader_resource("RND_PS_HLSL"), "main", "ps_3_0", rnd_ps);
+    load_or_compile("compact_ps", load_shader_resource("COMPACT_PS_HLSL"), "main", "ps_3_0", compact_ps);
 }
 
 static bool gpu_init_internal(const char* cache_dir)
@@ -888,12 +901,13 @@ static bool gpu_init_internal(const char* cache_dir)
         // 避免主线程与 worker 并发调用 D3DXCompileShader(无官方并发保证)。正常流程不阻塞。
         shader_workflow_wait_finished();
 
-        std::vector<BYTE> evo_vs, evo_ps, rnd_vs, rnd_ps;
-        gpart_compile_all(cache_dir, evo_vs, evo_ps, rnd_vs, rnd_ps);
+        std::vector<BYTE> evo_vs, evo_ps, rnd_vs, rnd_ps, compact_ps;
+        gpart_compile_all(cache_dir, evo_vs, evo_ps, rnd_vs, rnd_ps, compact_ps);
         D3DCheck(d3d::create_vertex_shader(d3d::VERT_DEFAULT, evo_vs.data(), nullptr, 0, &g_evo_vs), 9);
         D3DCheck(d3d::create_pixel_shader(evo_ps.data(), &g_evo_ps), 10);
         D3DCheck(d3d::create_vertex_shader(d3d::VERT_DEFAULT, rnd_vs.data(), nullptr, 0, &g_rnd_vs), 11);
         D3DCheck(d3d::create_pixel_shader(rnd_ps.data(), &g_rnd_ps), 12);
+        D3DCheck(d3d::create_pixel_shader(compact_ps.data(), &g_compact_ps), 13);
 
         g_gpu_ready = true;
     }
@@ -986,6 +1000,7 @@ static void system_tex_destroy(GSystem& s)
             s.tex[k][p] = nullptr;
         }
     if (s.eff_tex) { d3d::release(s.eff_tex); s.eff_tex = nullptr; }
+    if (s.remap_tex) { d3d::release(s.remap_tex); s.remap_tex = nullptr; }
     if (s.id_vb) { d3d::release(s.id_vb); s.id_vb = nullptr; }
 }
 
@@ -1066,7 +1081,26 @@ static void queue_spawn(GSystem& s, int type, int n, const SpawnBatch& tmpl)
     if (n <= 0 || s.capacity <= 0) return;
     n = std::min(n, s.capacity);
 
-    int start = s.cursor;
+    // 双模式分配:
+    // 线性(常态): 高水位后续段, 出生区间 [start, start+n) ⊆ [0, live_high) 恒不越界,
+    // 不取模不拆批, 也不经过 cursor。
+    // 环形回退(饱和): 高水位加本批越过 capacity 时保持环形语义(start = cursor, 跨环
+    // 拆批, 覆盖最老槽位凭 gen 失配剔除, cursor 照旧环进)。回退可能触达任意槽位,
+    // live_high 提到 capacity 保证出生槽必在演化视口内(行数由 live_high 推出);
+    // 留下的死区若与活量并存, 同一 update 末尾的压缩会当步收回, 不暴露给绘制。
+    int start;
+    if (s.live_high + n <= s.capacity)
+    {
+        start = s.live_high;
+        s.live_high += n;
+    }
+    else
+    {
+        start = s.cursor;
+        s.live_high = s.capacity;
+        s.cursor = (s.cursor + n) % s.capacity;
+    }
+
     SpawnBatch b = tmpl;
     b.start = (float)start;
     b.count = (float)n;
@@ -1125,7 +1159,7 @@ static void queue_spawn(GSystem& s, int type, int n, const SpawnBatch& tmpl)
             s.s_frame[slot] = 0;
         }
     }
-    s.cursor = (s.cursor + n) % s.capacity;
+    // cursor 只由环形回退推进(线性分配不经过它, 压缩时与 live_high 一起归位)
 }
 
 // 源槽位生成批次(part_type_step/death): 目的地槽位的新粒子位置 = 源粒子当前位置(GPU 读取)。
@@ -1182,10 +1216,12 @@ static void run_evolution(GSystem& s, const std::vector<SpawnBatch>& batches, in
     D3DCheck(d3d::set_render_target(0, s.surf[0][dst]), 1);
     D3DCheck(d3d::set_render_target(1, s.surf[1][dst]), 2);
     D3DCheck(d3d::set_render_target(2, s.surf[2][dst]), 3);
-    // 视口只覆盖 id < rows*GP_GRID 的行: rows 由 capacity 上取整得出, 故 rows*GP_GRID >= capacity,
-    // 全部有效槽都在视口内; capacity 上限 GP_MAX_CAPACITY = 65536 所以 rows 不会超过 GP_GRID。
-    // 视口外的行是死区(shader 里 id >= uGlobal.w 判死), 不写就不必光栅化。
-    int rows = (s.capacity + GP_GRID - 1) / GP_GRID;
+    // 视口只覆盖 id < rows*GP_GRID 的行: rows 由 live_high(高水位)上取整得出。
+    // 线性分配保证出生区间 [start, start+n) ⊆ [0, live_high), 出生槽必在视口内;
+    // 环形回退时 live_high == capacity, 回到全视口。视口外的行是死区(shader 里
+    // id >= uGlobal.w 判死), 不写就不必光栅化; live_high 上限 capacity ≤ 65536,
+    // rows 不会超过 GP_GRID。
+    int rows = (s.live_high + GP_GRID - 1) / GP_GRID;
     if (rows < 1) rows = 1;
     D3DCheck(d3d::set_viewport(GP_GRID, (UINT)rows), 4);
     D3DCheck(d3d::set_render_state(D3DRS_ZENABLE, FALSE), 5);
@@ -1235,6 +1271,120 @@ static void run_evolution(GSystem& s, const std::vector<SpawnBatch>& batches, in
     s.cur = dst;
     // 注意: s.now 不在这里推进! 一次 update 可能切块跑多次演化 pass,
     // 时钟只能推进一次(由 gpart_system_update 统一推进), 否则多批次时加速。
+}
+
+// ============================================================================
+// 压缩 pass(消除死亡空洞, 让演化视口/绘制范围随实际活量收缩)
+// ============================================================================
+
+// 逆映射表惰性创建(MANAGED 池, 随系统 RAII 与整设备重建销毁重建)。
+static void ensure_remap_tex(GSystem& s)
+{
+    if (s.remap_tex) return;
+    D3DCheck(d3d::create_texture(GP_GRID, GP_GRID, 1, 0, GP_FMT_32F,
+        D3DPOOL_MANAGED, &s.remap_tex), 30);
+}
+
+// 搬移 pass: 复用演化装置(MRT 三目标 ping-pong + 全屏 quad + evo_vs), 像素着色器
+// 按新槽位采逆映射得旧槽原样转发, 无映射写死槽约定。只光栅化前 rows 行;
+// 行数之外的陈旧内容不可达: 绘制范围与演化视口都由 live_high 推出, 而高水位
+// 之后的槽位只有在线性分配写入新出生时才会重新进入视口与绘制范围。
+static void run_compact(GSystem& s, int live_count)
+{
+    RenderStateGuard rsg;    // RAII: rs + stages 保存, 析构无条件还原(含异常路径)
+
+    int rows = (live_count + GP_GRID - 1) / GP_GRID;
+    int w = s.cur, dst = s.cur ^ 1;
+    D3DCheck(d3d::set_render_target(0, s.surf[0][dst]), 31);
+    D3DCheck(d3d::set_render_target(1, s.surf[1][dst]), 32);
+    D3DCheck(d3d::set_render_target(2, s.surf[2][dst]), 33);
+    D3DCheck(d3d::set_viewport(GP_GRID, (UINT)rows), 34);
+    D3DCheck(d3d::set_render_state(D3DRS_ZENABLE, FALSE), 35);
+    D3DCheck(d3d::set_render_state(D3DRS_ALPHABLENDENABLE, FALSE), 36);
+    D3DCheck(d3d::set_render_state(D3DRS_POINTSPRITEENABLE, FALSE), 37);
+
+    D3DCheck(d3d::set_texture(0, s.tex[0][w]), 38);     // sPos
+    D3DCheck(d3d::set_texture(1, s.tex[1][w]), 39);     // sLife
+    D3DCheck(d3d::set_texture(2, s.tex[2][w]), 40);     // sOvr
+    D3DCheck(d3d::set_texture(3, s.remap_tex), 41);     // sInv
+
+    D3DCheck(d3d::set_vertex_declaration(g_quad_decl), 42);
+    D3DCheck(d3d::set_vertex_shader_handle(g_evo_vs), 43);
+    D3DCheck(d3d::set_pixel_shader(g_compact_ps), 44);
+    D3DCheck(d3d::set_stream_source(0, g_quad_vb, 16), 45);
+
+    float glob[4] = { 0, 0, 1.0f / (float)GP_GRID, 0 };
+    D3DCheck(d3d::set_ps_const_typed(EVO_C_GLOBAL, d3d::CK_FLOAT, glob, 1), 46);
+
+    D3DCheck(d3d::draw_primitive(D3DPT_TRIANGLESTRIP, 2, 0), 47);
+
+    s.cur = dst;   // 翻转由本 pass 完成
+}
+
+// 压缩: 把存活粒子按出生序搬移到槽位 0..live_count-1(新槽位序 = 出生序, 保
+// draw_order 语义), 消除 [0, live_high) 内的空洞, live_high/cursor 收回实际活量。
+// 只在 gpart_system_update 的演化 pass 之后调用 —— 此时 s.pending 必为空(本步
+// 批次已全部出生), step/death 事件的源槽引用已在本步演化中消费完毕, 搬移不会
+// 打断任何在途引用; 严禁提前到 queue_spawn 或窗口家务阶段。
+static void compact_system(GSystem& s)
+{
+    int live_count = (int)s.live_window.size();
+    if (live_count <= 0)
+    {
+        // 无活粒子: 影子清死槽约定即可, 无需 GPU 搬移(高水位之外本就不可达)
+        int stale = std::min(s.live_high, (int)s.s_birth.size());
+        for (int i = 0; i < stale; ++i)
+        {
+            s.s_gen[i] = 0;
+            s.s_birth[i] = -1e9;
+            s.s_life[i] = 1.0f;
+        }
+        s.live_high = 0;
+        s.cursor = 0;
+        return;
+    }
+
+    // 按 (birth, slot) 升序: 槽位 0..live_count-1 与出生序完全一致
+    std::vector<LiveEntry> sorted = s.live_window;
+    std::sort(sorted.begin(), sorted.end(),
+        [](const LiveEntry& a, const LiveEntry& b)
+    {
+        if (a.birth != b.birth) return a.birth < b.birth;
+        return a.slot < b.slot;
+    });
+
+    // 搬影子数组 + 就地改窗口条目。前向单趟安全: 第 i 小的旧槽 ≥ i,
+    // 源槽永不早于目标槽被覆写。逆映射(新槽 → 旧槽)在覆写前同步记录。
+    int rows = (live_count + GP_GRID - 1) / GP_GRID;
+    std::vector<float> inv((size_t)rows * GP_GRID * 4, -1.0f);   // 补齐行 = 死区
+    for (int i = 0; i < live_count; ++i)
+    {
+        int old = sorted[i].slot;
+        s.s_birth[i] = s.s_birth[old];
+        s.s_life[i] = s.s_life[old];
+        s.s_type[i] = s.s_type[old];
+        s.s_frame[i] = s.s_frame[old];
+        s.s_gen[i] = s.s_gen[old];
+        inv[(size_t)i * 4] = (float)old;
+        sorted[i].slot = i;
+    }
+    // [live_count, 旧 live_high) 清死槽约定: gen=0 使任何残留引用失效
+    for (int i = live_count; i < s.live_high && i < (int)s.s_gen.size(); ++i)
+    {
+        s.s_gen[i] = 0;
+        s.s_birth[i] = -1e9;
+        s.s_life[i] = 1.0f;
+    }
+    s.live_window = std::move(sorted);
+    s.live_high = live_count;
+    s.cursor = live_count;   // 环形回退的写入起点一起归位到死区边界
+
+    // GPU 侧搬移: 上传逆映射(只传前 ceil(live_count/256) 行, upload_texture_rect
+    // 支持子矩形上传)后跑一次搬移 pass
+    ensure_remap_tex(s);
+    D3DCheck(d3d::upload_texture_rect(s.remap_tex, 0, 0, GP_GRID, rows,
+        GP_FMT_32F, inv.data(), GP_GRID * 16), 48);
+    run_compact(s, live_count);
 }
 
 // ============================================================================
@@ -1353,28 +1503,30 @@ static void run_render(GSystem& s)
     // 分遍绘制: 先按深度桶 0→3 由下往上叠(桶号大 = 更靠前/更上层, 与发射顺序无关),
     // 桶内再按混合掩码决定拆不拆普通/加色两遍。每遍设 blend 状态 + uBlend 常量,
     // VS 把不匹配(混合模式或桶号)的粒子 alpha 归零, 静态四边形 VB 逐遍复用, 零 CPU。
-    // 环形两弧保证桶内出生序绘制顺序。
-    int cap = s.capacity, cur = s.cursor;
+    // 绘制范围 [0, live_high): 压缩保证槽位序 = 出生序。old→new 单段升序(严格出生序);
+    // new→old 按 256 槽一段降序逐段绘制(段内升序), 排序粒度从每步发射批粗化为
+    // 256 槽, 重叠粒子的层序为近似保真, 段数 = ceil(live_high/256) 有界。
+    int hi = s.live_high;
     auto draw_ranges = [&](int pos) {
         if (s.old_to_new)
         {
-            // 旧→新: 先 [cursor, cap) 后 [0, cursor)
-            if (cur < cap)
+            // 旧→新: 槽位 0..live_high-1 升序 = 出生序
+            if (hi > 0)
                 D3DCheck(d3d::draw_primitive(D3DPT_TRIANGLELIST,
-                    (DWORD)(cap - cur) * 2, (DWORD)cur * 6), pos);
-            if (cur > 0)
-                D3DCheck(d3d::draw_primitive(D3DPT_TRIANGLELIST,
-                    (DWORD)cur * 2, 0), pos + 1);
+                    (DWORD)hi * 2, 0), pos);
         }
         else
         {
-            // 新→旧: 先 [0, cursor) 后 [cursor, cap)
-            if (cur > 0)
-                D3DCheck(d3d::draw_primitive(D3DPT_TRIANGLELIST,
-                    (DWORD)cur * 2, 0), pos);
-            if (cur < cap)
-                D3DCheck(d3d::draw_primitive(D3DPT_TRIANGLELIST,
-                    (DWORD)(cap - cur) * 2, (DWORD)cur * 6), pos + 1);
+            // 新→旧: 最高段先画, 逐段降序
+            for (int seg_end = (hi + GP_GRID - 1) / GP_GRID * GP_GRID;
+                seg_end > 0; seg_end -= GP_GRID)
+            {
+                int a = std::max(seg_end - GP_GRID, 0);
+                int b = std::min(seg_end, hi);
+                if (b > a)
+                    D3DCheck(d3d::draw_primitive(D3DPT_TRIANGLELIST,
+                        (DWORD)(b - a) * 2, (DWORD)a * 6), pos);
+            }
         }
     };
 
@@ -1429,7 +1581,7 @@ exp_real gpart_gpu_init(const char* cache_dir)
     simple_catch("gpart_gpu_init", gerror)
 }
 
-// 主线程侧检查 4 个 gpart shader 缓存是否全部命中。cache_dir 为空 = 不使用缓存, 恒视为"需编译"。
+// 主线程侧检查 5 个 gpart shader 缓存是否全部命中。cache_dir 为空 = 不使用缓存, 恒视为"需编译"。
 static bool gpart_cache_fresh(const char* cache_dir)
 {
     if (!cache_dir || !cache_dir[0]) return false;
@@ -1443,10 +1595,11 @@ static bool gpart_cache_fresh(const char* cache_dir)
     return hit("evo_vs", load_shader_resource("EVO_VS_HLSL"), "vs_3_0")
         && hit("evo_ps", load_shader_resource("EVO_PS_HLSL"), "ps_3_0")
         && hit("rnd_vs", load_shader_resource("RND_VS_HLSL"), "vs_3_0")
-        && hit("rnd_ps", load_shader_resource("RND_PS_HLSL"), "ps_3_0");
+        && hit("rnd_ps", load_shader_resource("RND_PS_HLSL"), "ps_3_0")
+        && hit("compact_ps", load_shader_resource("COMPACT_PS_HLSL"), "ps_3_0");
 }
 
-// 把 gpart 的 4 个 shader 编译(内部 hash 分支, 仅改动/未缓存的加入)注册进当前异步编译工作流。
+// 把 gpart 的 5 个 shader 编译(内部 hash 分支, 仅改动/未缓存的加入)注册进当前异步编译工作流。
 // 须在 shader_compile_begin 之后、shader_compile_end 之前调用; 之后 gpart_gpu_init(cache_dir)
 // 读到的就是已就绪的 gpart 缓存 → 零编译直接创建设备对象。DX9 专属。
 // 全部命中缓存时不注册任何任务(shader_compile_count() 不计入, 进度条不虚闪)。
@@ -1456,11 +1609,11 @@ exp_real shader_compile_add_gpart()
     {
         if (d3d::version() != d3d::V9) return gerror;
         if (gpart_cache_fresh(shader_workflow_cache_path().c_str()))
-            return gtrue;   // 4 个 gpart shader 全部命中缓存, 无需排队
+            return gtrue;   // 5 个 gpart shader 全部命中缓存, 无需排队
         return shader_workflow_add_internal([](const std::string& cache_path)
         {
-            std::vector<BYTE> a, b, c, d;
-            gpart_compile_all(cache_path.c_str(), a, b, c, d);
+            std::vector<BYTE> a, b, c, d, e;
+            gpart_compile_all(cache_path.c_str(), a, b, c, d, e);
         }) ? gtrue : gerror;
     }
     catch (...) { return gerror; }
@@ -1563,6 +1716,7 @@ exp_real gpart_system_clear(double sys)
         s.pending.clear();
         s.live_window.clear();
         s.cursor = 0;
+        s.live_high = 0;
         s.blend_mask = 0;
         s.bucket_mask = 0;
         return gtrue;
@@ -1700,6 +1854,21 @@ exp_real gpart_system_update()
                     first_chunk = false;
                 }
                 s.pending.clear();
+            }
+
+            // ---- 压缩(硬不变量: 只在演化 pass 之后、时钟推进之前) ----
+            // 此时 s.pending 必为空(本步批次已全部出生), step/death 事件的源槽引用
+            // 已在本步演化中消费完毕, 搬移不会打断任何在途引用。
+            // 触发阈值滞回: 小系统 600 活量时视口 ≤ 3 行; 大系统(瀑布 1.4 万活量)
+            // 避免每步都付一次重映射上传 + 搬移 pass, 12.5% 空洞才压一次。
+            // full_with_holes: 高水位顶满 capacity 而活量未满(饱和环形回退留下的
+            // 死区), 该死区当步就会重新暴露给绘制范围, 必须当步收回。
+            {
+                int live_count = (int)win.size();
+                int threshold = std::max(64, live_count / 8);
+                bool full_with_holes = (s.live_high >= s.capacity && live_count < s.capacity);
+                if (s.live_high - live_count >= threshold || full_with_holes)
+                    compact_system(s);
             }
             s.now += 1.0f;   // 一次 update = 一步
 
@@ -3158,6 +3327,7 @@ void gpart_reset_pre()
             }
         s.pending.clear();
         s.live_window.clear();
+        s.live_high = 0;
         s.blend_mask = 0;
         s.bucket_mask = 0;
     }
@@ -3177,6 +3347,7 @@ static void gpart_release_global_gpu_objects()
     if (g_evo_ps)     { d3d::delete_pixel_shader(g_evo_ps); g_evo_ps = 0; }
     if (g_rnd_vs)     { d3d::delete_vertex_shader(g_rnd_vs); g_rnd_vs = 0; }
     if (g_rnd_ps)     { d3d::delete_pixel_shader(g_rnd_ps); g_rnd_ps = 0; }
+    if (g_compact_ps) { d3d::delete_pixel_shader(g_compact_ps); g_compact_ps = 0; }
 }
 
 // post(Reset/重建成功后)。
@@ -3233,6 +3404,7 @@ void gpart_reset_post(bool recreated)
             system_build_id_vb(s);
             s.pending.clear();
             s.live_window.clear();
+            s.live_high = 0;
             s.blend_mask = 0;
             s.bucket_mask = 0;
         }
@@ -3247,6 +3419,14 @@ void gpart_reset_post(bool recreated)
 // ============================================================================
 // 调试: 绘制系统各区域轮廓(发射器/吸引器/破坏器/偏转器)
 // ============================================================================
+
+// gpart 扩展/调试: 返回系统当前分配高水位([0, live_high) 为已分配区, 其上为干净
+// 死区)。用于观测压缩效果: 稳态下应在 [活量, 活量 + 滞回] 区间波动。
+exp_real gpart_debug_highwater(double sys)
+{
+    auto it = g_systems.find((int)sys);
+    return it == g_systems.end() ? gerror : (double)it->second.live_high;
+}
 
 exp_real gpart_draw_regions(double sys, double color, double alpha)
 {

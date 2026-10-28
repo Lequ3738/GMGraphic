@@ -186,8 +186,9 @@ exp_real gpart_deflector_region(double sys, double ind, double xmin, double xmax
 exp_real gpart_deflector_kind(double sys, double ind, double kind);
 exp_real gpart_deflector_friction(double sys, double ind, double friction);
 
-// ---- exports: debug (1) ----
+// ---- exports: debug (2) ----
 exp_real gpart_draw_regions(double sys, double color, double alpha);
+exp_real gpart_debug_highwater(double sys);   // gpart 扩展/调试: 分配高水位(压缩观测口)
 
 // 设备 Reset 前后回调。pre: 释放各系统 RT 状态纹理(插件唯一的 DEFAULT 池资源,
 // 不释放会卡死 D3D9 Reset)+ 清挂起批。post: recreated=false 仅重建 RT; true 全量
