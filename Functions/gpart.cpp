@@ -48,6 +48,9 @@ static const int EVO_C_EFF = 6;       // (.x=attractor 数, .y=destroyer 数, .z
 static const int RND_C_WVP = 0;       // float4x4 (c0..c3)
 static const int RND_C_SYS = 4;       // (sys_x, sys_y, invGrid, pixelsnap)
 static const int RND_C_BLEND = 5;     // (.x=当前遍混合模式 0=普通/1=加法, .y=预乘输出, .z=当前深度桶号)
+static const int RND_C_OVL_GEOM = 6;  // 覆盖器 4 组 (xmin, xmax, ymin, ymax) (c6..c9)
+static const int RND_C_OVL_META = 10; // 覆盖器 4 组 (active, shape, scale, alpha) (c10..c13)
+static const int RND_C_OVL_COLOR = 14;// 覆盖器 4 组 (r, g, b, 0) (c14..c17)
 
 static const int GP_TYPE_ROWS = GP_TYPE_TEX_H;   // 类型表纹理行数(与 gpart.h 一致)
 static const int GP_QUAD_VERTS = 4;
@@ -385,6 +388,12 @@ struct GAttractor { float x = 0, y = 0, force = 0, dist = 0; int kind = 0; bool 
 struct GDestroyer { float xmin = 0, xmax = 0, ymin = 0, ymax = 0; int shape = 0; };
 struct GDeflector { float xmin = 0, xmax = 0, ymin = 0, ymax = 0; int kind = 0; float friction = 0; };
 
+// 区域覆盖器(gpart 扩展): 粒子位于区域内时渲染阶段替换颜色/缩放尺寸/乘透明度。
+// 数据走渲染 VS 的 uniform 常量, 命中测试是纯位置函数每帧重算 → 粒子进出区域
+// 自动生效/还原, 不写任何粒子状态(与演化 pass 的 destroyer 语义互补)。
+// 默认值即 clear 语义: 区域退化不生效、白、不透明、1 倍。
+struct GOverlayer { float xmin = 0, xmax = 0, ymin = 0, ymax = 0; int shape = 0; float colour = 16777215, alpha = 1, scale = 1; };
+
 // 前向声明(定义在"系统状态纹理创建/销毁"小节): GSystem 的 RAII 析构依赖
 struct GSystem;
 static void system_tex_destroy(GSystem& s);
@@ -424,6 +433,9 @@ struct GSystem
     std::unordered_map<int, GDestroyer> destroyers;
     std::unordered_map<int, GDeflector> deflectors;
     int att_counter = 1, des_counter = 1, def_counter = 1;
+    // 区域覆盖器(渲染 pass 应用, 与演化特效器独立)
+    std::unordered_map<int, GOverlayer> overlayers;
+    int ovl_counter = 1;
     void* eff_tex = nullptr;          // 特效器表 64x6 A16B16G16R16F(每特效器 2 行)
 
     // 所有权 RAII: 设备资源随对象生死, 创建中途抛异常也不再泄漏已建资源。
@@ -471,6 +483,8 @@ private:
         destroyers = std::move(o.destroyers);
         deflectors = std::move(o.deflectors);
         att_counter = o.att_counter; des_counter = o.des_counter; def_counter = o.def_counter;
+        overlayers = std::move(o.overlayers);
+        ovl_counter = o.ovl_counter;
         eff_tex = o.eff_tex; o.eff_tex = nullptr;
     }
 
@@ -1186,6 +1200,33 @@ static void run_evolution(GSystem& s, const std::vector<SpawnBatch>& batches, in
 // 渲染 pass
 // ============================================================================
 
+// 覆盖器常量上传: 12 个 float4 无条件全量写 —— 常量是设备状态, 同帧多系统
+// 各自残留会串台, 不能按"本系统有无覆盖器"跳过。空槽 active=0, VS 侧直接跳过;
+// 只取前 4 个(与 upload_effectors 同款超配静默忽略惯例)。
+static void set_overlayer_consts(GSystem& s)
+{
+    float geom[16] = {}, meta[16] = {}, colr[16] = {};
+    int i = 0;
+    for (auto& kv : s.overlayers)
+    {
+        if (i >= GP_EFF_MAX) break;
+        const GOverlayer& o = kv.second;
+        geom[i * 4 + 0] = o.xmin; geom[i * 4 + 1] = o.xmax;
+        geom[i * 4 + 2] = o.ymin; geom[i * 4 + 3] = o.ymax;
+        meta[i * 4 + 0] = 1.0f;
+        meta[i * 4 + 1] = (float)o.shape;
+        meta[i * 4 + 2] = o.scale;
+        meta[i * 4 + 3] = o.alpha;
+        colr[i * 4 + 0] = (float)col_red((int)o.colour) / 255.0f;
+        colr[i * 4 + 1] = (float)col_green((int)o.colour) / 255.0f;
+        colr[i * 4 + 2] = (float)col_blue((int)o.colour) / 255.0f;
+        ++i;
+    }
+    D3DCheck(d3d::set_vs_const_typed(RND_C_OVL_GEOM, d3d::CK_FLOAT, geom, 4), 140);
+    D3DCheck(d3d::set_vs_const_typed(RND_C_OVL_META, d3d::CK_FLOAT, meta, 4), 141);
+    D3DCheck(d3d::set_vs_const_typed(RND_C_OVL_COLOR, d3d::CK_FLOAT, colr, 4), 142);
+}
+
 // 重建渲染数据
 static void run_render(GSystem& s)
 {
@@ -1241,6 +1282,7 @@ static void run_render(GSystem& s)
     float sys[4] = { s.pos_x, s.pos_y, 1.0f / (float)GP_GRID, snap_mode ? 1.0f : 0.0f };
     D3DCheck(d3d::set_vs_const_typed(RND_C_WVP, d3d::CK_FLOAT, wvp, 4), 12);
     D3DCheck(d3d::set_vs_const_typed(RND_C_SYS, d3d::CK_FLOAT, sys, 1), 13);
+    set_overlayer_consts(s);
 
     D3DCheck(d3d::set_vertex_declaration(g_id_decl), 16);
     D3DCheck(d3d::set_vertex_shader_handle(g_rnd_vs), 17);
@@ -2886,6 +2928,122 @@ exp_real gpart_deflector_friction(double sys, double ind, double friction)
     simple_catch("gpart_deflector_friction", gerror)
 }
 
+// ============================================================================
+// overlayers (gpart 扩展: 区域覆盖器, 渲染 VS 应用)
+// ============================================================================
+
+exp_real gpart_overlayer_create(double sys)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return -1;
+        int id = it->second.ovl_counter++;
+        it->second.overlayers[id] = GOverlayer();
+        return (double)id;
+    }
+    simple_catch("gpart_overlayer_create", gerror)
+}
+
+exp_real gpart_overlayer_destroy(double sys, double ind)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        return it->second.overlayers.erase((int)ind) ? gtrue : gfalse;
+    }
+    simple_catch("gpart_overlayer_destroy", gerror)
+}
+
+exp_real gpart_overlayer_destroy_all(double sys)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        it->second.overlayers.clear();
+        return gtrue;
+    }
+    simple_catch("gpart_overlayer_destroy_all", gerror)
+}
+
+exp_real gpart_overlayer_exists(double sys, double ind)
+{
+    auto it = g_systems.find((int)sys);
+    if (it == g_systems.end()) return gfalse;
+    return it->second.overlayers.count((int)ind) ? gtrue : gfalse;
+}
+
+exp_real gpart_overlayer_clear(double sys, double ind)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        auto o = it->second.overlayers.find((int)ind);
+        if (o == it->second.overlayers.end()) return gfalse;
+        o->second = GOverlayer();
+        return gtrue;
+    }
+    simple_catch("gpart_overlayer_clear", gerror)
+}
+
+exp_real gpart_overlayer_region(double sys, double ind, double xmin, double xmax,
+    double ymin, double ymax, double shape)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        auto o = it->second.overlayers.find((int)ind);
+        if (o == it->second.overlayers.end()) return gfalse;
+        o->second.xmin = (float)std::min(xmin, xmax);
+        o->second.xmax = (float)std::max(xmin, xmax);
+        o->second.ymin = (float)std::min(ymin, ymax);
+        o->second.ymax = (float)std::max(ymin, ymax);
+        o->second.shape = (int)shape;
+        return gtrue;
+    }
+    simple_catch("gpart_overlayer_region", gerror)
+}
+
+exp_real gpart_overlayer_color(double sys, double ind, double colour, double alpha)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        auto o = it->second.overlayers.find((int)ind);
+        if (o == it->second.overlayers.end()) return gfalse;
+        o->second.colour = (float)colour;
+        o->second.alpha = (float)std::max(0.0, std::min(alpha, 1.0));
+        return gtrue;
+    }
+    simple_catch("gpart_overlayer_color", gerror)
+}
+
+exp_real gpart_overlayer_scale(double sys, double ind, double scale)
+{
+    if (d3d::version() != d3d::V9) return gerror;
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        auto o = it->second.overlayers.find((int)ind);
+        if (o == it->second.overlayers.end()) return gfalse;
+        o->second.scale = (float)std::max(scale, 0.0);
+        return gtrue;
+    }
+    simple_catch("gpart_overlayer_scale", gerror)
+}
+
 // 设备 Reset 前后回调。
 // pre: RT 状态纹理是全插件仅有的 DEFAULT 池资源, 必须释放否则 D3D9 Reset 直接
 // INVALIDCALL; 内容随纹理消亡 → 顺带清挂起批/活跃窗口/混合掩码。幂等(已释放即
@@ -3018,6 +3176,8 @@ exp_real gpart_draw_regions(double sys, double color, double alpha)
 
         struct V { float x, y, z; DWORD c; };
         const DWORD col = col_d3d((int)color, alpha);
+        // 覆盖器区域固定用绿色轮廓: 其余区域画调用者指定色, 两者可区分
+        const DWORD col_ovl = col_d3d(65280 /*c_lime*/, alpha);
         auto poly = [&](const std::vector<V>& pts) {
             if (pts.size() < 2) return;
             D3DCheck(d3d::draw_primitive_up(D3DPT_LINESTRIP, (DWORD)(pts.size() - 1),
@@ -3078,6 +3238,18 @@ exp_real gpart_draw_regions(double sys, double color, double alpha)
                 poly(diamond(d.xmin, d.ymin, d.xmax, d.ymax));
             else
                 poly(rect(d.xmin, d.ymin, d.xmax, d.ymax));
+        }
+        // 覆盖器区域(绿色轮廓)
+        for (auto& kv : s.overlayers)
+        {
+            const GOverlayer& o = kv.second;
+            if (o.xmin >= o.xmax || o.ymin >= o.ymax) continue;
+            if (o.shape == 1)
+                poly(ellipse(o.xmin, o.ymin, o.xmax, o.ymax));
+            else if (o.shape == 2)
+                poly(diamond(o.xmin, o.ymin, o.xmax, o.ymax));
+            else
+                poly(rect(o.xmin, o.ymin, o.xmax, o.ymax));
         }
         // 偏转器矩形
         for (auto& kv : s.deflectors)

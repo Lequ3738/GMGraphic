@@ -85,7 +85,7 @@ exp_real gpart_gpu_init(const char* cache_dir);
 exp_real gpart_set_premul(double mode);
 exp_real gpart_set_pixelsnap(double mode);   // gpart 扩展: 像素对齐(-1 自动/0 关/1 开)
 
-// ---- exports: system (10) ----
+// ---- exports: system (18) ----
 exp_real gpart_system_create(double capacity);
 exp_real gpart_system_destroy(double sys);
 exp_real gpart_system_exists(double sys);
@@ -96,6 +96,16 @@ exp_real gpart_system_draw_order(double sys, double oldtonew);
 exp_real gpart_system_position(double sys, double x, double y);
 exp_real gpart_system_capacity(double sys);
 exp_real gpart_system_pause(double sys, double paused);
+
+// ---- 覆盖器(gpart 扩展): 渲染阶段区域覆盖, 粒子出区自动还原 ----
+exp_real gpart_overlayer_create(double sys);   // 创建覆盖器, 返回索引(失败 -1)
+exp_real gpart_overlayer_destroy(double sys, double ind);   // 销毁指定覆盖器
+exp_real gpart_overlayer_destroy_all(double sys);           // 销毁系统内全部覆盖器
+exp_real gpart_overlayer_exists(double sys, double ind);    // 覆盖器是否存在
+exp_real gpart_overlayer_clear(double sys, double ind);     // 重置为默认: 区域退化/白/不透明/1 倍
+exp_real gpart_overlayer_region(double sys, double ind, double xmin, double xmax, double ymin, double ymax, double shape);   // 设置作用区域与形状(0 矩形/1 椭圆/2 菱形)
+exp_real gpart_overlayer_color(double sys, double ind, double colour, double alpha);   // 区域内覆盖色(GM8 BGR 整数)与 alpha(钳 0..1)
+exp_real gpart_overlayer_scale(double sys, double ind, double scale);                  // 区域内尺寸倍率(负值钳 0)
 
 // ---- exports: particles (5) ----
 exp_real gpart_particles_create(double sys, double x, double y, double parttype, double number);

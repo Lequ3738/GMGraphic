@@ -6,6 +6,10 @@ sampler sType : register(s3);
 float4x4 uWVP : register(c0);
 float4 uSys : register(c4);
 float4 uBlend : register(c5);   // .x = 当前遍混合模式(0=普通, 1=加法), .y = 预乘输出, .z = 当前桶号
+// 区域覆盖器(gpart 扩展): 最多 4 个, 与演化特效器表无关, 全走 uniform 常量。
+float4 uOvGeom[4] : register(c6);    // 每覆盖器 (xmin, xmax, ymin, ymax)
+float4 uOvMeta[4] : register(c10);   // 每覆盖器 (active, shape, scale, alpha)
+float4 uOvColor[4] : register(c14);  // 每覆盖器 (r, g, b, 0)
 // 类型表行数倒数: 必须与 GP_TYPE_TEX_H 一致, 漏同步即采样错位读相邻行且不报错。
 static const float TYPE_ROWS_INV = 1.0 / 16.0;
 
@@ -108,6 +112,45 @@ float particle_alpha(float4 T3, float4 T6, float t, float blendMode, float addit
     return a;
 }
 
+// 区域覆盖器命中测试: 与 destroyer/deflector 同一坐标空间(粒子原始位置, 未加系统偏移)。
+// 纯位置函数, 每帧重算 → 粒子进出区域自动生效/还原, 零粒子状态写入。
+// 空槽(active<0.5)与退化区域同款守卫; 首个命中生效, 后续命中不覆盖。
+void overlay_probe(float2 pos, out bool hit, out float3 ocol, out float oscale, out float oalpha)
+{
+    hit = false;
+    ocol = float3(0.0, 0.0, 0.0);
+    oscale = 1.0;
+    oalpha = 1.0;
+
+    for (int i = 0; i < 4; ++i)
+    {
+        float4 m = uOvMeta[i];
+        float4 g = uOvGeom[i];
+        if (m.x < 0.5)   // 空槽
+            continue;
+        if (g.x >= g.y || g.z >= g.w)   // 退化区域(与 destroyer 同款守卫)
+            continue;
+
+        if (pos.x >= g.x && pos.x <= g.y && pos.y >= g.z && pos.y <= g.w)
+        {
+            float nx = 2.0 * (pos.x - (g.y + g.x) * 0.5) / (g.y - g.x);
+            float ny = 2.0 * (pos.y - (g.w + g.z) * 0.5) / (g.w - g.z);
+            // shape: 0=矩形(先过了包围盒), 1=椭圆, 2=菱形
+            float hf = m.y < 0.5 ? 1.0
+                : (m.y > 0.5 && m.y < 1.5) ? (nx * nx + ny * ny <= 1.0 ? 1.0 : 0.0)
+                : (abs(nx) + abs(ny) <= 1.0 ? 1.0 : 0.0);
+
+            if (hf > 0.5 && !hit)
+            {
+                hit = true;
+                ocol = uOvColor[i].rgb;
+                oscale = m.z;
+                oalpha = m.w;
+            }
+        }
+    }
+}
+
 VSOUT main(VSIN v) {
     VSOUT o;
 
@@ -133,8 +176,18 @@ VSOUT main(VSIN v) {
     float4 T12 = tex2Dlod(sType, float4(tuv.x, 12.5 * TYPE_ROWS_INV, 0, 0));
     float4 T14 = tex2Dlod(sType, float4(tuv.x, 14.5 * TYPE_ROWS_INV, 0, 0));   // .x = 深度桶号
 
+    bool ovl_hit;
+    float3 ovl_col;
+    float ovl_scale, ovl_alpha;
+    overlay_probe(pl.xy, ovl_hit, ovl_col, ovl_scale, ovl_alpha);
+
     bool snap = uSys.w > 0.5;
-    float2 psize = particle_size(T0, T3, T12, id, age, snap);
+    float2 psize = particle_size(T0, T3, T12, id, age, false);
+    if (ovl_hit)
+        psize *= ovl_scale;
+    // 像素对齐取整放在覆盖倍率之后: 倍率乘在类型 size 上, 点采样下覆盖放大的粒子同样整尺寸
+    if (snap)
+        psize = floor(psize + 0.5);
     float ang = particle_angle(T7, T8, id, age, pl.zw);
     float ca = cos(ang), sa = sin(ang);
 
@@ -152,6 +205,12 @@ VSOUT main(VSIN v) {
     float t = life > 0.0001 ? clamp(age / life, 0.0, 1.0) : 1.0;
     float3 col = particle_color(ov, T3, T4, T5, T6, t);
     float a = particle_alpha(T3, T6, t, uBlend.x, T2.w, T14.x);
+    // 覆盖色在混合/桶归零(a=0)之后生效: 零贡献乘覆盖 alpha 仍为零, 不会复活
+    if (ovl_hit)
+    {
+        col = ovl_col;
+        a *= ovl_alpha;
+    }
     o.col = float4(col, a);
     return o;
 }
