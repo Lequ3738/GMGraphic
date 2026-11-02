@@ -16,7 +16,7 @@ static const float TWO_PI = 6.283185307179586;
 static const float DEG2RAD = 0.017453292519943295;
 static const float GRID = 256.0;
 // 类型表行数倒数: 必须与 GP_TYPE_TEX_H 一致, 漏同步即采样错位读相邻行且不报错。
-static const float TYPE_ROWS_INV = 1.0 / 16.0;
+static const float TYPE_ROWS_INV = 1.0 / 18.0;
 
 // 高熵 1D hash: 二次项打破 frac(a*k) 的线性周期(否则相邻 id 方向相关 → 射线)
 float h1(float a)
@@ -173,7 +173,8 @@ float2 spawn_velocity(float4 b1, float4 b2, float4 T1, float3 rnd)
     return spd * float2(cos(rad), -sin(rad));
 }
 
-// 出生颜色: 覆盖色 / mix / rgb / hsv 随机 / 单色。
+// 出生颜色: 覆盖色 / mix / rgb / hsv 随机 / 关键帧模式取首色。
+// mode 4-6 的随机色烘焙进覆盖通道; 7(四关键色)与 1-3 同样取 c1。
 float3 spawn_color(float4 b3, float4 T3, float4 T4, float4 T5,
     float id, float seed, out float has_ovr)
 {
@@ -181,7 +182,7 @@ float3 spawn_color(float4 b3, float4 T3, float4 T4, float4 T5,
     if (b3.w > 0.5)
         return b3.rgb;
 
-    if (T3.z > 3.5)
+    if (T3.z > 3.5 && T3.z < 6.5)
     {
         float cr = h1(id + seed * 17.0 + 31.7);   // 颜色独立随机(与方向/速度解耦)
         if (T3.z < 4.5)
@@ -369,7 +370,7 @@ void apply_morph(inout float type, inout float age, inout float life,
         float4 TM5 = tex2D(sType, float2((type + 0.5) / 256.0, 5.5 * TYPE_ROWS_INV));
         float crm = h1(id + 61.3);
 
-        if (TM3.z > 3.5)
+        if (TM3.z > 3.5 && TM3.z < 6.5)
         {
             if (TM3.z < 4.5)
                 base = lerp(TM4.rgb, float3(TM4.w, TM5.x, TM5.y), crm);
@@ -474,6 +475,17 @@ void evolve_alive(inout float2 pos, inout float2 vel, inout float type,
     vel *= max(1.0 - clamp(T2.z, 0.0, 1.0) * dt, 0.0);
     float len = max(length(vel) + T13.z * dt, 0.0);
     vel = vel * (len / max(length(vel), 0.0001));
+
+    // 寿命缓速: 速度包络 v(u)=v0*(1+rel*u) 按新旧年龄的包络比缩放(免存初速)。
+    // rel=-1 时死亡时刻速度恰归零, 位移呈 1-(1-t)^2 缓出。dt=0(仅出生 pass)时比值恒 1。
+    float4 T17 = tex2D(sType, float2((type + 0.5) / 256.0, 17.5 * TYPE_ROWS_INV));
+    float rel = T17.w;
+    if (abs(rel) > 0.0005 && life > 0.0)
+    {
+        float g1 = max(1.0 + rel * clamp(st.x / life, 0.0, 1.0), 0.0);
+        float g2 = max(1.0 + rel * clamp(nage / life, 0.0, 1.0), 0.0);
+        vel *= g2 / max(g1, 0.0001);
+    }
 
     float2 acc_pos = 0;
     apply_attractors(pos, vel, acc_pos, uEff.x, dt);

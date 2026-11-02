@@ -76,13 +76,15 @@ enum class GTypeRow : size_t
     ColorCAndAlpha = 6,
     Orientation = 7,
     Animation = 8,
-    RandomFrame = 9,
+    RandomFrame = 9,     // .x = 随机起始帧, .y = 关键帧插值风格(0 lerp/1 硬色阶), .z/.w 备用
     StepDeath = 10,
     FeatureFlags = 11,
     RenderSize = 12,
     DirectionExt = 13,   // 方向增量/摆动(每步方向 += incr + ±wiggle, GM8 part_type_direction)
-    DepthBucket = 14,    // 绘制分桶号(0-3), 存 .x
+    DepthBucket = 14,    // .x = 绘制分桶号(0-3), .yzw = 第四关键色 rgb
     FrameRate = 15,      // .x = 帧率(每步帧数, 0 = 跟随寿命), .y = 循环模式(0 单次/1 循环/2 往返)
+    Wobble = 16,         // 位置正弦摆动: .x/.y = 振幅 min/max(px), .z = 频率, .w = 模式(axis + 3*unit + 6*grow)
+    FlickerEase = 17,    // .x = 闪烁周期(步, 0 关), .y = 闪烁占空比, .z = 闪烁起始寿命 t, .w = 寿命缓速 rel
 };
 
 // ============================================================================
@@ -214,11 +216,11 @@ struct GType
 
     float& scale_x() { return field(GTypeRow::ScaleModes, 0); }
     float& scale_y() { return field(GTypeRow::ScaleModes, 1); }
-    float& colour_mode() { return field(GTypeRow::ScaleModes, 2); }
+    float& color_mode() { return field(GTypeRow::ScaleModes, 2); }
     float& alpha_mode() { return field(GTypeRow::ScaleModes, 3); }
     const float& scale_x() const { return field(GTypeRow::ScaleModes, 0); }
     const float& scale_y() const { return field(GTypeRow::ScaleModes, 1); }
-    const float& colour_mode() const { return field(GTypeRow::ScaleModes, 2); }
+    const float& color_mode() const { return field(GTypeRow::ScaleModes, 2); }
     const float& alpha_mode() const { return field(GTypeRow::ScaleModes, 3); }
 
     float& relative_angle() { return field(GTypeRow::Animation, 0); }
@@ -226,6 +228,30 @@ struct GType
     float& animation_enabled() { return field(GTypeRow::Animation, 2); }
     float& stretch_animation() { return field(GTypeRow::Animation, 3); }
     float& random_frame_flag() { return field(GTypeRow::RandomFrame, 0); }
+    float& color_style() { return field(GTypeRow::RandomFrame, 1); }   // 0 lerp / 1 硬色阶
+    const float& color_style() const { return field(GTypeRow::RandomFrame, 1); }
+
+    float& color4_r() { return field(GTypeRow::DepthBucket, 1); }
+    float& color4_g() { return field(GTypeRow::DepthBucket, 2); }
+    float& color4_b() { return field(GTypeRow::DepthBucket, 3); }
+
+    float& wobble_amp_min() { return field(GTypeRow::Wobble, 0); }
+    float& wobble_amp_max() { return field(GTypeRow::Wobble, 1); }
+    float& wobble_freq() { return field(GTypeRow::Wobble, 2); }
+    float& wobble_mode() { return field(GTypeRow::Wobble, 3); }
+
+    float& flicker_period() { return field(GTypeRow::FlickerEase, 0); }
+    float& flicker_duty() { return field(GTypeRow::FlickerEase, 1); }
+    float& flicker_from() { return field(GTypeRow::FlickerEase, 2); }
+    float& speed_ease_rel() { return field(GTypeRow::FlickerEase, 3); }
+
+    // 尺寸硬门(gpart 扩展): flag 开启时尺寸的年龄课程整体替换——前 from 寿命内 portion
+    // 比例的粒子(h1 确定性分群)保持出生随机尺寸, 其余时刻/粒子恒为 end。
+    // end 存 RandomFrame.z(注释备用位), from/portion 存 FrameRate.zw, 开关存 FeatureFlags.w
+    float& size_gate_end() { return field(GTypeRow::RandomFrame, 2); }
+    float& size_gate_from() { return field(GTypeRow::FrameRate, 2); }
+    float& size_gate_portion() { return field(GTypeRow::FrameRate, 3); }
+    float& size_gate_flag() { return field(GTypeRow::FeatureFlags, 3); }
 
     float& step_number() { return field(GTypeRow::StepDeath, 0); }
     float& step_type_id() { return field(GTypeRow::StepDeath, 1); }
@@ -271,7 +297,7 @@ struct GType
         gravity_direction() = 270;
         gravity_amount() = drag() = additive() = 0;
         scale_x() = scale_y() = 1;
-        colour_mode() = GP_COLOUR_ONE;
+        color_mode() = GP_COLOR_ONE;
         alpha_mode() = GP_ALPHA_ONE;
         for (int c = 0; c < 4; ++c)
         {
@@ -288,6 +314,13 @@ struct GType
             field(GTypeRow::FeatureFlags, 2) = 0;
         pixel_scale() = 64;   // GM8 内置形状精灵实测 64×64(origin 32,32 中心); size 为缩放倍数
         size_increment() = size_wiggle() = 0;
+        color_style() = 0;
+        color4_r() = color4_g() = color4_b() = 1;
+        wobble_amp_min() = wobble_amp_max() = wobble_freq() = wobble_mode() = 0;
+        flicker_period() = flicker_duty() = flicker_from() = 0;
+        speed_ease_rel() = 0;
+        size_gate_end() = size_gate_from() = size_gate_portion() = 0;
+        size_gate_flag() = 0;
     }
 
     float step_num() const { return step_number(); }
@@ -405,7 +438,7 @@ struct GDeflector { float xmin = 0, xmax = 0, ymin = 0, ymax = 0; int kind = 0; 
 // 数据走渲染 VS 的 uniform 常量, 命中测试是纯位置函数每帧重算 → 粒子进出区域
 // 自动生效/还原, 不写任何粒子状态(与演化 pass 的 destroyer 语义互补)。
 // 默认值即 clear 语义: 区域退化不生效、白、不透明、1 倍。
-struct GOverlayer { float xmin = 0, xmax = 0, ymin = 0, ymax = 0; int shape = 0; float colour = 16777215, alpha = 1, scale = 1; };
+struct GOverlayer { float xmin = 0, xmax = 0, ymin = 0, ymax = 0; int shape = 0; float color = 16777215, alpha = 1, scale = 1; };
 
 // 前向声明(定义在"系统状态纹理创建/销毁"小节): GSystem 的 RAII 析构依赖
 struct GSystem;
@@ -575,7 +608,7 @@ static void recompute_masks()
 // ============================================================================
 // GPU 资源(全局, 惰性创建)
 // ============================================================================
-static void* g_type_tex = nullptr;         // 类型表纹理 256x16 A16B16G16R16F
+static void* g_type_tex = nullptr;         // 类型表纹理 256x18 A16B16G16R16F
 static void* g_atlas_tex = nullptr;        // 粒子图集 1024x1024 A8R8G8B8(形状+精灵帧)
 static int g_atlas_x = 0, g_atlas_y = 0, g_atlas_row_h = 0;   // 图集 shelf 分配器
 static void* g_quad_vb = nullptr;          // 全屏四边形(剪辑空间, 4 顶点)
@@ -856,7 +889,7 @@ static bool gpu_init_internal(const char* cache_dir)
 
         // 类型表/图集/矩形表用 MANAGED 池: 只上传+采样(从不当 RT), 自动跨设备 Reset
         // 存活, 设备丢失后无需重建内容。
-        // 类型表纹理 256x16 A16B16G16R16F
+        // 类型表纹理 256x18 A16B16G16R16F
         D3DCheck(d3d::create_texture(GP_TYPE_TEX_W, GP_TYPE_ROWS, 1, 0,
             GP_FMT_16F, D3DPOOL_MANAGED, &g_type_tex), 1);
         std::vector<unsigned short> zero((size_t)GP_TYPE_TEX_W * GP_TYPE_ROWS * 4, 0);
@@ -1408,9 +1441,9 @@ static void set_overlayer_consts(GSystem& s)
         meta[i * 4 + 1] = (float)o.shape;
         meta[i * 4 + 2] = o.scale;
         meta[i * 4 + 3] = o.alpha;
-        colr[i * 4 + 0] = (float)col_red((int)o.colour) / 255.0f;
-        colr[i * 4 + 1] = (float)col_green((int)o.colour) / 255.0f;
-        colr[i * 4 + 2] = (float)col_blue((int)o.colour) / 255.0f;
+        colr[i * 4 + 0] = (float)col_red((int)o.color) / 255.0f;
+        colr[i * 4 + 1] = (float)col_green((int)o.color) / 255.0f;
+        colr[i * 4 + 2] = (float)col_blue((int)o.color) / 255.0f;
         ++i;
     }
     D3DCheck(d3d::set_vs_const_typed(RND_C_OVL_GEOM, d3d::CK_FLOAT, geom, 4), 140);
@@ -2282,6 +2315,25 @@ exp_real gpart_type_size(double type, double min, double max, double incr, doubl
     simple_catch("gpart_type_size", gerror)
 }
 
+// 尺寸硬门(gpart 扩展): 寿命 t 越过 from 前, portion 比例的粒子(逐粒子确定性哈希分群)
+// 保持出生随机尺寸, 其余时刻/粒子恒为 end。门课程整体替换线性增量(size incr 不参与),
+// wiggle 摆幅照常叠加。end < 出生尺寸为收缩台阶, 反之为放大, 两向对称。
+exp_real gpart_type_size_gate(double type, double end, double from, double portion)
+{
+    try
+    {
+        GType* t = type_at((int)type);
+        if (!t) return gfalse;
+        t->size_gate_end() = (float)std::max(end, 0.0);
+        t->size_gate_from() = (float)std::clamp(from, 0.0, 1.0);
+        t->size_gate_portion() = (float)std::clamp(portion, 0.0, 1.0);
+        t->size_gate_flag() = 1.0f;
+        type_table_upload();
+        return gtrue;
+    }
+    simple_catch("gpart_type_size_gate", gerror)
+}
+
 exp_real gpart_type_speed(double type, double min, double max, double incr, double wiggle)
 {
     try
@@ -2456,10 +2508,72 @@ exp_real gpart_type_frame_loop(double type, double mode)
     simple_catch("gpart_type_frame_loop", gerror)
 }
 
-// 颜色模式统一入口: mode + 颜色分量(0..1)
-static void type_set_colour(GType* t, int mode, const float c[9])
+// 位置正弦摆动(渲染侧偏移, 不进物理): 偏移 = amp*sin(2π*freq*t + 相位) 沿 axis 方向,
+// 相位与振幅插值都由粒子槽位 id 确定性导出。unit: 0 = freq 为每周期步数, 1 = freq 为
+// 每寿命周期数(寿命随机的粒子保持相同的生内节奏)。grow: 0 恒幅 / 1 振幅随寿命 t 放大 /
+// 2 随寿命 t 衰减。freq <= 0 关闭。mode 打包 axis + 3*unit + 6*grow。
+exp_real gpart_type_wobble(double type, double axis, double amp_min, double amp_max,
+    double freq, double unit, double grow)
 {
-    t->colour_mode() = (float)mode;
+    try
+    {
+        GType* t = type_at((int)type);
+        if (!t) return gfalse;
+        float amin = (float)std::min(amp_min, amp_max);
+        float amax = (float)std::max(amp_min, amp_max);
+        float f = freq > 0.0 ? (float)freq : 0.0f;
+        int ax = (int)std::clamp(axis, 0.0, 2.0);
+        int un = (int)std::clamp(unit, 0.0, 1.0);
+        int gr = (int)std::clamp(grow, 0.0, 2.0);
+        t->wobble_amp_min() = amin;
+        t->wobble_amp_max() = amax;
+        t->wobble_freq() = f;
+        t->wobble_mode() = (float)(ax + 3 * un + 6 * gr);
+        type_table_upload();
+        return gtrue;
+    }
+    simple_catch("gpart_type_wobble", gerror)
+}
+
+// alpha 硬门闪烁: 寿命 t 越过 from 后按周期步数 period 与占空比 duty 门控 alpha。
+// 相位由粒子槽位 id 确定性导出。period <= 0 关闭。
+exp_real gpart_type_flicker(double type, double period, double duty, double from)
+{
+    try
+    {
+        GType* t = type_at((int)type);
+        if (!t) return gfalse;
+        t->flicker_period() = period > 0.0 ? (float)period : 0.0f;
+        t->flicker_duty() = (float)std::clamp(duty, 0.0, 1.0);
+        t->flicker_from() = (float)std::clamp(from, 0.0, 1.0);
+        type_table_upload();
+        return gtrue;
+    }
+    simple_catch("gpart_type_flicker", gerror)
+}
+
+// 寿命归一速度包络: 速度按 v(t) = v0*(1 + rel*t) 随寿命线性变化, rel=-1 时死亡时刻
+// 速度恰归零(位移呈 1-(1-t)^2 缓出), rel>0 为缓入加速。演化侧按新旧寿命比缩放实现,
+// 免存初速。rel = 0 关闭; 与速度增量(speed incr)可叠加。
+exp_real gpart_type_speed_ease(double type, double rel)
+{
+    try
+    {
+        GType* t = type_at((int)type);
+        if (!t) return gfalse;
+        float r = (float)std::clamp(rel, -1.0, 1.0);
+        if (r > -0.001f && r < 0.001f) r = 0.0f;
+        t->speed_ease_rel() = r;
+        type_table_upload();
+        return gtrue;
+    }
+    simple_catch("gpart_type_speed_ease", gerror)
+}
+
+// 颜色模式统一入口: mode + 颜色分量(0..1)
+static void type_set_color(GType* t, int mode, const float c[9])
+{
+    t->color_mode() = (float)mode;
     // T4: c1.r c1.g c1.b c2.r; T5: c2.g c2.b c3.r c3.g; T6.x: c3.b
     float* color_a = t->row(GTypeRow::ColorA);
     float* color_b = t->row(GTypeRow::ColorB);
@@ -2484,7 +2598,7 @@ static void col_pack3(int c1, int c2, int c3, float out[9])
     out[8] = (float)col_blue(c3) / 255.0f;
 }
 
-exp_real gpart_type_colour1(double type, double c1)
+exp_real gpart_type_color1(double type, double c1)
 {
     try
     {
@@ -2492,14 +2606,14 @@ exp_real gpart_type_colour1(double type, double c1)
         if (!t) return gfalse;
         float c[9];
         col_pack3((int)c1, (int)c1, (int)c1, c);
-        type_set_colour(t, GP_COLOUR_ONE, c);
+        type_set_color(t, GP_COLOR_ONE, c);
         type_table_upload();
         return gtrue;
     }
-    simple_catch("gpart_type_colour1", gerror)
+    simple_catch("gpart_type_color1", gerror)
 }
 
-exp_real gpart_type_colour2(double type, double c1, double c2)
+exp_real gpart_type_color2(double type, double c1, double c2)
 {
     try
     {
@@ -2507,14 +2621,14 @@ exp_real gpart_type_colour2(double type, double c1, double c2)
         if (!t) return gfalse;
         float c[9];
         col_pack3((int)c1, (int)c2, (int)c2, c);
-        type_set_colour(t, GP_COLOUR_TWO, c);
+        type_set_color(t, GP_COLOR_TWO, c);
         type_table_upload();
         return gtrue;
     }
-    simple_catch("gpart_type_colour2", gerror)
+    simple_catch("gpart_type_color2", gerror)
 }
 
-exp_real gpart_type_colour3(double type, double c1, double c2, double c3)
+exp_real gpart_type_color3(double type, double c1, double c2, double c3)
 {
     try
     {
@@ -2522,14 +2636,49 @@ exp_real gpart_type_colour3(double type, double c1, double c2, double c3)
         if (!t) return gfalse;
         float c[9];
         col_pack3((int)c1, (int)c2, (int)c3, c);
-        type_set_colour(t, GP_COLOUR_THREE, c);
+        type_set_color(t, GP_COLOR_THREE, c);
         type_table_upload();
         return gtrue;
     }
-    simple_catch("gpart_type_colour3", gerror)
+    simple_catch("gpart_type_color3", gerror)
 }
 
-exp_real gpart_type_colour_mix(double type, double c1, double c2)
+// 四关键色渐变(c1→c2→c3→c4, 等分寿命)。第四色存 DepthBucket 行的空闲 yzw,
+// 不新增类型表行。
+exp_real gpart_type_color4(double type, double c1, double c2, double c3, double c4)
+{
+    try
+    {
+        GType* t = type_at((int)type);
+        if (!t) return gfalse;
+        float c[9];
+        col_pack3((int)c1, (int)c2, (int)c3, c);
+        type_set_color(t, GP_COLOR_FOUR, c);
+        t->color4_r() = (float)col_red((int)c4) / 255.0f;
+        t->color4_g() = (float)col_green((int)c4) / 255.0f;
+        t->color4_b() = (float)col_blue((int)c4) / 255.0f;
+        type_table_upload();
+        return gtrue;
+    }
+    simple_catch("gpart_type_color4", gerror)
+}
+
+// 关键帧插值风格: 0 = lerp(默认, 遗留行为), 1 = 硬色阶(按关键帧数等分寿命取最近帧)。
+// 作用于全部关键帧模式(1/2/3/7); 随机色模式(mix/rgb/hsv)不受影响。
+exp_real gpart_type_color_style(double type, double band)
+{
+    try
+    {
+        GType* t = type_at((int)type);
+        if (!t) return gfalse;
+        t->color_style() = (band >= 0.5) ? 1.0f : 0.0f;
+        type_table_upload();
+        return gtrue;
+    }
+    simple_catch("gpart_type_color_style", gerror)
+}
+
+exp_real gpart_type_color_mix(double type, double c1, double c2)
 {
     try
     {
@@ -2537,14 +2686,14 @@ exp_real gpart_type_colour_mix(double type, double c1, double c2)
         if (!t) return gfalse;
         float c[9];
         col_pack3((int)c1, (int)c2, (int)c2, c);
-        type_set_colour(t, GP_COLOUR_MIX, c);
+        type_set_color(t, GP_COLOR_MIX, c);
         type_table_upload();
         return gtrue;
     }
-    simple_catch("gpart_type_colour_mix", gerror)
+    simple_catch("gpart_type_color_mix", gerror)
 }
 
-exp_real gpart_type_colour_rgb(double type, double rmin, double rmax,
+exp_real gpart_type_color_rgb(double type, double rmin, double rmax,
     double gmin, double gmax, double bmin, double bmax)
 {
     try
@@ -2560,14 +2709,14 @@ exp_real gpart_type_colour_rgb(double type, double rmin, double rmax,
             (float)std::max(bmin, bmax) / 255.0f,
             0, 0, 0
         };
-        type_set_colour(t, GP_COLOUR_RGB, c);
+        type_set_color(t, GP_COLOR_RGB, c);
         type_table_upload();
         return gtrue;
     }
-    simple_catch("gpart_type_colour_rgb", gerror)
+    simple_catch("gpart_type_color_rgb", gerror)
 }
 
-exp_real gpart_type_colour_hsv(double type, double hmin, double hmax,
+exp_real gpart_type_color_hsv(double type, double hmin, double hmax,
     double smin, double smax, double vmin, double vmax)
 {
     try
@@ -2583,11 +2732,11 @@ exp_real gpart_type_colour_hsv(double type, double hmin, double hmax,
             (float)std::max(vmin, vmax),
             0, 0, 0
         };
-        type_set_colour(t, GP_COLOUR_HSV, c);
+        type_set_color(t, GP_COLOR_HSV, c);
         type_table_upload();
         return gtrue;
     }
-    simple_catch("gpart_type_colour_hsv", gerror)
+    simple_catch("gpart_type_color_hsv", gerror)
 }
 
 static void type_set_alpha(GType* t, int mode, float a1, float a2, float a3)
@@ -3278,7 +3427,7 @@ exp_real gpart_overlayer_region(double sys, double ind, double xmin, double xmax
     simple_catch("gpart_overlayer_region", gerror)
 }
 
-exp_real gpart_overlayer_color(double sys, double ind, double colour, double alpha)
+exp_real gpart_overlayer_color(double sys, double ind, double color, double alpha)
 {
     if (d3d::version() != d3d::V9) return gerror;
     try
@@ -3287,7 +3436,7 @@ exp_real gpart_overlayer_color(double sys, double ind, double colour, double alp
         if (it == g_systems.end()) return gfalse;
         auto o = it->second.overlayers.find((int)ind);
         if (o == it->second.overlayers.end()) return gfalse;
-        o->second.colour = (float)colour;
+        o->second.color = (float)color;
         o->second.alpha = (float)std::max(0.0, std::min(alpha, 1.0));
         return gtrue;
     }

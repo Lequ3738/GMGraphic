@@ -49,16 +49,17 @@ enum gpart_deflect_kind : int
     PS_DEFLECT_VERTICAL = 0, PS_DEFLECT_HORIZONTAL = 1,
 };
 
-// ---- color modes (internal; GML sets them via gpart_type_colour*) ----
-enum gpart_colour_mode : int
+// ---- color modes (internal; GML sets them via gpart_type_color*) ----
+enum gpart_color_mode : int
 {
-    GP_COLOUR_NONE = 0,      // fallback: white constant
-    GP_COLOUR_ONE = 1,       // c1 constant
-    GP_COLOUR_TWO = 2,       // c1 -> c2 by age
-    GP_COLOUR_THREE = 3,     // c1 -> c2 -> c3 by age
-    GP_COLOUR_MIX = 4,       // random c1..c2, fixed for lifetime (per-particle)
-    GP_COLOUR_RGB = 5,       // random in rgb range (per-particle)
-    GP_COLOUR_HSV = 6,       // random in hsv range (per-particle)
+    GP_COLOR_NONE = 0,       // fallback: white constant
+    GP_COLOR_ONE = 1,        // c1 constant
+    GP_COLOR_TWO = 2,        // c1 -> c2 by age
+    GP_COLOR_THREE = 3,      // c1 -> c2 -> c3 by age
+    GP_COLOR_MIX = 4,        // random c1..c2, fixed for lifetime (per-particle)
+    GP_COLOR_RGB = 5,        // random in rgb range (per-particle)
+    GP_COLOR_HSV = 6,        // random in hsv range (per-particle)
+    GP_COLOR_FOUR = 7,       // c1 -> c2 -> c3 -> c4 by age
 };
 
 enum gpart_alpha_mode : int
@@ -71,7 +72,7 @@ constexpr int GP_GRID = 256;              // state texture grid size (256x256 = 
 constexpr int GP_MAX_CAPACITY = 65536;    // hard cap
 constexpr int GP_MAX_BATCHES = 16;        // spawn batches per evolution pass chunk(ps_3_0 指令预算限制循环展开, 实测仅 ~24 批; 16 保守, 多块演化兜底)
 constexpr int GP_TYPE_TEX_W = 256;        // type table texture width (max 256 types)
-constexpr int GP_TYPE_TEX_H = 16;         // float4 texels per type (0..9 参数, 10/11 = step/death, 12 = 渲染尺寸, 13 = 方向增量/摆动, 14 = 深度分桶, 15 = 帧率/循环模式)
+constexpr int GP_TYPE_TEX_H = 18;         // float4 texels per type (0..9 参数, 10/11 = step/death, 12 = 渲染尺寸, 13 = 方向增量/摆动, 14 = 深度分桶/第四关键色, 15 = 帧率/循环模式, 16 = 位置摆动, 17 = 闪烁/寿命缓速)
 // 类型表行数与 shader 里 TYPE_ROWS_INV 是同一契约的两半: 改这里必须同步改
 // rnd_vs.hlsl / evo_ps.hlsl 的 TYPE_ROWS_INV, 漏改一处即采样错位读相邻行且不报错。
 constexpr int GP_ATLAS_SIZE = 1024;       // particle atlas texture size (px)
@@ -104,7 +105,7 @@ exp_real gpart_overlayer_destroy_all(double sys);           // 销毁系统内�
 exp_real gpart_overlayer_exists(double sys, double ind);    // 覆盖器是否存在
 exp_real gpart_overlayer_clear(double sys, double ind);     // 重置为默认: 区域退化/白/不透明/1 倍
 exp_real gpart_overlayer_region(double sys, double ind, double xmin, double xmax, double ymin, double ymax, double shape);   // 设置作用区域与形状(0 矩形/1 椭圆/2 菱形)
-exp_real gpart_overlayer_color(double sys, double ind, double colour, double alpha);   // 区域内覆盖色(GM8 BGR 整数)与 alpha(钳 0..1)
+exp_real gpart_overlayer_color(double sys, double ind, double color, double alpha);   // 区域内覆盖色(GM8 BGR 整数)与 alpha(钳 0..1)
 exp_real gpart_overlayer_scale(double sys, double ind, double scale);                  // 区域内尺寸倍率(负值钳 0)
 
 // ---- exports: particles (5) ----
@@ -124,6 +125,7 @@ exp_real gpart_type_shape(double type, double shape);
 exp_real gpart_type_scale(double type, double xscale, double yscale);
 exp_real gpart_type_life(double type, double min, double max);
 exp_real gpart_type_size(double type, double min, double max, double incr, double wiggle);
+exp_real gpart_type_size_gate(double type, double end, double from, double portion);
 exp_real gpart_type_speed(double type, double min, double max, double incr, double wiggle);
 exp_real gpart_type_direction(double type, double min, double max, double incr, double wiggle);
 exp_real gpart_type_gravity(double type, double force, double dir);
@@ -131,12 +133,14 @@ exp_real gpart_type_drag(double type, double coeff);
 exp_real gpart_type_step(double type, double step_number, double step_type);
 exp_real gpart_type_death(double type, double death_number, double death_type);
 exp_real gpart_type_immune_destroyer(double type, double immune);
-exp_real gpart_type_colour1(double type, double c1);
-exp_real gpart_type_colour2(double type, double c1, double c2);
-exp_real gpart_type_colour3(double type, double c1, double c2, double c3);
-exp_real gpart_type_colour_mix(double type, double c1, double c2);
-exp_real gpart_type_colour_rgb(double type, double rmin, double rmax, double gmin, double gmax, double bmin, double bmax);
-exp_real gpart_type_colour_hsv(double type, double hmin, double hmax, double smin, double smax, double vmin, double vmax);
+exp_real gpart_type_color1(double type, double c1);
+exp_real gpart_type_color2(double type, double c1, double c2);
+exp_real gpart_type_color3(double type, double c1, double c2, double c3);
+exp_real gpart_type_color4(double type, double c1, double c2, double c3, double c4);   // gpart 扩展: 四关键色
+exp_real gpart_type_color_style(double type, double band);   // gpart 扩展: 关键帧插值风格(0 lerp/1 硬色阶)
+exp_real gpart_type_color_mix(double type, double c1, double c2);
+exp_real gpart_type_color_rgb(double type, double rmin, double rmax, double gmin, double gmax, double bmin, double bmax);
+exp_real gpart_type_color_hsv(double type, double hmin, double hmax, double smin, double smax, double vmin, double vmax);
 exp_real gpart_type_alpha1(double type, double a1);
 exp_real gpart_type_alpha2(double type, double a1, double a2);
 exp_real gpart_type_alpha3(double type, double a1, double a2, double a3);
@@ -146,6 +150,9 @@ exp_real gpart_type_flip_random(double type, double flip);   // gpart 扩展: �
 exp_real gpart_type_depth_bucket(double type, double bucket);   // gpart 扩展: 绘制深度分桶(0-3, 越大越靠前)
 exp_real gpart_type_frame_rate(double type, double fps);        // gpart 扩展: 动画帧率(每步帧数, 0 = 跟随寿命)
 exp_real gpart_type_frame_loop(double type, double mode);       // gpart 扩展: 帧率循环模式(0 单次/1 循环/2 往返)
+exp_real gpart_type_wobble(double type, double axis, double amp_min, double amp_max, double freq, double unit, double grow);   // gpart 扩展: 位置正弦摆动(渲染侧偏移, 不进物理; axis 0 水平/1 垂直/2 垂直速度方向, unit 0 每周期步数/1 每寿命周期数, grow 0 恒幅/1 随寿命 t 放大/2 衰减, freq<=0 关闭)
+exp_real gpart_type_flicker(double type, double period, double duty, double from);   // gpart 扩展: alpha 硬门闪烁(period 闪烁周期步数, duty 占空比 0..1, from 寿命 t 起始, period<=0 关闭)
+exp_real gpart_type_speed_ease(double type, double rel);   // gpart 扩展: 寿命归一速度包络 v(t)=v0*(1+rel*t), rel=-1 速度死亡归零(位移呈缓出), 0 关闭
 
 // ---- exports: emitters (11) ----
 exp_real gpart_emitter_create(double sys);
