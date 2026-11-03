@@ -74,6 +74,13 @@ exp_real shader_set_uniform_f(double h, double x, double y, double z, double w);
 exp_real shader_set_uniform_i(double h, double x, double y, double z, double w);
 exp_real shader_set_uniform_b(double h, double x, double y, double z, double w);
 exp_real shader_set_uniform_color(double h, double col, double alpha);
+// 数组 uniform(一次喂多个寄存器): 三入口 = 输入值域契约, f 原样 / i 截断 int /
+// b >=0.5 归一; 写入路由仍按句柄 kind 分寄存器库。可证明校验: float/int 契约
+// 对 BOOL 声明报错(归一是唯一静默损坏数据的错配); SM2 侵蚀进 float 库无从校验。
+// 变量名直读当前实例二维数组(GM8 数组过不了 external_call, 见 GML 侧包装)。
+exp_real shader_set_uniform_f_array(double h, const char* varName);
+exp_real shader_set_uniform_i_array(double h, const char* varName);
+exp_real shader_set_uniform_b_array(double h, const char* varName);
 // mtx_type 掩码: world=1 / view=2 / projection=4 / wvp=7。size = 写几个寄存器(默认 4)。
 exp_real shader_set_uniform_matrix(double h, double mtx_type, double size);
 

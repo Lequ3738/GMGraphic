@@ -764,85 +764,133 @@ exp_real shader_set_uniform_color(double h, double col, double alpha)
     simple_catch("shader_set_uniform_color", gerror)
 }
 
-// 设数组 uniform(一次喂多个 float4 寄存器)。varName = 当前实例上与 uniform 同名的
-// 二维数组变量名: GMS2 同名函数的 GM8 现实等价物, 签名偏差 = 数组引用在此为变量
-// 名串(GM8 数组过不了 external_call)。实际数组形状即协议: 有效寄存器 =
-// min(声明寄存器数, 实际行数), 短行/缺行/非实数元素一律补 0。
-// 寄存器类型按句柄自带 kind 分发(float/int/bool 数组同一入口, 不拆兄弟入口;
-// int/bool 常量库仅 VS, ps_reg = -1 天然跳过), bool 元素按 _b 惯例 >=0.5 归一。
+// ---- 数组 uniform 写入: 三入口 = 输入值域契约 + 可证明错配校验 ----
+
+// 数组入口契约。入口名声明调用方喂的值域, 导出名与转换一一对应, 不做暗中变换;
+// 写入路由仍按句柄自带 kind 分寄存器库 —— D3D9 设备级要求库匹配声明, 且 SM2
+// 回落时 int/bool 侵蚀进 float 库、常量表类型信息丢失, 路由不随入口变。
+enum ArrayContract { AC_FLOAT, AC_INT, AC_BOOL };
+
+// 三数组入口共享行读取循环。varName = 当前实例上与 uniform 同名的二维数组变量名:
+// GMS2 同名函数的 GM8 现实等价物, 签名偏差 = 数组引用在此为变量名串(GM8 数组
+// 过不了 external_call)。实际数组形状即协议: 有效寄存器 = min(声明寄存器数,
+// 实际行数), 短行/缺行/非实数元素一律补 0。返回 false = 喂零语义(未知名/缺变量);
+// 抛异常 = 句柄非法或类型错配(经各导出 simple_catch 弹错误框)。
+// 契约变换(三入口唯一分叉点):
+// - AC_FLOAT: 原样 float。
+// - AC_INT: 截断为 int(向零取整, 与库级 SetI 同口径)。
+// - AC_BOOL: 按 >=0.5 归一。
+// 校验(可证明才报错):
+// - float/int 契约对 BOOL 声明报错 —— bool 归一是唯一静默损坏数据的错配
+//   (如 0.3 阈值灌进 bool uniform 变 0), 常量表有类型信息就必须拦。
+// - b 契约对任何声明宽容: 归一后的 0/1 对三个寄存器库皆合法。
+// - FLOAT 声明恒宽容: 是 INT/BOOL 的 SM2 侵蚀路径, 截断/归一由契约保证,
+//   走 float 库后可见结果与 SM3 专用库一致。
+static bool uniform_set_array_impl(double h, const char* varName, ArrayContract ask)
+{
+    auto it = uniforms.find((int)h);
+    if (it == uniforms.end())
+        throw std::runtime_error("Invalid uniform handle.");
+    const UniformHandle& uh = it->second;
+
+    if (ask != AC_BOOL &&
+        ((uh.ps_reg >= 0 && uh.ps_kind == d3d::CK_BOOL) ||
+         (uh.vs_reg >= 0 && uh.vs_kind == d3d::CK_BOOL)))
+        throw std::runtime_error(
+            "Uniform is declared bool: float/int array data would be silently "
+            "normalized. Use shader_set_uniform_b_array.");
+
+    // 声明寄存器数上限: 两阶段都命中时取大者(同一数组在两阶段声明一致)。
+    // count 折算口径(shaArrProbe float4 probeArr[8] 实锤): D3DX 常量表
+    // GetConstantDesc 的 RegisterCount 对 float4 数组 = 寄存器数, 与元素数同值
+    // (每元素独占一个 float4 寄存器; 两者只在标量数组上分叉, 如 float[16] 元素
+    // 16 折 4 寄存器, 本 API 按 float4 数组设计, 标量数组不在此契约内)。
+    // 取值出处: d3d_adapter9.cpp constant_table_get_uniform 的 loc.count =
+    // desc.RegisterCount(与 shader_get_uniform 写进 UniformHandle 的同一字段)。
+    int decl = -1;
+    if (uh.vs_reg >= 0) decl = uh.vs_count;
+    if (uh.ps_reg >= 0 && uh.ps_count > decl) decl = uh.ps_count;
+
+    // 按名直读当前实例变量(纯结构直读, 零 runner 调用; 读路径不需要 inner 钩子)。
+    int varid = gmapi->GetSymbolID(varName);
+    if (varid < 0) return false;                           // 未知名: 喂零语义
+    gm::PGMVARIABLE gmvar = gmapi->GetLocalVariablePtr(gm::self, varid);
+    if (gmvar == nullptr || !gmvar->values) return false;  // 缺变量/标量: 行数 0
+
+    int rows = (int)gmvar->GetFirstDimensionSize();
+    if (decl >= 0 && rows > decl) rows = decl;              // 声明数只是上限
+
+    // GM8 数组存储布局(objVsProbe probeArr + shaArrProbe 实锤): flat 下标 0
+    // (即 arr[0,0])存在变量自身的 GMVALUE 槽位(gmvar->real), 不在 values[0][0]
+    // —— 那里是恒 0 占位; 其余元素 values[r][j] = arr[r,j] 自然映射(GML 读写两路
+    // 皆然)。只写了 flat 0 的变量 values 为空, 落在上面的标量分支(喂零语义)。
+    bool has_flat0 = (gmvar->type == gm::VT_REAL);
+
+    for (int r = 0; r < rows; ++r)
+    {
+        float m[4] = { 0, 0, 0, 0 };
+        if (gmvar->values[r])                               // 空行: 该寄存器补零
+        {
+            int cols = (int)gmvar->GetSecondDimensionSize(r);
+            if (cols > 4) cols = 4;
+            for (int j = 0; j < cols; ++j)
+            {
+                if (r == 0 && j == 0)
+                {
+                    if (has_flat0) m[0] = (float)gmvar->real;
+                    continue;
+                }
+                if (gmvar->values[r][j].type == gm::VT_REAL) // 非实数元素补零
+                    m[j] = (float)gmvar->values[r][j].real;
+            }
+        }
+        else if (r == 0 && has_flat0)
+        {
+            m[0] = (float)gmvar->real;              // 行结构缺行但 flat 0 在变量槽
+        }
+        if (ask == AC_INT)
+            for (int j = 0; j < 4; ++j) m[j] = (float)(int)m[j];
+        else if (ask == AC_BOOL)
+            for (int j = 0; j < 4; ++j) m[j] = (m[j] >= 0.5f) ? 1.f : 0.f;
+        // int/bool 常量库仅 VS 存在, ps_reg = -1 天然跳过; 库级 CK_BOOL 分支
+        // 另有一道 >=0.5 兜底, 与入口归一同口径。
+        if (uh.ps_reg >= 0)
+            D3DCheck(d3d::set_ps_const_typed((DWORD)(uh.ps_reg + r),
+                (d3d::ConstKind)uh.ps_kind, m, 1), 1);
+        if (uh.vs_reg >= 0)
+            D3DCheck(d3d::set_vs_const_typed((DWORD)(uh.vs_reg + r),
+                (d3d::ConstKind)uh.vs_kind, m, 1), 1);
+    }
+    return true;
+}
+
+// 数组写入三入口。GMS2 对齐: f_array/i_array 同名同位; b_array 为本插件扩展
+// (GMS2 无 _b 族, 与标量 _b 同理: D3D9 有真 BOOL 寄存器库)。
 exp_real shader_set_uniform_f_array(double h, const char* varName)
 {
     try
     {
-        auto it = uniforms.find((int)h);
-        if (it == uniforms.end())
-            throw std::runtime_error("Invalid uniform handle.");
-        const UniformHandle& uh = it->second;
-
-        // 声明寄存器数上限: 两阶段都命中时取大者(同一数组在两阶段声明一致)。
-        // count 折算口径(实测, shaArrProbe float4 probeArr[8]): D3DX 常量表
-        // GetConstantDesc 的 RegisterCount 对 float4 数组 = 寄存器数, 与元素数同值
-        // (每元素独占一个 float4 寄存器; 两者只在标量数组上分叉, 如 float[16] 元素
-        // 16 折 4 寄存器, 本 API 按 float4 数组设计, 标量数组不在此契约内)。
-        // 取值出处: d3d_adapter9.cpp constant_table_get_uniform 的 loc.count =
-        // desc.RegisterCount(与 shader_get_uniform 写进 UniformHandle 的同一字段)。
-        int decl = -1;
-        if (uh.vs_reg >= 0) decl = uh.vs_count;
-        if (uh.ps_reg >= 0 && uh.ps_count > decl) decl = uh.ps_count;
-
-        // 按名直读当前实例变量(纯结构直读, 零 runner 调用; 读路径不需要 inner 钩子)。
-        int varid = gmapi->GetSymbolID(varName);
-        if (varid < 0) return gfalse;                           // 未知名: 喂零语义
-        gm::PGMVARIABLE gmvar = gmapi->GetLocalVariablePtr(gm::self, varid);
-        if (gmvar == nullptr || !gmvar->values) return gfalse;  // 缺变量/标量: 行数 0
-
-        int rows = (int)gmvar->GetFirstDimensionSize();
-        if (decl >= 0 && rows > decl) rows = decl;              // 声明数只是上限
-
-        // GM8 数组存储布局(实测, objVsProbe probeArr + shaArrProbe): flat 下标 0
-        // (即 arr[0,0])存在变量自身的 GMVALUE 槽位(gmvar->real), 不在 values[0][0]
-        // —— 那里是恒 0 占位; 其余元素 values[r][j] = arr[r,j] 自然映射(GML 读写两路
-        // 皆然)。只写了 flat 0 的变量 values 为空, 落在上面的标量分支(喂零语义)。
-        bool has_flat0 = (gmvar->type == gm::VT_REAL);
-
-        bool need_bool_norm =
-            (uh.ps_reg >= 0 && uh.ps_kind == d3d::CK_BOOL) ||
-            (uh.vs_reg >= 0 && uh.vs_kind == d3d::CK_BOOL);
-
-        for (int r = 0; r < rows; ++r)
-        {
-            float m[4] = { 0, 0, 0, 0 };
-            if (gmvar->values[r])                               // 空行: 该寄存器补零
-            {
-                int cols = (int)gmvar->GetSecondDimensionSize(r);
-                if (cols > 4) cols = 4;
-                for (int j = 0; j < cols; ++j)
-                {
-                    if (r == 0 && j == 0)
-                    {
-                        if (has_flat0) m[0] = (float)gmvar->real;
-                        continue;
-                    }
-                    if (gmvar->values[r][j].type == gm::VT_REAL) // 非实数元素补零
-                        m[j] = (float)gmvar->values[r][j].real;
-                }
-            }
-            else if (r == 0 && has_flat0)
-            {
-                m[0] = (float)gmvar->real;              // 行结构缺行但 flat 0 在变量槽
-            }
-            if (need_bool_norm)
-                for (int j = 0; j < 4; ++j) m[j] = (m[j] >= 0.5f) ? 1.f : 0.f;
-            if (uh.ps_reg >= 0)
-                D3DCheck(d3d::set_ps_const_typed((DWORD)(uh.ps_reg + r),
-                    (d3d::ConstKind)uh.ps_kind, m, 1), 1);
-            if (uh.vs_reg >= 0)
-                D3DCheck(d3d::set_vs_const_typed((DWORD)(uh.vs_reg + r),
-                    (d3d::ConstKind)uh.vs_kind, m, 1), 1);
-        }
-        return gtrue;
+        return uniform_set_array_impl(h, varName, AC_FLOAT) ? gtrue : gfalse;
     }
     simple_catch("shader_set_uniform_f_array", gerror)
+}
+
+exp_real shader_set_uniform_i_array(double h, const char* varName)
+{
+    try
+    {
+        return uniform_set_array_impl(h, varName, AC_INT) ? gtrue : gfalse;
+    }
+    simple_catch("shader_set_uniform_i_array", gerror)
+}
+
+exp_real shader_set_uniform_b_array(double h, const char* varName)
+{
+    try
+    {
+        return uniform_set_array_impl(h, varName, AC_BOOL) ? gtrue : gfalse;
+    }
+    simple_catch("shader_set_uniform_b_array", gerror)
 }
 
 static void mat_mul(float* c, const float* a, const float* b)
