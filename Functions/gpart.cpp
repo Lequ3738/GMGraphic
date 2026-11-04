@@ -52,6 +52,7 @@ static const int EVO_C_PATHMETA = 56; // (.x = 路径点数, 0 = 无路径模式
 static const int RND_C_WVP = 0;       // float4x4 (c0..c3)
 static const int RND_C_SYS = 4;       // (sys_x, sys_y, invGrid, pixelsnap)
 static const int RND_C_BLEND = 5;     // (.x=当前遍混合模式 0=普通/1=加法, .y=预乘输出, .z=当前深度桶号)
+static const int RND_C_SYSCOL = 6;    // 系统级染色与不透明度乘数 rgba(GSystem.sys_col, gpart_system_colour 写)
 static const int RND_C_OVL_GEOM = 6;  // 覆盖器 4 组 (xmin, xmax, ymin, ymax) (c6..c9)
 static const int RND_C_OVL_META = 10; // 覆盖器 4 组 (active, shape, scale, alpha) (c10..c13)
 static const int RND_C_OVL_COLOR = 14;// 覆盖器 4 组 (r, g, b, 0) (c14..c17)
@@ -478,6 +479,9 @@ struct GSystem
     // 暂停: update 跳过整个系统(演化/事件/流式发射/时钟), 绘制不受影响 → 画面定格。
     // 时钟不推进使 CPU 影子年龄判定一并冻结, 恢复后从暂停点续算, 不补偿时间。
     bool paused = false;
+    // 系统级染色与不透明度乘数(渲染常量, gpart_system_colour 写): 全体粒子最终颜色逐通道相乘。
+    // 默认恒等(白/不透明), 从未调用过的系统渲染结果与旧版逐位一致
+    float sys_col[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
     // 区域特效器(attractor/destroyer/deflector), id 自增分配(GM8 复用空槽, 自增即可)
     std::unordered_map<int, GAttractor> attractors;
     std::unordered_map<int, GDestroyer> destroyers;
@@ -1507,6 +1511,7 @@ static void run_render(GSystem& s)
     D3DCheck(d3d::set_vs_const_typed(RND_C_WVP, d3d::CK_FLOAT, wvp, 4), 12);
     D3DCheck(d3d::set_vs_const_typed(RND_C_SYS, d3d::CK_FLOAT, sys, 1), 13);
     set_overlayer_consts(s);
+    D3DCheck(d3d::set_ps_const_typed(RND_C_SYSCOL, d3d::CK_FLOAT, s.sys_col, 1), 14);
 
     D3DCheck(d3d::set_vertex_declaration(g_id_decl), 16);
     D3DCheck(d3d::set_vertex_shader_handle(g_rnd_vs), 17);
@@ -1927,6 +1932,23 @@ exp_real gpart_system_drawit(double sys)
         return gtrue;
     }
     simple_catch("gpart_system_drawit", gerror)
+}
+
+exp_real gpart_system_colour(double sys, double color, double alpha)
+{
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        GSystem& s = it->second;
+        int c = (int)color;
+        s.sys_col[0] = (float)((c) & 0xff) / 255.0f;
+        s.sys_col[1] = (float)((c >> 8) & 0xff) / 255.0f;
+        s.sys_col[2] = (float)((c >> 16) & 0xff) / 255.0f;
+        s.sys_col[3] = (float)alpha;
+        return gtrue;
+    }
+    simple_catch("gpart_system_colour", gerror)
 }
 
 exp_real gpart_system_draw_order(double sys, double oldtonew)
