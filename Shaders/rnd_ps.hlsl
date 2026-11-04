@@ -1,7 +1,7 @@
 sampler sMain : register(s0);
 sampler sRect : register(s5);
 float4 uBlend : register(c5);   // .x = 当前遍混合模式(0=普通, 1=加法)
-float4 uSysCol : register(c6);  // 系统级染色与不透明度乘数(gpart_system_colour, 恒等 = 白/1)
+float4 uSysCol : register(c6);  // 系统级染色与不透明度乘数(gpart_system_color, 恒等 = 白/1)
 
 float4 main(float2 cuv : TEXCOORD0, float2 tinfo : TEXCOORD1, float4 col : COLOR0) : COLOR0
 {

@@ -161,7 +161,7 @@ exp_real vertex_format_add_position_3d(double fmt)
     simple_catch("vertex_format_add_position_3d", gerror)
 }
 
-exp_real vertex_format_add_colour(double fmt)
+exp_real vertex_format_add_color(double fmt)
 {
     if (!vtx_d3d9()) return gerror;
     try
@@ -170,7 +170,7 @@ exp_real vertex_format_add_colour(double fmt)
         add_comp((int)fmt, vertex::K_COLOR, 4, VT_D3DCOLOR, VU_COLOR, 0);
         return gtrue;
     }
-    simple_catch("vertex_format_add_colour", gerror)
+    simple_catch("vertex_format_add_color", gerror)
 }
 
 exp_real vertex_format_add_normal(double fmt)
@@ -197,7 +197,7 @@ exp_real vertex_format_add_texcoord(double fmt)
     simple_catch("vertex_format_add_texcoord", gerror)
 }
 
-// type: 1..4 = float1..4, 5 = colour, 6 = ubyte4; set = TEXCOORD/COLOR usage index.
+// type: 1..4 = float1..4, 5 = color, 6 = ubyte4; set = TEXCOORD/COLOR usage index.
 exp_real vertex_format_add_custom(double fmt, double type, double set)
 {
     if (!vtx_d3d9()) return gerror;
@@ -215,7 +215,7 @@ exp_real vertex_format_add_custom(double fmt, double type, double set)
             case 4: add_comp((int)fmt, vertex::K_FLOAT4, 16, VT_FLOAT4, VU_TEXCOORD, s); break;
             case 5: add_comp((int)fmt, vertex::K_COLOR, 4, VT_D3DCOLOR, VU_COLOR, s); break;
             case 6: add_comp((int)fmt, vertex::K_UBYTE4, 4, VT_UBYTE4N, VU_TEXCOORD, s); break;
-            default: throw std::runtime_error("Invalid custom type (1..4=float1..4, 5=colour, 6=ubyte4).");
+            default: throw std::runtime_error("Invalid custom type (1..4=float1..4, 5=color, 6=ubyte4).");
         }
         return gtrue;
     }
@@ -401,7 +401,7 @@ static void write_comp(vertex::Buffer& b, int kind, const void* data, int size)
     memcpy(b.data.data() + b.vert_count * f->stride + c->offset, data, (size_t)size);
 }
 
-exp_real vertex_colour(double col, double alpha)
+exp_real vertex_color(double col, double alpha)
 {
     if (!vtx_d3d9()) return gerror;
     try
@@ -410,7 +410,7 @@ exp_real vertex_colour(double col, double alpha)
         write_comp(*cur_buf(), vertex::K_COLOR, &c, 4);
         return gtrue;
     }
-    simple_catch("vertex_colour", gerror)
+    simple_catch("vertex_color", gerror)
 }
 
 exp_real vertex_argb(double argb)

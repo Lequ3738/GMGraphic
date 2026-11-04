@@ -27,7 +27,7 @@ static const DWORD GP_VTS0 = 257;      // D3DVERTEXTEXTURESAMPLER0
 //       tex[1] : age, life, type, frame
 //       tex[2] : base color.rgb (mix/rgb/hsv/override), has_override
 //   - gpart_system_update(): one 3-MRT fullscreen pass per spawn-batch chunk
-//     integrates gravity/drag/motion, initialises newly spawned slots and
+//     integrates gravity/drag/motion, initializes newly spawned slots and
 //     computes the animation frame per particle.
 //   - gpart_system_drawit(): STATIC vertex buffer (0..capacity-1, built once),
 //     dead particles are skipped by the rasterizer via PSIZE=0. Draw range is
@@ -52,7 +52,7 @@ static const int EVO_C_PATHMETA = 56; // (.x = 路径点数, 0 = 无路径模式
 static const int RND_C_WVP = 0;       // float4x4 (c0..c3)
 static const int RND_C_SYS = 4;       // (sys_x, sys_y, invGrid, pixelsnap)
 static const int RND_C_BLEND = 5;     // (.x=当前遍混合模式 0=普通/1=加法, .y=预乘输出, .z=当前深度桶号)
-static const int RND_C_SYSCOL = 6;    // 系统级染色与不透明度乘数 rgba(GSystem.sys_col, gpart_system_colour 写)
+static const int RND_C_SYSCOL = 6;    // 系统级染色与不透明度乘数 rgba(GSystem.sys_col, gpart_system_color 写)
 static const int RND_C_OVL_GEOM = 6;  // 覆盖器 4 组 (xmin, xmax, ymin, ymax) (c6..c9)
 static const int RND_C_OVL_META = 10; // 覆盖器 4 组 (active, shape, scale, alpha) (c10..c13)
 static const int RND_C_OVL_COLOR = 14;// 覆盖器 4 组 (r, g, b, 0) (c14..c17)
@@ -479,7 +479,7 @@ struct GSystem
     // 暂停: update 跳过整个系统(演化/事件/流式发射/时钟), 绘制不受影响 → 画面定格。
     // 时钟不推进使 CPU 影子年龄判定一并冻结, 恢复后从暂停点续算, 不补偿时间。
     bool paused = false;
-    // 系统级染色与不透明度乘数(渲染常量, gpart_system_colour 写): 全体粒子最终颜色逐通道相乘。
+    // 系统级染色与不透明度乘数(渲染常量, gpart_system_color 写): 全体粒子最终颜色逐通道相乘。
     // 默认恒等(白/不透明), 从未调用过的系统渲染结果与旧版逐位一致
     float sys_col[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
     // 区域特效器(attractor/destroyer/deflector), id 自增分配(GM8 复用空槽, 自增即可)
@@ -1934,7 +1934,7 @@ exp_real gpart_system_drawit(double sys)
     simple_catch("gpart_system_drawit", gerror)
 }
 
-exp_real gpart_system_colour(double sys, double color, double alpha)
+exp_real gpart_system_color(double sys, double color, double alpha)
 {
     try
     {
@@ -1948,7 +1948,7 @@ exp_real gpart_system_colour(double sys, double color, double alpha)
         s.sys_col[3] = (float)alpha;
         return gtrue;
     }
-    simple_catch("gpart_system_colour", gerror)
+    simple_catch("gpart_system_color", gerror)
 }
 
 exp_real gpart_system_draw_order(double sys, double oldtonew)

@@ -131,7 +131,7 @@ void texture_bind_white_stage0();
 // ---- GPU Control(GMS2 gpu_* 系列)----
 // Fog 合并成一个 gpu_set_fog(不严格对齐 GMS2, 扩展 mode/density 保留 D3D 控制)。
 // mode: 0=线性(默认, 用 start/end)/1=exp/2=exp2(用 density)。GML 传 4 参 → GM8 补 mode=0/density=0。
-exp_real gpu_set_fog(double enable, double colour, double start, double end, double mode, double density);
+exp_real gpu_set_fog(double enable, double color, double start, double end, double mode, double density);
 
 exp_real d3d_set_point_size(double size);
 exp_real d3d_set_point_size_min(double size);
@@ -140,8 +140,8 @@ exp_real d3d_set_point_scale(double state);
 exp_real d3d_set_point_scale_coef(double coef1, double coef2, double coef3);
 exp_real d3d_set_point_sprite(double state);
 
-// 颜色写掩码(GMS2 gpu_set_colourwriteenable): enable 总开关 + 各通道。全部启用时全开。
-exp_real gpu_set_colourwriteenable(double enable, double r, double g, double b, double a);
+// 颜色写掩码(GMS2 gpu_set_colorwriteenable): enable 总开关 + 各通道。全部启用时全开。
+exp_real gpu_set_colorwriteenable(double enable, double r, double g, double b, double a);
 exp_real gpu_set_zwriteenable(double enable);   // GMS2 同名, Z 缓冲写入
 exp_real gpu_set_ztestenable(double enable);    // GMS2 同名, Z 测试开关(拆自 d3d_set_ztest)
 exp_real gpu_set_ztestfunc(double func);        // GMS2 同名, Z 比较函数

@@ -77,14 +77,14 @@ int sdf_shader_uniform_buffer = -1; // DX9: "u_buffer"(thickness) 句柄
 int sdf_shader_uniform_gamma = -1;  // DX9: "u_gamma"(边缘软度) 句柄
 
 // ============================================================================
-// Initialisation
+// Initialization
 // ============================================================================
 
 // 设备 Reset 前后总回调(定义见文件末尾; init 里注册到 GMDirectX9)。
 void gmgraphic_reset_pre();
 void gmgraphic_reset_post(bool recreated);
 
-// Initialises device pointer, GPU information, buffers, etc.
+// Initializes device pointer, GPU information, buffers, etc.
 exp_real init(gm_real arg_list)
 {
     // 检测后端(D3D8 / D3D9)并缓存; 之后所有 d3d:: 调用按此分发。
@@ -1163,7 +1163,7 @@ exp_real gpu_get_sampler_state_ext(double sampler, double state)
 
 // 合并旧 d3d_set_fog_* 为 gpu_set_fog: mode 0=线性(start/end)/1=exp/2=exp2(density)。
 // GML 传 4 参时补 mode=0, density=0 → 线性 fog, 兼容 GMS2 gpu_set_fog。
-exp_real gpu_set_fog(double enable, double colour, double start, double end, double mode, double density)
+exp_real gpu_set_fog(double enable, double color, double start, double end, double mode, double density)
 {
     int m = (int)mode;
     if (m == 1)      m = D3DFOG_EXP;
@@ -1173,7 +1173,7 @@ exp_real gpu_set_fog(double enable, double colour, double start, double end, dou
     float s = (float)start, e = (float)end, d = (float)clamp(density, 0, 1);
 
     HRESULT hr = d3d::set_render_state(D3DRS_FOGENABLE, (enable > 0.0));
-    if (SUCCEEDED(hr)) hr = d3d::set_render_state(D3DRS_FOGCOLOR, col_d3d((int)colour, 0.0));
+    if (SUCCEEDED(hr)) hr = d3d::set_render_state(D3DRS_FOGCOLOR, col_d3d((int)color, 0.0));
     if (SUCCEEDED(hr)) hr = d3d::set_render_state(D3DRS_FOGTABLEMODE, (DWORD)m);
     if (SUCCEEDED(hr)) hr = d3d::set_render_state(D3DRS_FOGSTART, d3dvar(s));
     if (SUCCEEDED(hr)) hr = d3d::set_render_state(D3DRS_FOGEND, d3dvar(e));
@@ -1240,9 +1240,9 @@ exp_real d3d_set_point_sprite(double state)
 // Render control(GMS2 gpu_* 系列)
 // ============================================================================
 
-// 颜色写掩码(GMS2 gpu_set_colourwriteenable)。enable 总开关; 关闭时全部禁止写。
+// 颜色写掩码(GMS2 gpu_set_colorwriteenable)。enable 总开关; 关闭时全部禁止写。
 // 各通道独立开/关, 全部启用时全开。默认全开。
-exp_real gpu_set_colourwriteenable(double enable, double r, double g, double b, double a)
+exp_real gpu_set_colorwriteenable(double enable, double r, double g, double b, double a)
 {
     if (!(d3dcaps.prim_misc_caps & D3DPMISCCAPS_COLORWRITEENABLE))
         return gfalse;
@@ -1367,7 +1367,7 @@ exp_real d3d_use_ext_vertex_format(gm_real use)
     return gtrue;
 }
 
-// Position, normal, diffuse/specular colour and alpha.
+// Position, normal, diffuse/specular color and alpha.
 void vertex::add(float x, float y, float z, float nx, float ny, float nz, uint col, uint speccol)
 {
     vbuff_ext_int[vbuff_c].x = x;

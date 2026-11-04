@@ -27,7 +27,7 @@ constexpr vertex_element vertex_element_end() { return { 0xFF, 0, 0, 0, 0, 0 }; 
 enum vertex_custom_type : int
 {
     VTYPE_FLOAT1 = 1, VTYPE_FLOAT2 = 2, VTYPE_FLOAT3 = 3, VTYPE_FLOAT4 = 4,
-    VTYPE_COLOUR = 5, VTYPE_UBYTE4 = 6,
+    VTYPE_COLOR = 5, VTYPE_UBYTE4 = 6,
 };
 
 namespace vertex
@@ -67,7 +67,7 @@ void vertex_on_device_recreated();
 exp_real vertex_format_begin();
 exp_real vertex_format_add_position(double fmt);
 exp_real vertex_format_add_position_3d(double fmt);
-exp_real vertex_format_add_colour(double fmt);
+exp_real vertex_format_add_color(double fmt);
 exp_real vertex_format_add_normal(double fmt);
 exp_real vertex_format_add_texcoord(double fmt);
 exp_real vertex_format_add_custom(double fmt, double type, double set);
@@ -84,7 +84,7 @@ exp_real vertex_begin(double buf);
 exp_real vertex_end();
 exp_real vertex_position(double x, double y);
 exp_real vertex_position_3d(double x, double y, double z);
-exp_real vertex_colour(double col, double alpha);
+exp_real vertex_color(double col, double alpha);
 exp_real vertex_normal(double x, double y, double z);
 exp_real vertex_texcoord(double u, double v);
 exp_real vertex_float1(double x);

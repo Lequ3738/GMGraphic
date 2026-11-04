@@ -45,7 +45,7 @@ double curp(double a, double b, double c, double d, double x)
 	return (p * x * x * x) + (q * x * x) + ((c - a) * x) + b;
 }
 
-// Returns the value normalised into the range 0-1.
+// Returns the value normalized into the range 0-1.
 double unlerp(double val, double minval, double maxval)
 {
 	return (val - minval) / (maxval - minval);
@@ -97,7 +97,7 @@ int col_green(int col) { return ((col >> 8) % 256); }
 int col_blue(int col) { return (col >> 16); }
 int col_make(int r, int g, int b) { return (b << 16) + (g << 8) + r; }
 
-// Lerp between colours.  Same as merge_color in GML.
+// Lerp between colors.  Same as merge_color in GML.
 int col_lerp(int cola, int colb, double a)
 {
 	
