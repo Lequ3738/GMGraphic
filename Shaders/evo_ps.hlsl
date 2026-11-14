@@ -15,8 +15,8 @@ float4 uPathMeta : register(c56); // .x = 路径点数(0 = 无路径模式)
 static const float TWO_PI = 6.283185307179586;
 static const float DEG2RAD = 0.017453292519943295;
 static const float GRID = 256.0;
-// 类型表行数倒数: 必须与 GP_TYPE_TEX_H 一致, 漏同步即采样错位读相邻行且不报错。
-static const float TYPE_ROWS_INV = 1.0 / 18.0;
+// 类型表行布局由宿主编译前注入: TYPE_ROWS_INV 与 ROW_<行名> 生成自 gpart.cpp 的
+// GTypeRow 枚举(type_layout_defines), 本文件不含布局字面量。
 
 // 高熵 1D hash: 二次项打破 frac(a*k) 的线性周期(否则相邻 id 方向相关 → 射线)
 float h1(float a)
@@ -305,7 +305,7 @@ void apply_deflectors(float2 prev, inout float2 pos, inout float2 vel, float cou
 // destroyer: 区域内(rect/ellipse/diamond)命中检测。免疫类型(T11.z)不命中。
 float destroyer_killhit(float2 pos, float type, float count)
 {
-    float4 T11 = tex2D(sType, float2((type + 0.5) / 256.0, 11.5 * TYPE_ROWS_INV));
+    float4 T11 = tex2D(sType, float2((type + 0.5) / GP_TYPE_TEX_W, (ROW_FeatureFlags + 0.5) * TYPE_ROWS_INV));
 
     for (int de2 = 0; de2 < 4; ++de2)
     {
@@ -346,14 +346,14 @@ void apply_morph(inout float type, inout float age, inout float life,
     if (killhit < 0.5)
         return;
 
-    float4 T10 = tex2D(sType, float2((type + 0.5) / 256.0, 10.5 * TYPE_ROWS_INV));
+    float4 T10 = tex2D(sType, float2((type + 0.5) / GP_TYPE_TEX_W, (ROW_StepDeath + 0.5) * TYPE_ROWS_INV));
     float dn = T10.z, dtype = T10.w;
-    if (dn != 0.0 && dtype >= 1.0 && dtype < 256.0
+    if (dn != 0.0 && dtype >= 1.0 && dtype < GP_TYPE_TEX_W
         && (dn > 0.0 || h1(id + 41.7) < 1.0 / -dn))
     {
         type = dtype;
-        float4 TD0 = tex2D(sType, float2((type + 0.5) / 256.0, 0.5 * TYPE_ROWS_INV));
-        float4 TD1 = tex2D(sType, float2((type + 0.5) / 256.0, 1.5 * TYPE_ROWS_INV));
+        float4 TD0 = tex2D(sType, float2((type + 0.5) / GP_TYPE_TEX_W, (ROW_LifeSize + 0.5) * TYPE_ROWS_INV));
+        float4 TD1 = tex2D(sType, float2((type + 0.5) / GP_TYPE_TEX_W, (ROW_SpeedDirection + 0.5) * TYPE_ROWS_INV));
         float rr2 = h1(id + 71.3);
         float rr3 = h1(id + 91.7);
         age = 0.0;
@@ -365,9 +365,9 @@ void apply_morph(inout float type, inout float age, inout float life,
 
         // 按新类型重算颜色: 颜色随机与变形概率(id+41.7)、寿命/速度(id+71.3/91.7)
         // 用不同偏移解耦。
-        float4 TM3 = tex2D(sType, float2((type + 0.5) / 256.0, 3.5 * TYPE_ROWS_INV));
-        float4 TM4 = tex2D(sType, float2((type + 0.5) / 256.0, 4.5 * TYPE_ROWS_INV));
-        float4 TM5 = tex2D(sType, float2((type + 0.5) / 256.0, 5.5 * TYPE_ROWS_INV));
+        float4 TM3 = tex2D(sType, float2((type + 0.5) / GP_TYPE_TEX_W, (ROW_ScaleModes + 0.5) * TYPE_ROWS_INV));
+        float4 TM4 = tex2D(sType, float2((type + 0.5) / GP_TYPE_TEX_W, (ROW_ColorA + 0.5) * TYPE_ROWS_INV));
+        float4 TM5 = tex2D(sType, float2((type + 0.5) / GP_TYPE_TEX_W, (ROW_ColorB + 0.5) * TYPE_ROWS_INV));
         float crm = h1(id + 61.3);
 
         if (TM3.z > 3.5 && TM3.z < 6.5)
@@ -402,9 +402,9 @@ void apply_morph(inout float type, inout float age, inout float life,
 float advance_frame(float st_frame, float type, float age, float life,
     float id, float killhit)
 {
-    float4 T8 = tex2D(sType, float2((type + 0.5) / 256.0, 8.5 * TYPE_ROWS_INV));
-    float4 T9 = tex2D(sType, float2((type + 0.5) / 256.0, 9.5 * TYPE_ROWS_INV));
-    float4 T15 = tex2D(sType, float2((type + 0.5) / 256.0, 15.5 * TYPE_ROWS_INV));
+    float4 T8 = tex2D(sType, float2((type + 0.5) / GP_TYPE_TEX_W, (ROW_Animation + 0.5) * TYPE_ROWS_INV));
+    float4 T9 = tex2D(sType, float2((type + 0.5) / GP_TYPE_TEX_W, (ROW_RandomFrame + 0.5) * TYPE_ROWS_INV));
+    float4 T15 = tex2D(sType, float2((type + 0.5) / GP_TYPE_TEX_W, (ROW_FrameRate + 0.5) * TYPE_ROWS_INV));
     float nf = T8.y;
     float frame = st_frame;
 
@@ -466,8 +466,8 @@ void evolve_alive(inout float2 pos, inout float2 vel, inout float type,
     base = ov.rgb;
     has_ovr = ov.w;
 
-    float4 T2 = tex2D(sType, float2((type + 0.5) / 256.0, 2.5 * TYPE_ROWS_INV));
-    float4 T13 = tex2D(sType, float2((type + 0.5) / 256.0, 13.5 * TYPE_ROWS_INV));
+    float4 T2 = tex2D(sType, float2((type + 0.5) / GP_TYPE_TEX_W, (ROW_GravityDragBlend + 0.5) * TYPE_ROWS_INV));
+    float4 T13 = tex2D(sType, float2((type + 0.5) / GP_TYPE_TEX_W, (ROW_DirectionExt + 0.5) * TYPE_ROWS_INV));
 
     // 重力 + 线性拖拽 + 速度增量(clamp≥0)
     float ga = T2.x * DEG2RAD;
@@ -478,7 +478,7 @@ void evolve_alive(inout float2 pos, inout float2 vel, inout float type,
 
     // 寿命缓速: 速度包络 v(u)=v0*(1+rel*u) 按新旧年龄的包络比缩放(免存初速)。
     // rel=-1 时死亡时刻速度恰归零, 位移呈 1-(1-t)^2 缓出。dt=0(仅出生 pass)时比值恒 1。
-    float4 T17 = tex2D(sType, float2((type + 0.5) / 256.0, 17.5 * TYPE_ROWS_INV));
+    float4 T17 = tex2D(sType, float2((type + 0.5) / GP_TYPE_TEX_W, (ROW_FlickerEase + 0.5) * TYPE_ROWS_INV));
     float rel = T17.w;
     if (abs(rel) > 0.0005 && life > 0.0)
     {
@@ -525,21 +525,21 @@ PS_OUT main(float4 vpos : VPOS)
         float seed = b0.w;
         float3 rnd = h3(id + seed * 17.0);
         pos = spawn_position(b1, b2, rnd, uGlobal.z, srcdead);
-        float4 T0 = tex2D(sType, float2((type + 0.5) / 256.0, 0.5 * TYPE_ROWS_INV));
-        float4 T1 = tex2D(sType, float2((type + 0.5) / 256.0, 1.5 * TYPE_ROWS_INV));
+        float4 T0 = tex2D(sType, float2((type + 0.5) / GP_TYPE_TEX_W, (ROW_LifeSize + 0.5) * TYPE_ROWS_INV));
+        float4 T1 = tex2D(sType, float2((type + 0.5) / GP_TYPE_TEX_W, (ROW_SpeedDirection + 0.5) * TYPE_ROWS_INV));
         vel = spawn_velocity(b1, b2, T1, rnd);
         age = 0.0;
         life = lerp(T0.x, T0.y, rnd.x);
         if (srcdead > 0.5)
             life = 0.0;   // 源槽位已死: 出生即死(不渲染, 槽位自然回收)
         base = spawn_color(b3,
-            tex2D(sType, float2((type + 0.5) / 256.0, 3.5 * TYPE_ROWS_INV)),
-            tex2D(sType, float2((type + 0.5) / 256.0, 4.5 * TYPE_ROWS_INV)),
-            tex2D(sType, float2((type + 0.5) / 256.0, 5.5 * TYPE_ROWS_INV)),
+            tex2D(sType, float2((type + 0.5) / GP_TYPE_TEX_W, (ROW_ScaleModes + 0.5) * TYPE_ROWS_INV)),
+            tex2D(sType, float2((type + 0.5) / GP_TYPE_TEX_W, (ROW_ColorA + 0.5) * TYPE_ROWS_INV)),
+            tex2D(sType, float2((type + 0.5) / GP_TYPE_TEX_W, (ROW_ColorB + 0.5) * TYPE_ROWS_INV)),
             id, seed, has_ovr);
         frame = spawn_frame(
-            tex2D(sType, float2((type + 0.5) / 256.0, 8.5 * TYPE_ROWS_INV)),
-            tex2D(sType, float2((type + 0.5) / 256.0, 9.5 * TYPE_ROWS_INV)),
+            tex2D(sType, float2((type + 0.5) / GP_TYPE_TEX_W, (ROW_Animation + 0.5) * TYPE_ROWS_INV)),
+            tex2D(sType, float2((type + 0.5) / GP_TYPE_TEX_W, (ROW_RandomFrame + 0.5) * TYPE_ROWS_INV)),
             id, seed);
     }
     else if (dead < 0.5)

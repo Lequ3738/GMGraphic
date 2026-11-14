@@ -10,8 +10,8 @@ float4 uBlend : register(c5);   // .x = 当前遍混合模式(0=普通, 1=加法
 float4 uOvGeom[4] : register(c6);    // 每覆盖器 (xmin, xmax, ymin, ymax)
 float4 uOvMeta[4] : register(c10);   // 每覆盖器 (active, shape, scale, alpha)
 float4 uOvColor[4] : register(c14);  // 每覆盖器 (r, g, b, 0)
-// 类型表行数倒数: 必须与 GP_TYPE_TEX_H 一致, 漏同步即采样错位读相邻行且不报错。
-static const float TYPE_ROWS_INV = 1.0 / 18.0;
+// 类型表行布局由宿主编译前注入: TYPE_ROWS_INV 与 ROW_<行名> 生成自 gpart.cpp 的
+// GTypeRow 枚举(type_layout_defines), 本文件不含布局字面量。
 
 struct VSIN
 {
@@ -193,24 +193,24 @@ VSOUT main(VSIN v) {
     float type = st.z;
     float frame = st.w;
     float dead = (age >= life) ? 1.0 : 0.0;
-    float2 tuv = float2((type + 0.5) / 256.0, 0.0);
+    float2 tuv = float2((type + 0.5) / GP_TYPE_TEX_W, 0.0);
 
-    float4 T0 = tex2Dlod(sType, float4(tuv.x, 0.5 * TYPE_ROWS_INV, 0, 0));
-    float4 T2 = tex2Dlod(sType, float4(tuv.x, 2.5 * TYPE_ROWS_INV, 0, 0));
-    float4 T3 = tex2Dlod(sType, float4(tuv.x, 3.5 * TYPE_ROWS_INV, 0, 0));
-    float4 T4 = tex2Dlod(sType, float4(tuv.x, 4.5 * TYPE_ROWS_INV, 0, 0));
-    float4 T5 = tex2Dlod(sType, float4(tuv.x, 5.5 * TYPE_ROWS_INV, 0, 0));
-    float4 T6 = tex2Dlod(sType, float4(tuv.x, 6.5 * TYPE_ROWS_INV, 0, 0));
-    float4 T7 = tex2Dlod(sType, float4(tuv.x, 7.5 * TYPE_ROWS_INV, 0, 0));
-    float4 T8 = tex2Dlod(sType, float4(tuv.x, 8.5 * TYPE_ROWS_INV, 0, 0));
-    float4 T9 = tex2Dlod(sType, float4(tuv.x, 9.5 * TYPE_ROWS_INV, 0, 0));    // .y = 关键帧插值风格, .z = 尺寸硬门 end
+    float4 T0 = tex2Dlod(sType, float4(tuv.x, (ROW_LifeSize + 0.5) * TYPE_ROWS_INV, 0, 0));
+    float4 T2 = tex2Dlod(sType, float4(tuv.x, (ROW_GravityDragBlend + 0.5) * TYPE_ROWS_INV, 0, 0));
+    float4 T3 = tex2Dlod(sType, float4(tuv.x, (ROW_ScaleModes + 0.5) * TYPE_ROWS_INV, 0, 0));
+    float4 T4 = tex2Dlod(sType, float4(tuv.x, (ROW_ColorA + 0.5) * TYPE_ROWS_INV, 0, 0));
+    float4 T5 = tex2Dlod(sType, float4(tuv.x, (ROW_ColorB + 0.5) * TYPE_ROWS_INV, 0, 0));
+    float4 T6 = tex2Dlod(sType, float4(tuv.x, (ROW_ColorCAndAlpha + 0.5) * TYPE_ROWS_INV, 0, 0));
+    float4 T7 = tex2Dlod(sType, float4(tuv.x, (ROW_Orientation + 0.5) * TYPE_ROWS_INV, 0, 0));
+    float4 T8 = tex2Dlod(sType, float4(tuv.x, (ROW_Animation + 0.5) * TYPE_ROWS_INV, 0, 0));
+    float4 T9 = tex2Dlod(sType, float4(tuv.x, (ROW_RandomFrame + 0.5) * TYPE_ROWS_INV, 0, 0));    // .y = 关键帧插值风格, .z = 尺寸硬门 end
     float4 ov = tex2Dlod(sOvr, float4(uv, 0, 0));
-    float4 T11 = tex2Dlod(sType, float4(tuv.x, 11.5 * TYPE_ROWS_INV, 0, 0));  // .w = 尺寸硬门开关
-    float4 T12 = tex2Dlod(sType, float4(tuv.x, 12.5 * TYPE_ROWS_INV, 0, 0));
-    float4 T14 = tex2Dlod(sType, float4(tuv.x, 14.5 * TYPE_ROWS_INV, 0, 0));  // .x = 深度桶号, .yzw = 第四关键色
-    float4 T15 = tex2Dlod(sType, float4(tuv.x, 15.5 * TYPE_ROWS_INV, 0, 0));  // .z/.w = 尺寸硬门(from, portion)
-    float4 T16 = tex2Dlod(sType, float4(tuv.x, 16.5 * TYPE_ROWS_INV, 0, 0));  // 位置摆动(amp min/max, freq, mode)
-    float4 T17 = tex2Dlod(sType, float4(tuv.x, 17.5 * TYPE_ROWS_INV, 0, 0));  // 闪烁(period, duty, from)
+    float4 T11 = tex2Dlod(sType, float4(tuv.x, (ROW_FeatureFlags + 0.5) * TYPE_ROWS_INV, 0, 0));  // .w = 尺寸硬门开关
+    float4 T12 = tex2Dlod(sType, float4(tuv.x, (ROW_RenderSize + 0.5) * TYPE_ROWS_INV, 0, 0));
+    float4 T14 = tex2Dlod(sType, float4(tuv.x, (ROW_DepthBucket + 0.5) * TYPE_ROWS_INV, 0, 0));  // .x = 深度桶号, .yzw = 第四关键色
+    float4 T15 = tex2Dlod(sType, float4(tuv.x, (ROW_FrameRate + 0.5) * TYPE_ROWS_INV, 0, 0));  // .z/.w = 尺寸硬门(from, portion)
+    float4 T16 = tex2Dlod(sType, float4(tuv.x, (ROW_Wobble + 0.5) * TYPE_ROWS_INV, 0, 0));  // 位置摆动(amp min/max, freq, mode)
+    float4 T17 = tex2Dlod(sType, float4(tuv.x, (ROW_FlickerEase + 0.5) * TYPE_ROWS_INV, 0, 0));  // 闪烁(period, duty, from)
 
     bool ovl_hit;
     float3 ovl_col;

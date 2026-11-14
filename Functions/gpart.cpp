@@ -88,6 +88,58 @@ enum class GTypeRow : size_t
     FlickerEase = 17,    // .x = 闪烁周期(步, 0 关), .y = 闪烁占空比, .z = 闪烁起始寿命 t, .w = 寿命缓速 rel
 };
 
+// 枚举末行号 +1 必须钉死为类型表行数: 行布局经 type_layout_defines 注入 shader,
+// 枚举与行数脱节时先在这里编译报错, 而不是运行期采样错位读相邻行。
+static_assert((size_t)GTypeRow::FlickerEase + 1 == GP_TYPE_TEX_H,
+    "GTypeRow 末行号 +1 必须等于 GP_TYPE_TEX_H");
+
+// 类型表/矩形表尺寸与行号是 CPU 写表与 GPU 读表共用的一份协议, 事实源只有
+// gpart.h 的 constexpr 常量与上面的 GTypeRow 枚举。本函数把布局渲染成 #define
+// 注入块, 编译前拼在引用该布局的 shader 源前: 行号在 shader 侧只以 ROW_<枚举名>
+// 出现, 枚举改名即 shader 编译报未定义标识符, 行序调整则注入值自动跟随;
+// 注入同时进入 src_hash, 布局改动使字节码缓存自动失效。
+static std::string type_layout_defines()
+{
+    static constexpr struct RowDef { const char* name; GTypeRow row; } kRows[] =
+    {
+        { "LifeSize",         GTypeRow::LifeSize },
+        { "SpeedDirection",   GTypeRow::SpeedDirection },
+        { "GravityDragBlend", GTypeRow::GravityDragBlend },
+        { "ScaleModes",       GTypeRow::ScaleModes },
+        { "ColorA",           GTypeRow::ColorA },
+        { "ColorB",           GTypeRow::ColorB },
+        { "ColorCAndAlpha",   GTypeRow::ColorCAndAlpha },
+        { "Orientation",      GTypeRow::Orientation },
+        { "Animation",        GTypeRow::Animation },
+        { "RandomFrame",      GTypeRow::RandomFrame },
+        { "StepDeath",        GTypeRow::StepDeath },
+        { "FeatureFlags",     GTypeRow::FeatureFlags },
+        { "RenderSize",       GTypeRow::RenderSize },
+        { "DirectionExt",     GTypeRow::DirectionExt },
+        { "DepthBucket",      GTypeRow::DepthBucket },
+        { "FrameRate",        GTypeRow::FrameRate },
+        { "Wobble",           GTypeRow::Wobble },
+        { "FlickerEase",      GTypeRow::FlickerEase },
+    };
+
+    std::string s;
+    auto def = [&s](const char* name, size_t v)
+    {
+        s += "#define ";
+        s += name;
+        s += ' ';
+        s += std::to_string(v);
+        s += '\n';
+    };
+    def("GP_TYPE_TEX_W", GP_TYPE_TEX_W);
+    def("GP_TYPE_TEX_H", GP_TYPE_TEX_H);
+    def("GP_RECT_TEX_FRAMES", GP_RECT_TEX_FRAMES);
+    s += "#define TYPE_ROWS_INV (1.0 / " + std::to_string(GP_TYPE_TEX_H) + ".0)\n";
+    for (const RowDef& r : kRows)
+        def(("ROW_" + std::string(r.name)).c_str(), (size_t)r.row);
+    return s;
+}
+
 // ============================================================================
 // 确定性 hash(CPU/GPU 同公式, 无超越函数): 与演化 shader 的 h1 逐位一致
 // (frac(43758.5453 * frac(x * (x + 33.33) * (x + 19.19) ...)) 的三轮高熵形式)。
@@ -843,6 +895,18 @@ static std::string load_shader_resource(const char* name)
     return std::string((const char*)data, size);
 }
 
+// gpart shader 的最终编译源: 引用类型表布局的 shader 在 RC 源前拼入注入块,
+// 不引用的(evo_vs/compact_ps)原样返回。编译与缓存新鲜度检查必须共用本函数,
+// 保证 src_hash 口径一致, 否则缓存永远判不新鲜。
+static std::string gpart_shader_source(const char* name)
+{
+    std::string src = load_shader_resource(name);
+    if (strcmp(name, "EVO_PS_HLSL") != 0 && strcmp(name, "RND_VS_HLSL") != 0
+        && strcmp(name, "RND_PS_HLSL") != 0)
+        return src;
+    return type_layout_defines() + src;
+}
+
 // 读取/编译 gpart 5 个 shader 的字节码(带字节码缓存): 命中读文件, 未命中编译并写缓存。
 // cache_dir 为空 = 不使用缓存(每次重新编译)。真错误抛异常。
 // 同一函数同时被 gpu_init_internal(主线程)与异步工作流的内部任务(worker 线程)调用。
@@ -872,11 +936,11 @@ static void gpart_compile_all(const char* cache_dir,
         shader_cache_write(cache_dir, name, h, code.data(), code.size());
     };
 
-    load_or_compile("evo_vs", load_shader_resource("EVO_VS_HLSL"), "main", "vs_3_0", evo_vs);
-    load_or_compile("evo_ps", load_shader_resource("EVO_PS_HLSL"), "main", "ps_3_0", evo_ps);
-    load_or_compile("rnd_vs", load_shader_resource("RND_VS_HLSL"), "main", "vs_3_0", rnd_vs);
-    load_or_compile("rnd_ps", load_shader_resource("RND_PS_HLSL"), "main", "ps_3_0", rnd_ps);
-    load_or_compile("compact_ps", load_shader_resource("COMPACT_PS_HLSL"), "main", "ps_3_0", compact_ps);
+    load_or_compile("evo_vs", gpart_shader_source("EVO_VS_HLSL"), "main", "vs_3_0", evo_vs);
+    load_or_compile("evo_ps", gpart_shader_source("EVO_PS_HLSL"), "main", "ps_3_0", evo_ps);
+    load_or_compile("rnd_vs", gpart_shader_source("RND_VS_HLSL"), "main", "vs_3_0", rnd_vs);
+    load_or_compile("rnd_ps", gpart_shader_source("RND_PS_HLSL"), "main", "ps_3_0", rnd_ps);
+    load_or_compile("compact_ps", gpart_shader_source("COMPACT_PS_HLSL"), "main", "ps_3_0", compact_ps);
 }
 
 static bool gpu_init_internal(const char* cache_dir)
@@ -1630,11 +1694,11 @@ static bool gpart_cache_fresh(const char* cache_dir)
         std::vector<BYTE> code;
         return shader_cache_read(cache_dir, name, h, code);
     };
-    return hit("evo_vs", load_shader_resource("EVO_VS_HLSL"), "vs_3_0")
-        && hit("evo_ps", load_shader_resource("EVO_PS_HLSL"), "ps_3_0")
-        && hit("rnd_vs", load_shader_resource("RND_VS_HLSL"), "vs_3_0")
-        && hit("rnd_ps", load_shader_resource("RND_PS_HLSL"), "ps_3_0")
-        && hit("compact_ps", load_shader_resource("COMPACT_PS_HLSL"), "ps_3_0");
+    return hit("evo_vs", gpart_shader_source("EVO_VS_HLSL"), "vs_3_0")
+        && hit("evo_ps", gpart_shader_source("EVO_PS_HLSL"), "ps_3_0")
+        && hit("rnd_vs", gpart_shader_source("RND_VS_HLSL"), "vs_3_0")
+        && hit("rnd_ps", gpart_shader_source("RND_PS_HLSL"), "ps_3_0")
+        && hit("compact_ps", gpart_shader_source("COMPACT_PS_HLSL"), "ps_3_0");
 }
 
 // 把 gpart 的 5 个 shader 编译(内部 hash 分支, 仅改动/未缓存的加入)注册进当前异步编译工作流。

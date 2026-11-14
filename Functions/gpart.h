@@ -73,11 +73,12 @@ constexpr int GP_MAX_CAPACITY = 65536;    // hard cap
 constexpr int GP_MAX_BATCHES = 16;        // spawn batches per evolution pass chunk(ps_3_0 指令预算限制循环展开, 实测仅 ~24 批; 16 保守, 多块演化兜底)
 constexpr int GP_TYPE_TEX_W = 256;        // type table texture width (max 256 types)
 constexpr int GP_TYPE_TEX_H = 18;         // float4 texels per type (0..9 参数, 10/11 = step/death, 12 = 渲染尺寸, 13 = 方向增量/摆动, 14 = 深度分桶/第四关键色, 15 = 帧率/循环模式, 16 = 位置摆动, 17 = 闪烁/寿命缓速)
-// 类型表行数与 shader 里 TYPE_ROWS_INV 是同一契约的两半: 改这里必须同步改
-// rnd_vs.hlsl / evo_ps.hlsl 的 TYPE_ROWS_INV, 漏改一处即采样错位读相邻行且不报错。
+// 类型表与矩形表的尺寸/行号是 CPU 写表与 GPU 读表共用协议, 本文件与
+// GTypeRow(gpart.cpp)是唯一事实源: gpart.cpp 编译 shader 前经 type_layout_defines
+// 把这些值注入 evo_ps/rnd_vs/rnd_ps, shader 侧无布局字面量, 改这里无需同步 shader。
 constexpr int GP_ATLAS_SIZE = 1024;       // particle atlas texture size (px)
 constexpr int GP_ATLAS_TILE = 64;         // built-in shape tile size (px, 16 per row)
-constexpr int GP_RECT_TEX_FRAMES = 32;    // rect table rows per type = 每类型最大帧数(采集/存储共用上限; 提升时须同步 RND_PS 的 /32.0)
+constexpr int GP_RECT_TEX_FRAMES = 32;    // rect table rows per type = 每类型最大帧数(采集/存储共用上限; shader 侧经注入块自动跟随)
 
 // ---- exports: gpu init (2) ----
 // cache_dir: 着色器字节码缓存目录(空串 = 不使用缓存)。缓存跳过 d3dcompiler 的
