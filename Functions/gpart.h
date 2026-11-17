@@ -87,7 +87,7 @@ exp_real gpart_gpu_init(const char* cache_dir);
 exp_real gpart_set_premul(double mode);
 exp_real gpart_set_pixelsnap(double mode);   // gpart 扩展: 像素对齐(-1 自动/0 关/1 开)
 
-// ---- exports: system (19) ----
+// ---- exports: system (21) ----
 exp_real gpart_system_create(double capacity);
 exp_real gpart_system_destroy(double sys);
 exp_real gpart_system_exists(double sys);
@@ -99,6 +99,8 @@ exp_real gpart_system_position(double sys, double x, double y);
 exp_real gpart_system_capacity(double sys);
 exp_real gpart_system_pause(double sys, double paused);
 exp_real gpart_system_color(double sys, double color, double alpha);   // 系统级染色与不透明度乘数(GMS2 part_system_color 同名同参; color = GM8 BGR 整数)
+exp_real gpart_system_premul(double sys, double mode);   // 每系统预乘输出覆盖, mode: -1 跟随 gpart_set_premul 全局默认/0 强制 straight/1 强制预乘(全局默认也为 -1 时回落 auto 检测)
+exp_real gpart_system_pixelsnap(double sys, double mode);   // 每系统像素对齐覆盖, mode: -1 跟随 gpart_set_pixelsnap 全局默认/0 强制关/1 强制开(全局默认也为 -1 时回落 MAGFILTER 检测)
 
 // ---- 覆盖器(gpart 扩展): 渲染阶段区域覆盖, 粒子出区自动还原 ----
 exp_real gpart_overlayer_create(double sys);   // 创建覆盖器, 返回索引(失败 -1)

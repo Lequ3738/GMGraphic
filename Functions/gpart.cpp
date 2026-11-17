@@ -534,6 +534,13 @@ struct GSystem
     // 系统级染色与不透明度乘数(渲染常量, gpart_system_color 写): 全体粒子最终颜色逐通道相乘。
     // 默认恒等(白/不透明), 从未调用过的系统渲染结果与旧版逐位一致
     float sys_col[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+    // 输出模式每系统覆盖, 解析链「系统覆盖 → 全局默认(g_gpart_*) → auto 检测」:
+    // -1=跟随全局默认, 0/1=本系统强制; 全局默认也为 -1 时回落 auto 检测
+    // (premul 看进入绘制时的 SRCBLEND, pixelsnap 看 MAGFILTER)。
+    // premul 强制位注意: 同一系统一帧画进预乘约定不同的多个 target 时会错一边,
+    // 那种场景应交给 auto 逐次检测。
+    int premul = -1;
+    int pixelsnap = -1;
     // 区域特效器(attractor/destroyer/deflector), id 自增分配(GM8 复用空槽, 自增即可)
     std::unordered_map<int, GAttractor> attractors;
     std::unordered_map<int, GDestroyer> destroyers;
@@ -581,6 +588,7 @@ private:
         s_type = std::move(o.s_type);
         s_frame = std::move(o.s_frame);
         s_gen = std::move(o.s_gen);
+        spawn_gen = o.spawn_gen;
         pending = std::move(o.pending);
         emitters = std::move(o.emitters);
         em_counter = o.em_counter;
@@ -589,6 +597,9 @@ private:
         blend_mask = o.blend_mask;
         bucket_mask = o.bucket_mask;
         paused = o.paused;
+        memcpy(sys_col, o.sys_col, sizeof(sys_col));
+        premul = o.premul;
+        pixelsnap = o.pixelsnap;
         attractors = std::move(o.attractors);
         destroyers = std::move(o.destroyers);
         deflectors = std::move(o.deflectors);
@@ -1564,7 +1575,7 @@ static void run_render(GSystem& s)
     }
     // 像素对齐自动检测: 引擎过滤设置已被 patch 到 SetSamplerState, GetSamplerState
     // 读回即真实状态; MAGFILTER == D3DTEXF_POINT(1) 视为像素管线, 吸附粒子到整数网格
-    int snap_mode = g_gpart_pixelsnap;
+    int snap_mode = s.pixelsnap >= 0 ? s.pixelsnap : g_gpart_pixelsnap;
     if (snap_mode < 0)
     {
         dword mag = 0;
@@ -1583,9 +1594,11 @@ static void run_render(GSystem& s)
     D3DCheck(d3d::set_stream_source(0, s.id_vb, 12), 19);
 
     // 混合: 加法 = ONE/ONE(预乘输出); 普通遍按预乘模式选 ONE/INVSRCALPHA(预乘管线)
-    // 或 SRCALPHA/INVSRCALPHA(默认 straight 管线)。premul 由 gpart_set_premul 或自动检测:
-    // 检测进入本函数时的 SRCBLEND(rs.src) == D3DBLEND_ONE → 当前是预乘管线(psPremul)。
-    bool premul = g_gpart_premul >= 0 ? (g_gpart_premul != 0)
+    // 或 SRCALPHA/INVSRCALPHA(默认 straight 管线)。premul 解析链「系统覆盖 →
+    // gpart_set_premul 全局默认 → auto」: auto 检测进入本函数时的
+    // SRCBLEND(rs.src) == D3DBLEND_ONE → 当前是预乘管线(psPremul)。
+    int premul_mode = s.premul >= 0 ? s.premul : g_gpart_premul;
+    bool premul = premul_mode >= 0 ? (premul_mode != 0)
         : (rsg.src == 2 /* D3DBLEND_ONE */);
     auto set_blend = [&](int additive, int pos) {
         D3DCheck(d3d::set_render_state(D3DRS_ALPHABLENDENABLE, TRUE), pos);
@@ -2013,6 +2026,36 @@ exp_real gpart_system_color(double sys, double color, double alpha)
         return gtrue;
     }
     simple_catch("gpart_system_color", gerror)
+}
+
+// gpart 扩展: 每系统预乘输出覆盖(覆盖 gpart_set_premul 的全局默认)。
+// mode: -1=跟随全局默认, 0=强制 straight(SRCALPHA/INVSRCALPHA), 1=强制预乘(ONE/INVSRCALPHA);
+// 全局默认也为 -1 时回落 auto 检测(进入绘制时的 SRCBLEND)。
+exp_real gpart_system_premul(double sys, double mode)
+{
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        it->second.premul = (int)mode;
+        return gtrue;
+    }
+    simple_catch("gpart_system_premul", gerror)
+}
+
+// gpart 扩展: 每系统像素对齐覆盖(覆盖 gpart_set_pixelsnap 的全局默认)。
+// mode: -1=跟随全局默认, 0=强制关, 1=强制开;
+// 全局默认也为 -1 时回落 auto 检测(MAGFILTER == POINT 视为像素管线)。
+exp_real gpart_system_pixelsnap(double sys, double mode)
+{
+    try
+    {
+        auto it = g_systems.find((int)sys);
+        if (it == g_systems.end()) return gfalse;
+        it->second.pixelsnap = (int)mode;
+        return gtrue;
+    }
+    simple_catch("gpart_system_pixelsnap", gerror)
 }
 
 exp_real gpart_system_draw_order(double sys, double oldtonew)
