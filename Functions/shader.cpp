@@ -6,6 +6,7 @@
 #include "vertex.h"           // vertex_on_device_recreated(同上)
 #include "gpart.h"            // gpart_reset_pre/post(设备 Reset 回调)
 #include "xxhash.hpp"          // 用户 shader 缓存 key 哈希
+#include "../Librarys/buffer.h" // gm::buffer_* 函数指针(buffer 插件桥, vertex.cpp 同款)
 #include <cstring>
 #include <cctype>
 #include <cstdio>
@@ -891,6 +892,121 @@ exp_real shader_set_uniform_b_array(double h, const char* varName)
         return uniform_set_array_impl(h, varName, AC_BOOL) ? gtrue : gfalse;
     }
     simple_catch("shader_set_uniform_b_array", gerror)
+}
+
+// ---- buffer uniform 写入: f_buffer = GMS2 同名同参补齐(手册: 从 buffer 的 offset 字节
+//      起连续 count 个 buffer_f32 设给句柄对应 uniform); i/b_buffer = 本插件扩展,
+//      与 _array 族同口径(GMS2 无 _b 族, i_buffer 同样缺位) ----
+
+// 三 buffer 入口共享实现。buffer 内容契约 = 从 offset 字节起连续 count 个指定类型的值,
+// 本套 buffer 原生排布(紧凑小端、对齐恒 1): f = buffer_f32, i = buffer_int32,
+// b = 单字节(GMS2 buffer_bool 同为 1 字节)。句柄侧校验与 _array 族一致:
+// float/int 契约对 BOOL 声明报错, b 契约宽容。行数 = ceil(count/4), 钳到声明寄存器数。
+// buffer 内存经 buffer 模块按 id 现取(vertex_*_from_buffer 同款通道, 指针不出 GML↔DLL
+// 边界), 地址/长度每次现取不缓存(buffer 可被改写/增长/销毁); 模块未导入即报错
+// (graphic_dll_init 已在 Http.dll 装载后统一调 ImportBufferModule)。
+static void buffer_plugin_guard()
+{
+    if (BufferDLL == nullptr || gm::buffer_exists == nullptr || gm::buffer_get_size == nullptr
+        || gm::buffer_get_address == nullptr)
+        throw std::runtime_error("Buffer plugin not imported (call ImportBufferModule first).");
+}
+
+static bool uniform_set_buffer_impl(double h, double buffer, double offset, double count, ArrayContract ask)
+{
+    auto it = uniforms.find((int)h);
+    if (it == uniforms.end())
+        throw std::runtime_error("Invalid uniform handle.");
+    const UniformHandle& uh = it->second;
+
+    if (ask != AC_BOOL &&
+        ((uh.ps_reg >= 0 && uh.ps_kind == d3d::CK_BOOL) ||
+         (uh.vs_reg >= 0 && uh.vs_kind == d3d::CK_BOOL)))
+        throw std::runtime_error(
+            "Uniform is declared bool: float/int buffer data would be silently "
+            "normalized. Use shader_set_uniform_b_buffer.");
+
+    buffer_plugin_guard();
+    if (gm::buffer_exists(buffer) < 1.0) throw std::runtime_error("Invalid buffer.");
+
+    char* addr = (char*)(intptr_t)gm::buffer_get_address(buffer, 0.0);
+    if (!addr) throw std::runtime_error("Buffer returned a null address.");
+    size_t len = (size_t)gm::buffer_get_size(buffer);
+
+    if (offset < 0 || count < 0)
+        throw std::runtime_error("Negative offset/count.");
+    size_t off = (size_t)offset;
+    size_t n = (size_t)count;
+    if (off + n * 4 > len)
+        throw std::runtime_error("Buffer range out of bounds (offset/count exceed buffer size).");
+
+    // 行数 = ceil(count/4), 钳到声明寄存器数(与 _array 族同一上限口径)
+    int decl = -1;
+    if (uh.vs_reg >= 0) decl = uh.vs_count;
+    if (uh.ps_reg >= 0 && uh.ps_count > decl) decl = uh.ps_count;
+    size_t rows = (n + 3) / 4;
+    if (decl >= 0 && rows > (size_t)decl) rows = (size_t)decl;
+
+    const unsigned char* src = (const unsigned char*)addr + off;
+    for (size_t r = 0; r < rows; ++r)
+    {
+        float m[4] = { 0, 0, 0, 0 };
+        size_t base = r * 4;
+        size_t cols = (n - base < 4) ? (n - base) : 4;
+        if (ask == AC_FLOAT)
+        {
+            for (size_t j = 0; j < cols; ++j)
+                memcpy(&m[j], src + (base + j) * 4, 4);
+        }
+        else if (ask == AC_INT)
+        {
+            for (size_t j = 0; j < cols; ++j)
+            {
+                int iv;
+                memcpy(&iv, src + (base + j) * 4, 4);
+                m[j] = (float)iv;
+            }
+        }
+        else
+        {
+            for (size_t j = 0; j < cols; ++j)
+                m[j] = (src[base + j] != 0) ? 1.f : 0.f;
+        }
+        if (uh.ps_reg >= 0)
+            D3DCheck(d3d::set_ps_const_typed((DWORD)(uh.ps_reg + r),
+                (d3d::ConstKind)uh.ps_kind, m, 1), 1);
+        if (uh.vs_reg >= 0)
+            D3DCheck(d3d::set_vs_const_typed((DWORD)(uh.vs_reg + r),
+                (d3d::ConstKind)uh.vs_kind, m, 1), 1);
+    }
+    return true;
+}
+
+exp_real shader_set_uniform_f_buffer(double h, double buffer, double offset, double count)
+{
+    try
+    {
+        return uniform_set_buffer_impl(h, buffer, offset, count, AC_FLOAT) ? gtrue : gfalse;
+    }
+    simple_catch("shader_set_uniform_f_buffer", gerror)
+}
+
+exp_real shader_set_uniform_i_buffer(double h, double buffer, double offset, double count)
+{
+    try
+    {
+        return uniform_set_buffer_impl(h, buffer, offset, count, AC_INT) ? gtrue : gfalse;
+    }
+    simple_catch("shader_set_uniform_i_buffer", gerror)
+}
+
+exp_real shader_set_uniform_b_buffer(double h, double buffer, double offset, double count)
+{
+    try
+    {
+        return uniform_set_buffer_impl(h, buffer, offset, count, AC_BOOL) ? gtrue : gfalse;
+    }
+    simple_catch("shader_set_uniform_b_buffer", gerror)
 }
 
 static void mat_mul(float* c, const float* a, const float* b)

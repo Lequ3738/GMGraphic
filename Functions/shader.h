@@ -81,6 +81,12 @@ exp_real shader_set_uniform_color(double h, double col, double alpha);
 exp_real shader_set_uniform_f_array(double h, const char* varName);
 exp_real shader_set_uniform_i_array(double h, const char* varName);
 exp_real shader_set_uniform_b_array(double h, const char* varName);
+// buffer uniform(一次喂多个寄存器, 值来自 buffer 插件的内存): f_buffer = GMS2 同名
+// 同参(从 offset 字节起连续 count 个 buffer_f32); i/b_buffer = 本插件扩展, 与 _array
+// 族同口径(i 截断 int / b 单字节 >=0.5 归一)。校验与行数钳制同 _array 族。
+exp_real shader_set_uniform_f_buffer(double h, double buffer, double offset, double count);
+exp_real shader_set_uniform_i_buffer(double h, double buffer, double offset, double count);
+exp_real shader_set_uniform_b_buffer(double h, double buffer, double offset, double count);
 // mtx_type 掩码: world=1 / view=2 / projection=4 / wvp=7。size = 写几个寄存器(默认 4)。
 exp_real shader_set_uniform_matrix(double h, double mtx_type, double size);
 
